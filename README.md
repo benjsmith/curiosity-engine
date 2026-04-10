@@ -4,24 +4,19 @@ A self-improving knowledge wiki for Claude Code. Add sources to a vault, build i
 
 ## Quick start
 
+Install the skill, then point Claude Code at a fresh working directory:
+
 ```bash
-git clone https://github.com/<you>/curiosity-engine
-cd curiosity-engine
-bash scripts/setup.sh
+claude skill install curiosity-engine
+mkdir my-research && cd my-research
 claude
+> set up a knowledge base here
 > add ~/papers/some-paper.pdf to the vault
 > what do I know about transformer architectures?
 > run the curator for 20 cycles in the background
 ```
 
-Or install just the skill:
-
-```bash
-claude skill install curiosity-engine   # from skills.sh
-mkdir my-research && cd my-research
-claude
-> set up a knowledge base here
-```
+The skill bootstraps `vault/` and `wiki/` in the current directory on first use. Cloning the repo directly into `~/.claude/skills/curiosity-engine/` is an equivalent alternative to `claude skill install`.
 
 ## How it works
 

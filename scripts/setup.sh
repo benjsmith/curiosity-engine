@@ -3,9 +3,9 @@ set -e
 
 echo "=== Curiosity Engine Setup ==="
 
-# Resolve paths. SCRIPT_DIR is where setup.sh lives (either the cloned repo's
-# scripts/ or the installed skill's scripts/). TEMPLATE_DIR is its sibling
-# template/ directory, the single source of truth for the wiki skeleton.
+# Resolve paths. SCRIPT_DIR is the installed skill's scripts/ directory;
+# TEMPLATE_DIR is its sibling template/ — the single source of truth for
+# the wiki skeleton copied into each new workspace.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/template"
 
