@@ -28,12 +28,28 @@ fi
 
 # Generate Claude Code settings inline (avoids the npx/skills installer
 # dropping hidden template/.claude/ directories during install). Auto-allows:
-#   - git commands scoped via `git -C wiki <cmd>` (only affects the wiki subdir)
+#   - git commands scoped via `git -C wiki <cmd>` AND `git -C */wiki <cmd>`
+#     (the second form covers subagents that construct absolute paths to
+#     the wiki directory; both still scope to a directory literally named
+#     "wiki", which is the skill's convention)
 #   - python3 invocations of skill scripts at this exact absolute path
 #   - the evolve_guard.sh helper
 #   - date (pure computation, needed for ISO timestamps in log.md)
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [ ! -f .claude/settings.json ]; then
+
+# Regenerate if the file is missing OR empty OR not valid JSON. An earlier
+# version of this script could leave behind a 0-byte settings.json when
+# sed failed on a missing template, and the original `[ ! -f ]` guard would
+# then skip regeneration forever. Belt-and-braces: treat any non-parseable
+# existing file as a "needs regeneration" case.
+regenerate_settings=0
+if [ ! -s .claude/settings.json ]; then
+    regenerate_settings=1
+elif ! python3 -c "import json, sys; json.load(open('.claude/settings.json'))" >/dev/null 2>&1; then
+    regenerate_settings=1
+fi
+
+if [ "$regenerate_settings" = "1" ]; then
     mkdir -p .claude
     cat > .claude/settings.json <<EOF
 {
@@ -48,6 +64,15 @@ if [ ! -f .claude/settings.json ]; then
       "Bash(git -C wiki checkout:*)",
       "Bash(git -C wiki rev-parse:*)",
       "Bash(git -C wiki show:*)",
+      "Bash(git -C */wiki add:*)",
+      "Bash(git -C */wiki commit:*)",
+      "Bash(git -C */wiki status:*)",
+      "Bash(git -C */wiki log:*)",
+      "Bash(git -C */wiki diff:*)",
+      "Bash(git -C */wiki revert:*)",
+      "Bash(git -C */wiki checkout:*)",
+      "Bash(git -C */wiki rev-parse:*)",
+      "Bash(git -C */wiki show:*)",
       "Bash(python3 $SKILL_ROOT/scripts/lint_scores.py:*)",
       "Bash(python3 $SKILL_ROOT/scripts/compress.py:*)",
       "Bash(python3 $SKILL_ROOT/scripts/vault_search.py:*)",
