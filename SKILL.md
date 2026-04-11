@@ -74,7 +74,7 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 6. Create or update wiki pages in appropriate subdirectory (entities/, concepts/, etc.).
 7. Create source summary in `wiki/sources/`.
 8. Update `wiki/index.md`. Append to `wiki/log.md` with timestamp.
-9. `cd wiki && git add -A && git commit -m "ingest: <filename>"`
+9. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -113,13 +113,13 @@ Read `wiki/.curator.json` if present for `worker_model` and `batch_size`; otherw
 >    a. `sourced_claims(after) >= sourced_claims(before)`
 >    b. At least one of: `tpc` decreased, wikilink added, contradiction resolved
 >    c. `compressed_tokens(after) <= compressed_tokens(before) * 1.2`
-> 4. ACCEPTED → write page, `cd wiki && git add <file> && git commit -m "iterate: <page> | <reason>"`. REJECTED → discard.
+> 4. ACCEPTED → write page, `git -C wiki add <file> && git -C wiki commit -m "iterate: <page> | <reason>"`. REJECTED → discard.
 > 5. Append one-line result to `wiki/log.md` with scores before/after.
 > Return a short report: accepted pages, rejected pages, any blockers.
 
 **Review phase.** Main session (no model override — user's chosen model):
-1. Read the batch's commits (`cd wiki && git log -N --oneline` where N = batch size).
-2. Spot-check 1-2 accepts that felt weakest from the worker report. Revert any that don't hold up (`cd wiki && git revert <sha>`), logging why.
+1. Read the batch's commits (`git -C wiki log -N --oneline` where N = batch size).
+2. Spot-check 1-2 accepts that felt weakest from the worker report. Revert any that don't hold up (`git -C wiki revert <sha>`), logging why.
 3. Suggest targets for the next batch: note 2-3 specific pages or connection gaps in `wiki/log.md` under a `## next-batch-seeds` block. The next ITERATE picks these up first.
 4. Print: `[iterate] batch of N: M accepted, K rejected, J reverted on review. Next seeds: ...`
 
@@ -132,7 +132,7 @@ Outer meta-loop. Fixed 5-minute wallclock (Karpathy-style autoresearch epoch). R
 3. **Measure.** Compute `rate = (epoch_start_score - epoch_end_score) / elapsed_minutes`. (Positive = improving, since higher composite = worse.)
 4. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh verify`. If scoring-script hashes changed, **abort the epoch, revert wiki HEAD to epoch start, log "hack attempt blocked: <details>", stop.**
 5. **Compare.** Find the previous epoch's rate in `wiki/log.md` (`## evolve-epoch` blocks). If current rate ≥ previous rate × 0.9, do nothing — accept the epoch.
-6. **Schema proposal.** If the rate is decaying: before editing `schema.md`, read the `## evolve-epoch` history and collect prior schema-edit proposals with their outcomes. Do NOT re-try a proposal that already failed. Propose ONE new edit and write it. Run a follow-up mini-epoch (one batch, ~60 s) and compare its rate against `epoch_start_score`. If it did not improve, `cd wiki && git checkout wiki/schema.md`, revert. Always log the attempt + outcome (even on revert) in `wiki/log.md` under a `## schema-proposal` block so the next EVOLVE can see what's already been tried and concluded about what works.
+6. **Schema proposal.** If the rate is decaying: before editing `schema.md`, read the `## evolve-epoch` history and collect prior schema-edit proposals with their outcomes. Do NOT re-try a proposal that already failed. Propose ONE new edit and write it. Run a follow-up mini-epoch (one batch, ~60 s) and compare its rate against `epoch_start_score`. If it did not improve, `git -C wiki checkout schema.md`, revert. Always log the attempt + outcome (even on revert) in `wiki/log.md` under a `## schema-proposal` block so the next EVOLVE can see what's already been tried and concluded about what works.
 7. **Epoch log.** Append a `## evolve-epoch` block to `wiki/log.md`:
 
 ```

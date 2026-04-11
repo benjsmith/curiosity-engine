@@ -26,11 +26,18 @@ if [ ! -f CLAUDE.md ]; then
     echo "  Created CLAUDE.md"
 fi
 
-# Drop in Claude Code settings that auto-allow git commands inside wiki/ only.
+# Drop in Claude Code settings that auto-allow:
+#   - git commands scoped via `git -C wiki <cmd>` (only affects the wiki subdir)
+#   - python3 invocations of skill scripts at this exact absolute path
+#   - the evolve_guard.sh helper
+# __SKILL_DIR__ placeholder is substituted with the installed skill path so
+# python rules match the literal command prefix the matcher sees.
+SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ ! -f .claude/settings.json ]; then
     mkdir -p .claude
-    cp "$TEMPLATE_DIR/.claude/settings.json" .claude/settings.json
-    echo "  Created .claude/settings.json (auto-allow git inside wiki/)"
+    sed "s|__SKILL_DIR__|$SKILL_ROOT|g" "$TEMPLATE_DIR/.claude/settings.json" \
+        > .claude/settings.json
+    echo "  Created .claude/settings.json (auto-allow git -C wiki + skill scripts)"
 fi
 
 # Initialize wiki as its own git repo

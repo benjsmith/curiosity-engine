@@ -1,13 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cd wiki && git add:*)",
-      "Bash(cd wiki && git commit:*)",
-      "Bash(cd wiki && git status:*)",
-      "Bash(cd wiki && git log:*)",
-      "Bash(cd wiki && git diff:*)",
-      "Bash(cd wiki && git revert:*)",
-      "Bash(cd wiki && git checkout:*)"
+      "Bash(git -C wiki add:*)",
+      "Bash(git -C wiki commit:*)",
+      "Bash(git -C wiki status:*)",
+      "Bash(git -C wiki log:*)",
+      "Bash(git -C wiki diff:*)",
+      "Bash(git -C wiki revert:*)",
+      "Bash(git -C wiki checkout:*)",
+      "Bash(git -C wiki rev-parse:*)",
+      "Bash(git -C wiki show:*)",
+      "Bash(python3 __SKILL_DIR__/scripts/lint_scores.py:*)",
+      "Bash(python3 __SKILL_DIR__/scripts/compress.py:*)",
+      "Bash(python3 __SKILL_DIR__/scripts/vault_search.py:*)",
+      "Bash(python3 __SKILL_DIR__/scripts/vault_index.py:*)",
+      "Bash(bash __SKILL_DIR__/scripts/evolve_guard.sh:*)"
     ]
   }
 }
