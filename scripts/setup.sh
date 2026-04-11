@@ -26,17 +26,40 @@ if [ ! -f CLAUDE.md ]; then
     echo "  Created CLAUDE.md"
 fi
 
-# Drop in Claude Code settings that auto-allow:
+# Generate Claude Code settings inline (avoids the npx/skills installer
+# dropping hidden template/.claude/ directories during install). Auto-allows:
 #   - git commands scoped via `git -C wiki <cmd>` (only affects the wiki subdir)
 #   - python3 invocations of skill scripts at this exact absolute path
 #   - the evolve_guard.sh helper
-# __SKILL_DIR__ placeholder is substituted with the installed skill path so
-# python rules match the literal command prefix the matcher sees.
+#   - date (pure computation, needed for ISO timestamps in log.md)
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ ! -f .claude/settings.json ]; then
     mkdir -p .claude
-    sed "s|__SKILL_DIR__|$SKILL_ROOT|g" "$TEMPLATE_DIR/.claude/settings.json" \
-        > .claude/settings.json
+    cat > .claude/settings.json <<EOF
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C wiki add:*)",
+      "Bash(git -C wiki commit:*)",
+      "Bash(git -C wiki status:*)",
+      "Bash(git -C wiki log:*)",
+      "Bash(git -C wiki diff:*)",
+      "Bash(git -C wiki revert:*)",
+      "Bash(git -C wiki checkout:*)",
+      "Bash(git -C wiki rev-parse:*)",
+      "Bash(git -C wiki show:*)",
+      "Bash(python3 $SKILL_ROOT/scripts/lint_scores.py:*)",
+      "Bash(python3 $SKILL_ROOT/scripts/compress.py:*)",
+      "Bash(python3 $SKILL_ROOT/scripts/vault_search.py:*)",
+      "Bash(python3 $SKILL_ROOT/scripts/vault_index.py:*)",
+      "Bash(python3 $SKILL_ROOT/scripts/local_ingest.py:*)",
+      "Bash(python3 $SKILL_ROOT/scripts/scrub_check.py:*)",
+      "Bash(bash $SKILL_ROOT/scripts/evolve_guard.sh:*)",
+      "Bash(date:*)"
+    ]
+  }
+}
+EOF
     echo "  Created .claude/settings.json (auto-allow git -C wiki + skill scripts)"
 fi
 
