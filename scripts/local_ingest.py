@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """local_ingest.py — bulk-ingest a local directory of trusted documents.
 
-Alternative to `safe_fetch.py` for users who do not want auto-mode to reach
-the open internet. Walks a user-supplied directory, copies each readable
-text file into `vault/raw/`, and writes a wrapped extraction into `vault/`
-with the same frontmatter contract as safe_fetch.py (so the rest of the
-pipeline — scrub_check, lint, iterate, evolve — treats the two
-interchangeably).
+The only bulk ingestion path. Walks a user-supplied directory, copies each
+readable text file into `vault/raw/`, and writes a wrapped extraction into
+`vault/` with the `untrusted: true` + `<!-- BEGIN/END FETCHED CONTENT -->`
+frontmatter contract, so the rest of the pipeline (scrub_check, lint,
+iterate, evolve) applies the same injection defenses that would apply to
+any externally-sourced document.
 
 Text files only in this version (`.md`, `.txt`, `.rst`, `.html`, `.json`,
 `.yaml`, `.yml`, `.org`). Anything else is reported as skipped; the agent

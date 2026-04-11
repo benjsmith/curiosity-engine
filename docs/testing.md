@@ -63,4 +63,12 @@ A full 5-minute EVOLVE epoch was not run end-to-end: the test wiki is too small 
 
 - Multi-epoch schema evolution (need a larger corpus to produce decaying rates)
 - Schema-proposal history deduplication (same — needs multiple epochs)
-- `auto` mode's "propose a web search, run it, ingest result" path (no network access in this test)
+
+## Test corpus provenance
+
+Test results reported in this document were produced against scratch corpora assembled by the developer. None of these corpora ship with the skill; users will assemble their own vaults via manual INGEST or `scripts/local_ingest.py <trusted-dir>`.
+
+- **Seed corpus (ITERATE test above):** 5 hand-written `.extracted.md` sources covering overlapping LLM topics, plus 6 deliberately weak seed wiki pages. Assembled by hand to give the inner loop something to chew on while keeping the surface area small enough to inspect.
+- **Expanded corpus (planned EVOLVE test):** 100 Wikipedia articles across 5 topical clusters (LLM/neural, information theory, reinforcement learning, cognitive science, complex systems). These were bulk-ingested during development via an early `safe_fetch.py` path that has since been removed from the skill — the autonomous web-fetch surface was flagged medium-risk by prompt-injection scanners, and the mitigations (domain allowlist, scrub_check, wrapping, quarantine, SHA-256 hashing) reduced the risk without fully closing it. Bulk ingestion is now only available via `scripts/local_ingest.py` with a user-trusted directory on disk.
+
+The removal of `safe_fetch.py` does not affect these tests' validity: the corpus exists as static markdown and the EVOLVE loop reads from existing vault content only. For reproducing the expanded test, a user would download a comparable set of Wikipedia articles to a local directory themselves and run `local_ingest.py` against it.

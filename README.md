@@ -40,7 +40,9 @@ Treat Obsidian as a read-mostly view. You can edit by hand, but remember that an
 
 **The Wiki** is a git-tracked directory of markdown files that Claude Code writes and maintains. Entity pages, concept pages, synthesis documents — all interlinked with wikilinks, all citing vault sources. The wiki is the compounding artifact: it gets richer with every source ingested and every question asked.
 
-**The Evolve Loop** autonomously improves the wiki overnight. It finds the worst-scoring page (by observable lint signals), investigates the specific problem, drafts an improvement, and accepts it only if it passes a compression-progress test: more knowledge in fewer tokens. Filler is rejected automatically. The wiki never gets worse, only better or unchanged.
+**The Iterate Loop** autonomously improves the wiki. It finds the worst-scoring page (by observable lint signals), investigates the specific problem, drafts an improvement, and accepts it only if it passes a compression-progress test: more knowledge in fewer tokens. Filler is rejected automatically. The wiki never gets worse, only better or unchanged. The loop never fetches new content on its own — it only reorganizes and compresses what's already in the vault. Acquisition is your job; curation is the loop's.
+
+**The Evolve Loop** wraps the iterate loop in fixed-wallclock epochs (Karpathy-style autoresearch). Each epoch measures the rate of improvement; if the rate is decaying, the curator is allowed to propose **one** edit to `wiki/schema.md` — its own operating protocol — and must show the edit actually helped on a follow-up mini-epoch, or the proposal is reverted. `schema.md` is the only meta-target the curator can touch. The scoring scripts (`compress.py`, `lint_scores.py`) are SHA-256 hash-guarded on every epoch boundary, and any tampering aborts the epoch and reverts. Schema proposals and their outcomes are logged to `wiki/log.md` so future epochs don't re-try failed edits. This is the outer self-improvement loop: the wiki compounds, and the curator refines how it curates.
 
 ## Operations
 
@@ -77,6 +79,7 @@ SQLite FTS5 with BM25 ranking. Sub-millisecond queries. Unlimited concurrent rea
 
 ## What this does NOT include
 
+- **No autonomous web fetching** — the skill never pulls content from URLs on its own. You add sources; the loop improves them. This eliminates the prompt-injection surface entirely.
 - **No AAAK dialect** — regresses retrieval 12 points, bespoke notation
 - **No palace hierarchy** — spatial metaphor for semantic structure; just use directories
 - **No self-assessed curiosity formula** — observable signals only; avoids the noisy-TV problem
