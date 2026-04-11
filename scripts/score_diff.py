@@ -47,11 +47,17 @@ def verdict(before: dict, after: dict) -> tuple:
         return False, f"token bloat ({before['tokens']}->{after['tokens']}, >20%)"
     tpc_progress = tpc(after) < tpc(before)
     link_progress = after["wikilinks"] > before["wikilinks"]
-    if not (tpc_progress or link_progress):
-        return False, "no compression progress: tpc flat and no new wikilink"
+    claim_progress = after["claims"] > before["claims"]
+    if not (tpc_progress or link_progress or claim_progress):
+        return False, "no progress: tpc flat, no new wikilink, no new sourced claim"
+    parts = []
     if tpc_progress:
-        return True, f"tpc {tpc(before):.1f}->{tpc(after):.1f}"
-    return True, f"wikilinks {before['wikilinks']}->{after['wikilinks']}"
+        parts.append(f"tpc {tpc(before):.1f}->{tpc(after):.1f}")
+    if link_progress:
+        parts.append(f"wikilinks {before['wikilinks']}->{after['wikilinks']}")
+    if claim_progress:
+        parts.append(f"claims {before['claims']}->{after['claims']}")
+    return True, ", ".join(parts)
 
 
 def main():

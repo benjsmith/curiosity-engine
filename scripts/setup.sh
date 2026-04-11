@@ -81,6 +81,7 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(python3 $SKILL_ROOT/scripts/scrub_check.py:*)",
       "Bash(python3 $SKILL_ROOT/scripts/batch_brief.py:*)",
       "Bash(python3 $SKILL_ROOT/scripts/score_diff.py:*)",
+      "Bash(python3 $SKILL_ROOT/scripts/sweep.py:*)",
       "Bash(bash $SKILL_ROOT/scripts/evolve_guard.sh:*)",
       "Bash(date:*)"
     ]

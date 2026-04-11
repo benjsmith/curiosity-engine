@@ -118,9 +118,10 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 4. Index: `python3 <skill_path>/scripts/vault_index.py "vault/<name>.extracted.md" "<title>"`
 5. Identify key entities, concepts, claims.
 6. Create or update wiki pages in appropriate subdirectory (entities/, concepts/, etc.).
-7. Create source summary in `wiki/sources/`.
-8. Update `wiki/index.md`. Append to `wiki/log.md` with timestamp.
-9. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
+7. Backfill source stubs deterministically: `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`. This creates a `wiki/sources/<stem>.md` placeholder for every vault extraction that doesn't have one — prevents `wiki/sources/` from ending up empty after bulk INGEST (which was observed on the 109-file test run of 2026-04-11).
+8. Refresh the index: `python3 <skill_path>/scripts/sweep.py fix-index wiki`.
+9. Append to `wiki/log.md` with timestamp.
+10. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -138,11 +139,29 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 2. Present ranked results (worst first). Explain each problem dimension.
 3. Append summary to `wiki/log.md`.
 
-Lint dimensions (all 0-1, higher = worse):
-- **contradictions** — claims disputed by other pages/vault (stub in v1, returns 0)
-- **freshness_gap** — stale sources when newer exist (stub in v1, returns 0)
-- **crossref_sparsity** — entities/concepts mentioned but not `[[linked]]`
-- **query_misses** — past queries needing vault fallback for this page
+Lint dimensions (all 0-1, higher = worse). Composite is a weighted average; weights in parentheses:
+- **contradictions** (0.10) — claims disputed by other pages/vault. Stub in v1, returns 0.
+- **freshness_gap** (0.10) — stale sources when newer exist. Stub in v1, returns 0.
+- **crossref_sparsity** (0.25) — entities/concepts mentioned but not `[[linked]]`. Self-references excluded (the epoch-5/2026-04-11 self-link reward hack is closed).
+- **query_misses** (0.10) — past queries needing vault fallback for this page. Returns 0.5 for pages with no query history.
+- **orphan_rate** (0.25) — pages with few inbound wikilinks from elsewhere in the wiki. Complementary to crossref_sparsity: catches under-connection that outbound-only metrics miss.
+- **unsourced_density** (0.20) — fraction of substantive prose lines with no `(vault:...)` citation. Second live signal independent of wikilink counting.
+
+### SWEEP — "sweep", "clean up", "hygiene pass"
+
+Mechanical whole-wiki hygiene. Distinct from ITERATE's slow semantic ratchet: SWEEP runs in seconds and targets the classes of issue ITERATE's compression-progress criterion cannot see (dead wikilinks, duplicate slugs, missing source stubs, index drift, frontmatter invalid).
+
+1. **Scan** — `python3 <skill_path>/scripts/sweep.py scan wiki` → JSON report covering dead wikilinks, duplicate slugs (fuzzy-normalized), orphans, frontmatter issues, index.md drift, missing source stubs, and a total `hygiene_debt` integer.
+2. **Deterministic fixes** — for issues with a single correct answer:
+   - `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki` — backfills any vault extraction missing a `wiki/sources/<stem>.md` stub.
+   - `python3 <skill_path>/scripts/sweep.py fix-index wiki` — rewrites `wiki/index.md` to match on-disk pages.
+3. **LLM-decided fixes** — for issues that need judgment:
+   - **duplicate_slugs**: pick canonical form (usually the one with more sources or more inbound links), merge contents, delete the other with `git -C wiki rm`, rewrite references.
+   - **dead_wikilinks**: either create a stub page for the missing target OR retarget the link OR remove the brackets.
+   - **frontmatter_issues**: add missing required keys with sensible defaults.
+4. Commit: `git -C wiki add -A && git -C wiki commit -m "sweep: <summary>"`.
+
+**Running order.** Run SWEEP before each ITERATE batch so the semantic ratchet isn't fighting phantom pages, dead references, or empty source directories. The SWEEP scan takes <1 s on a 1000-page wiki; the fix commands are likewise sub-second.
 
 ### ITERATE — "iterate", "refine", "improve the wiki", "run the curator"
 
@@ -215,19 +234,21 @@ Then the main session (user's chosen model, not a worker model):
 
 Outer meta-loop. Fixed 5-minute wallclock (Karpathy-style autoresearch epoch). Runs ITERATE repeatedly, measures rate of improvement, and is allowed to propose ONE edit to `wiki/schema.md` per epoch if the rate is decaying. `schema.md` is the only curation-policy knob it can touch.
 
-1. **Snapshot.** Record current average composite lint score from `lint_scores.py` → `epoch_start_score`. Record `sha256` of `<skill_path>/scripts/compress.py` and `<skill_path>/scripts/lint_scores.py` via `bash <skill_path>/scripts/evolve_guard.sh hash`. Record `epoch_start_time`.
-2. **Inner loop.** Run ITERATE batches back-to-back until wallclock reaches `epoch_seconds` (default 300). Stop mid-batch if the clock runs out.
-3. **Measure.** Compute `rate = (epoch_start_score - epoch_end_score) / elapsed_minutes`. (Positive = improving, since higher composite = worse.)
-4. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh verify`. If scoring-script hashes changed, **abort the epoch, revert wiki HEAD to epoch start, log "hack attempt blocked: <details>", stop.**
-5. **Compare.** Find the previous epoch's rate in `wiki/log.md` (`## evolve-epoch` blocks). If current rate ≥ previous rate × 0.9, do nothing — accept the epoch.
-6. **Schema proposal.** If the rate is decaying: before editing `schema.md`, read the `## evolve-epoch` history and collect prior schema-edit proposals with their outcomes. Do NOT re-try a proposal that already failed. Propose ONE new edit and write it. Run a follow-up mini-epoch (one batch, ~60 s) and compare its rate against `epoch_start_score`. If it did not improve, `git -C wiki checkout schema.md`, revert. Always log the attempt + outcome (even on revert) in `wiki/log.md` under a `## schema-proposal` block so the next EVOLVE can see what's already been tried and concluded about what works.
+1. **Snapshot.** Record current average composite lint score from `lint_scores.py` → `epoch_start_score`. Snapshot the guarded-script fingerprints: `bash <skill_path>/scripts/evolve_guard.sh snapshot wiki/.evolve_guard.snapshot`. Record `epoch_start_time`.
+2. **Inner loop.** Run ITERATE batches back-to-back until wallclock reaches `epoch_seconds` (default 300). Stop mid-batch if the clock runs out. Count `accepts_total` across all batches.
+3. **Measure.** Compute `rate = (epoch_start_score - epoch_end_score) / max(accepts_total, 1)` — **improvement per accepted edit**, not per minute. (Positive = improving, since higher composite = worse.) This is deliberately wallclock-independent so larger batches from the parallel ITERATE pipeline don't artifactually look like decay. Also record `elapsed_minutes` and `delta_per_minute` for diagnostic purposes only.
+4. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check wiki/.evolve_guard.snapshot`. If any guarded script drifted, **abort the epoch, revert wiki HEAD to epoch start, log "hack attempt blocked: <details>", stop.** The guarded set is compress.py, lint_scores.py, batch_brief.py, score_diff.py, sweep.py — the whole staging and scoring pipeline.
+5. **Compare.** Find the previous epoch's `rate_per_accept` in `wiki/log.md` (`## evolve-epoch` blocks). If current `rate_per_accept` ≥ previous × 0.9, do nothing — accept the epoch.
+6. **Schema proposal.** If the rate-per-accept is decaying: before editing `schema.md`, read the `## evolve-epoch` history and collect prior schema-edit proposals with their outcomes. Do NOT re-try a proposal that already failed. Propose ONE new edit and write it. Run a follow-up mini-epoch (one batch, ~60 s) and compare its rate-per-accept against `epoch_start_score`. If it did not improve, `git -C wiki checkout schema.md`, revert. Always log the attempt + outcome (even on revert) in `wiki/log.md` under a `## schema-proposal` block so the next EVOLVE can see what's already been tried and concluded about what works.
 7. **Epoch log.** Append a `## evolve-epoch` block to `wiki/log.md`:
 
 ```
 ## evolve-epoch <ISO timestamp>
 start_score: X.XXX
 end_score: X.XXX
-rate: X.XXX / min
+rate_per_accept: X.XXXXX
+delta_per_minute: X.XXX (diagnostic only)
+elapsed_minutes: X.X
 batches: N
 accepted: M
 schema_proposal: <summary or "none">
@@ -237,8 +258,10 @@ notes: <what worked, what didn't — readable by future epochs>
 
 **Reward-hacking guardrails (hard constraints):**
 - Only `wiki/schema.md` may be edited as a meta-target. Never touch files under `<skill_path>/scripts/`.
-- Never alter `compress.py` or `lint_scores.py`. The hash check enforces this; violation aborts the epoch.
+- Never alter `compress.py`, `lint_scores.py`, `batch_brief.py`, `score_diff.py`, or `sweep.py`. The snapshot/check pair enforces this; violation aborts the epoch.
 - Never edit `wiki/log.md` retroactively to inflate rates. Append-only.
+
+**On acceptance gates (context for readers of this skill):** the ITERATE acceptance test is enforced by `score_diff.py`, not `compress.py`. `compress.py` is a pure stats helper — it prints token counts and sourced-claim counts but does not accept or reject anything. `score_diff.py` is the gate: it runs the compression-progress rules in Python and writes the file only on accept. An earlier version of this skill left the enforcement implicit and workers self-graded; that was discovered and fixed in 2026-04-12.
 
 ## Writing rules
 

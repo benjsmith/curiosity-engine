@@ -26,16 +26,21 @@ sys.path.insert(0, str(Path(__file__).parent))
 from lint_scores import compute_all  # noqa: E402
 
 
-def missing_wikilinks(text: str, all_titles: set, limit: int = 5) -> list:
-    """Titles mentioned in text that aren't [[linked]]. Surgical fix targets."""
+def missing_wikilinks(text: str, all_titles: set, own_stem: str, limit: int = 5) -> list:
+    """Hyphen-stemmed titles mentioned in text that aren't [[linked]].
+
+    Excludes the page's own stem (self-links were the epoch-5 reward hack).
+    Returns stems in the exact hyphen-case form that lint_scores.crossref_sparsity
+    will credit when the worker inserts them.
+    """
     text_lower = text.lower()
     missing = []
     for t in sorted(all_titles):
-        if len(t) <= 3 or t not in text_lower:
+        if t == own_stem or len(t) <= 3 or t not in text_lower:
             continue
         if f"[[{t}]]" in text_lower or f"[[{t}|" in text_lower:
             continue
-        missing.append(t.title())
+        missing.append(t)
         if len(missing) >= limit:
             break
     return missing
@@ -75,18 +80,34 @@ def build_brief(wiki_dir: Path, result: dict, all_titles: set, db_path: Path) ->
     page_path = wiki_dir / result["page"]
     text = page_path.read_text()
     scores = result["scores"]
+    own_stem = page_path.stem.lower()
 
     active_dims = {k: v for k, v in scores.items()
                    if k != "composite" and v > 0}
     worst_dim = max(active_dims, key=active_dims.get) if active_dims else "crossref_sparsity"
 
     if worst_dim == "crossref_sparsity":
-        missing = missing_wikilinks(text, all_titles)
+        missing = missing_wikilinks(text, all_titles, own_stem)
         if missing:
-            hint = "add missing wikilinks: " + ", ".join(f"[[{m}]]" for m in missing)
+            hint = "add missing wikilinks in exact hyphen form: " + ", ".join(
+                f"[[{m}]]" for m in missing
+            )
         else:
-            hint = "add at least one new [[wikilink]] to a related concept"
+            hint = "add at least one new [[hyphen-stem]] wikilink to a related page"
         job_type = "surgical"
+    elif worst_dim == "orphan_rate":
+        hint = (
+            "this page has no inbound wikilinks. Find 2-3 related pages that "
+            "should mention it and add [[" + own_stem + "]] to them instead of "
+            "editing this page."
+        )
+        job_type = "surgical"
+    elif worst_dim == "unsourced_density":
+        hint = (
+            "most prose lines lack a (vault:...) citation. Add citations to "
+            "substantive claims using existing vault sources; do not invent sources."
+        )
+        job_type = "synthesis"
     elif worst_dim == "query_misses":
         hint = "broaden vault sourcing: this page has underperformed on past queries"
         job_type = "synthesis"
@@ -131,8 +152,9 @@ def main():
     pool = unvisited if unvisited else results
     targets = pool[: args.n]
 
-    all_titles = {Path(r["page"]).stem.lower().replace("-", " ").replace("_", " ")
-                  for r in results}
+    # Titles in the exact hyphen-stemmed form that lint_scores.crossref_sparsity
+    # credits — matches what a worker must literally type for the lint to score it.
+    all_titles = {Path(r["page"]).stem.lower() for r in results}
     db_path = wiki_dir.parent / "vault" / "vault.db"
 
     briefs = [build_brief(wiki_dir, r, all_titles, db_path) for r in targets]

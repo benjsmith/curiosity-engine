@@ -27,28 +27,75 @@ def wiki_pages_in(wiki_dir: Path):
     return [p for p in wiki_dir.rglob("*.md") if p.name not in SKIP_FILES]
 
 
-def crossref_sparsity(text: str, all_titles: set) -> float:
+def crossref_sparsity(text: str, all_titles: set, own_stem: str) -> float:
     """Fraction of linkable entity/concept mentions that aren't [[linked]].
 
-    A mention is linkable if a wiki page exists with that title.
-    Score 0 = everything linked. Score 1 = nothing linked.
+    A mention is linkable if a wiki page exists with that title. Self-references
+    are excluded so a page cannot satisfy the metric by linking to itself —
+    that reward-hack was observed in the epoch-5 run of 2026-04-11.
+
+    Score 0 = every linkable mention is linked. Score 1 = nothing linked.
+    Pages with zero mentions of any other wiki title return 0 (informationless
+    for this dimension; orphan_rate picks up the under-connection signal).
     """
     if not all_titles:
         return 0.0
 
     text_lower = text.lower()
-    # Only consider titles longer than 3 chars to avoid false positives
-    mentioned = {t for t in all_titles if t in text_lower and len(t) > 3}
+    mentioned = {t for t in all_titles
+                 if t != own_stem and len(t) > 3 and t in text_lower}
     if not mentioned:
         return 0.0
 
-    linked = set()
-    for t in mentioned:
-        # Check for [[title]] or [[title|display text]] patterns
-        if f"[[{t}]]" in text_lower or f"[[{t}|" in text_lower or f"[[{t}" in text_lower:
-            linked.add(t)
-
+    linked = {t for t in mentioned
+              if f"[[{t}]]" in text_lower or f"[[{t}|" in text_lower}
     return round(1.0 - (len(linked) / len(mentioned)), 2)
+
+
+def orphan_rate(own_stem: str, inbound: dict) -> float:
+    """Penalty for pages with few inbound wikilinks from elsewhere in the wiki.
+
+    0 inbound → 1.0 (orphan)
+    1 inbound → 0.66
+    2 inbound → 0.33
+    3+ inbound → 0.0
+    """
+    n = inbound.get(own_stem, 0)
+    if n == 0:
+        return 1.0
+    if n == 1:
+        return 0.66
+    if n == 2:
+        return 0.33
+    return 0.0
+
+
+def unsourced_density(text: str) -> float:
+    """Fraction of substantive prose lines that carry no (vault:...) citation.
+
+    Skips YAML frontmatter, headings, empty lines, and lines under 5 words.
+    Gives the ratchet a second real signal independent of wikilink counting.
+    """
+    substantive = 0
+    unsourced = 0
+    in_frontmatter = False
+    frontmatter_seen = 0
+    for line in text.split("\n"):
+        s = line.strip()
+        if s == "---":
+            frontmatter_seen += 1
+            in_frontmatter = frontmatter_seen == 1
+            continue
+        if in_frontmatter or not s or s.startswith("#"):
+            continue
+        if len(s.split()) < 5:
+            continue
+        substantive += 1
+        if "(vault:" not in s:
+            unsourced += 1
+    if substantive == 0:
+        return 0.0
+    return round(unsourced / substantive, 2)
 
 
 def query_misses(page_stem: str, log_text: str) -> float:
@@ -96,26 +143,48 @@ def freshness_gap(text: str) -> float:
 
 
 def compute_all(wiki_dir: Path) -> list:
-    """Score every page under wiki_dir. Sorted worst-first by composite."""
+    """Score every page under wiki_dir. Sorted worst-first by composite.
+
+    Two passes: gather inbound-link counts across the whole wiki, then score
+    each page. orphan_rate and crossref_sparsity are live signals;
+    contradictions and freshness_gap remain stubs that return 0.
+    """
     pages = wiki_pages_in(wiki_dir)
+    pages_text = {p: p.read_text() for p in pages}
     titles = {p.stem.lower() for p in pages}
     log_path = wiki_dir / "log.md"
     log_text = log_path.read_text() if log_path.exists() else ""
 
+    # Pass 1: global inbound-link count per title (excluding self-links)
+    inbound = {t: 0 for t in titles}
+    for page, text in pages_text.items():
+        own = page.stem.lower()
+        text_lower = text.lower()
+        for t in titles:
+            if t == own:
+                continue
+            if f"[[{t}]]" in text_lower or f"[[{t}|" in text_lower:
+                inbound[t] += 1
+
+    # Pass 2: per-page scoring
     results = []
-    for page in pages:
-        text = page.read_text()
+    for page, text in pages_text.items():
+        own = page.stem.lower()
         scores = {
             "contradictions": contradictions(text),
             "freshness_gap": freshness_gap(text),
-            "crossref_sparsity": crossref_sparsity(text, titles),
+            "crossref_sparsity": crossref_sparsity(text, titles, own),
             "query_misses": query_misses(page.stem, log_text),
+            "orphan_rate": orphan_rate(own, inbound),
+            "unsourced_density": unsourced_density(text),
         }
         scores["composite"] = round(
-            0.35 * scores["contradictions"]
-            + 0.25 * scores["freshness_gap"]
-            + 0.20 * scores["crossref_sparsity"]
-            + 0.20 * scores["query_misses"],
+            0.10 * scores["contradictions"]
+            + 0.10 * scores["freshness_gap"]
+            + 0.25 * scores["crossref_sparsity"]
+            + 0.10 * scores["query_misses"]
+            + 0.25 * scores["orphan_rate"]
+            + 0.20 * scores["unsourced_density"],
             3
         )
         results.append({
