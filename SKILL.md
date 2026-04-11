@@ -74,6 +74,23 @@ Wait for the user's choice. Remember it for the rest of the session. If (a), pro
 
 8. **Per-epoch rate limits.** Respect `max_fetches_per_epoch` in `wiki/.curator.json` (default 50). An auto-mode operation that wants to exceed this must stop and resume in the next epoch.
 
+## Bash discipline (hard rule)
+
+Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
+
+1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
+2. `python3 <skill_path>/scripts/<named_script>.py ...` — never `python3 -c "..."`
+3. `bash <skill_path>/scripts/evolve_guard.sh ...`
+4. `date ...`
+
+**For everything else, use the tool layer:** Read (not `cat`/`head`/`tail`), Glob (not `ls`/`find`), Grep (not `grep`/`rg`), Edit/Write (not `sed`/`mv`/`cp`/`touch`/`rm`/`>`/`>>`).
+
+**No compound shell:** no pipes, no `&&`, no `$(...)`, no backticks, no heredocs. One command per bash call.
+
+**Why:** any other bash command either has a safe tool-layer equivalent or cannot be scoped to the workspace via prefix matching without risking the user's wider filesystem. Breaking this rule means approval interrupts, which means the loop stops.
+
+When spawning a subagent via the Agent tool, include this discipline block verbatim in its prompt. Subagents do not automatically inherit workspace CLAUDE.md.
+
 ## Setup
 
 On first trigger, check if `wiki/schema.md` exists in the working directory. If not, bootstrap a new knowledge base:

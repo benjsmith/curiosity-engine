@@ -16,7 +16,23 @@ claude
 > run the curator for 20 cycles in the background
 ```
 
-The skill bootstraps `vault/` and `wiki/` in the current directory on first use. Cloning the repo directly into `~/.claude/skills/curiosity-engine/` is an equivalent alternative to `claude skill install`.
+### Alternative quick install
+
+```bash
+npx skills add benjsmith/curiosity-engine
+```
+
+Or clone the repo directly into `~/.claude/skills/curiosity-engine/`. All three paths produce an identical install — pick whichever matches your workflow.
+
+### Viewing the wiki in Obsidian
+
+The `wiki/` directory is plain markdown with `[[wikilinks]]`, so any Obsidian vault opened on it works out of the box:
+
+1. Open Obsidian → **Open folder as vault** → pick `<your-workspace>/wiki`.
+2. Wikilinks, backlinks, and the graph view light up immediately — no plugins needed.
+3. Leave Claude Code running in the workspace root; Obsidian picks up new pages as the curator writes them. Git commits from the curator show up as normal file changes.
+
+Treat Obsidian as a read-mostly view. You can edit by hand, but remember that any change outside a `git -C wiki commit` won't be seen by the curator until the next operation reads the page.
 
 ## How it works
 

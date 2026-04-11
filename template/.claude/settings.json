@@ -17,7 +17,8 @@
       "Bash(python3 __SKILL_DIR__/scripts/safe_fetch.py:*)",
       "Bash(python3 __SKILL_DIR__/scripts/local_ingest.py:*)",
       "Bash(python3 __SKILL_DIR__/scripts/scrub_check.py:*)",
-      "Bash(bash __SKILL_DIR__/scripts/evolve_guard.sh:*)"
+      "Bash(bash __SKILL_DIR__/scripts/evolve_guard.sh:*)",
+      "Bash(date:*)"
     ]
   }
 }
