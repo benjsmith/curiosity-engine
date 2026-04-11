@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd wiki && git add:*)",
+      "Bash(cd wiki && git commit:*)",
+      "Bash(cd wiki && git status:*)",
+      "Bash(cd wiki && git log:*)",
+      "Bash(cd wiki && git diff:*)",
+      "Bash(cd wiki && git revert:*)",
+      "Bash(cd wiki && git checkout:*)"
+    ]
+  }
+}

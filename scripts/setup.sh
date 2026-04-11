@@ -26,6 +26,13 @@ if [ ! -f CLAUDE.md ]; then
     echo "  Created CLAUDE.md"
 fi
 
+# Drop in Claude Code settings that auto-allow git commands inside wiki/ only.
+if [ ! -f .claude/settings.json ]; then
+    mkdir -p .claude
+    cp "$TEMPLATE_DIR/.claude/settings.json" .claude/settings.json
+    echo "  Created .claude/settings.json (auto-allow git inside wiki/)"
+fi
+
 # Initialize wiki as its own git repo
 if [ ! -d wiki/.git ]; then
     (cd wiki && git init -q && git add -A && git commit -q -m "init: curiosity engine wiki")
