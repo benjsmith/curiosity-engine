@@ -2,11 +2,17 @@
 """Compute lint scores for all wiki pages.
 
 Usage:
-    python3 lint_scores.py              # default wiki/ directory
-    python3 lint_scores.py <wiki_dir>   # custom wiki path
+    python3 lint_scores.py                       # default wiki/ directory
+    python3 lint_scores.py <wiki_dir>            # custom wiki path
+    python3 lint_scores.py <wiki_dir> --top N    # only emit N worst pages
+    python3 lint_scores.py <wiki_dir> --minimal  # only {page, composite}
 
 Outputs JSON array sorted by composite score (worst first).
 All scores are floats in [0, 1]. Higher = needs more work.
+
+Flags exist because a full lint dump at 1000 pages is ~50k tokens, and the
+ITERATE batch phase only ever needs the top few. Pass `--top N --minimal`
+to shrink the payload ~800x for batch_brief consumers.
 """
 
 import json
@@ -14,12 +20,11 @@ import re
 import sys
 from pathlib import Path
 
-WIKI = Path(sys.argv[1] if len(sys.argv) > 1 else "wiki")
 SKIP_FILES = {"index.md", "log.md", "schema.md"}
 
 
-def wiki_pages():
-    return [p for p in WIKI.rglob("*.md") if p.name not in SKIP_FILES]
+def wiki_pages_in(wiki_dir: Path):
+    return [p for p in wiki_dir.rglob("*.md") if p.name not in SKIP_FILES]
 
 
 def crossref_sparsity(text: str, all_titles: set) -> float:
@@ -90,10 +95,11 @@ def freshness_gap(text: str) -> float:
     return 0.0
 
 
-def main():
-    pages = wiki_pages()
+def compute_all(wiki_dir: Path) -> list:
+    """Score every page under wiki_dir. Sorted worst-first by composite."""
+    pages = wiki_pages_in(wiki_dir)
     titles = {p.stem.lower() for p in pages}
-    log_path = WIKI / "log.md"
+    log_path = wiki_dir / "log.md"
     log_text = log_path.read_text() if log_path.exists() else ""
 
     results = []
@@ -113,11 +119,39 @@ def main():
             3
         )
         results.append({
-            "page": str(page.relative_to(WIKI)),
+            "page": str(page.relative_to(wiki_dir)),
             "scores": scores,
         })
 
     results.sort(key=lambda x: x["scores"]["composite"], reverse=True)
+    return results
+
+
+def main():
+    args = [a for a in sys.argv[1:]]
+    top_n = None
+    minimal = False
+    positional = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--top":
+            top_n = int(args[i + 1])
+            i += 2
+        elif args[i] == "--minimal":
+            minimal = True
+            i += 1
+        else:
+            positional.append(args[i])
+            i += 1
+
+    wiki_dir = Path(positional[0]) if positional else Path("wiki")
+    results = compute_all(wiki_dir)
+
+    if top_n is not None:
+        results = results[:top_n]
+    if minimal:
+        results = [{"page": r["page"], "composite": r["scores"]["composite"]} for r in results]
+
     print(json.dumps(results, indent=2))
 
 

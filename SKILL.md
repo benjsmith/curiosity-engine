@@ -94,8 +94,19 @@ Read `wiki/schema.md` before any operation.
 Optional `wiki/.curator.json` tunes the improvement loops. Absent file = defaults.
 
 ```json
-{"worker_model": "claude-sonnet-4-6", "batch_size": 5, "epoch_seconds": 300}
+{
+  "surgical_model": "claude-haiku-4-5",
+  "synthesis_model": "claude-sonnet-4-6",
+  "parallel_workers": 10,
+  "batch_size": 30,
+  "epoch_seconds": 300
+}
 ```
+
+- **surgical_model** — used for `job_type: surgical` briefs (add wikilink, inline citation, trim duplicate claim). Haiku is ~2–3× faster and plenty for mechanical fixes.
+- **synthesis_model** — used for `job_type: synthesis` briefs (contradictions, freshness gaps, cross-page merges). Use the strongest model you have.
+- **parallel_workers** — number of workers fanned out per batch. One brief per worker, no collisions.
+- **batch_size** — number of briefs produced by `batch_brief.py` per batch.
 
 ## Operations
 
@@ -135,28 +146,70 @@ Lint dimensions (all 0-1, higher = worse):
 
 ### ITERATE — "iterate", "refine", "improve the wiki", "run the curator"
 
-Inner improvement loop. Two-tier: a fast worker model makes a batch of changes, then the main (strong) session reviews the batch and seeds the next one.
+Inner improvement loop. Four phases: **brief → fan-out → apply → review**. Deterministic Python stages everything a worker needs; workers are pure "propose one edit"; scoring and commits are one batched deterministic pass. Context per worker is flat, parallelism is linear in `parallel_workers`, and the main session never sees raw lint dumps.
 
-Read `wiki/.curator.json` if present for `worker_model` and `batch_size`; otherwise defaults (sonnet, 5).
+Read `wiki/.curator.json` if present for `surgical_model`, `synthesis_model`, `parallel_workers`, `batch_size`; otherwise defaults.
 
-**Batch phase.** Delegate to a subagent via the Agent tool with `model: "<worker_model>"`. Its prompt:
+**Phase 1 — Brief.** One command:
 
-> Run N accept-or-revert cycles against `wiki/`. For each cycle:
-> 1. `python3 <skill_path>/scripts/lint_scores.py` → pick top unvisited page.
-> 2. Read page, identify worst lint dimension, draft targeted fix (one vault query against existing sources, one edit — never fetch new material).
-> 3. Acceptance test with `python3 <skill_path>/scripts/compress.py wiki/<page>.md`:
->    a. `sourced_claims(after) >= sourced_claims(before)`
->    b. At least one of: `tpc` decreased, wikilink added, contradiction resolved
->    c. `compressed_tokens(after) <= compressed_tokens(before) * 1.2`
-> 4. ACCEPTED → write page, `git -C wiki add <file> && git -C wiki commit -m "iterate: <page> | <reason>"`. REJECTED → discard.
-> 5. Append one-line result to `wiki/log.md` with scores before/after.
-> Return a short report: accepted pages, rejected pages, any blockers.
+```
+python3 <skill_path>/scripts/batch_brief.py wiki --n <batch_size>
+```
 
-**Review phase.** Main session (no model override — user's chosen model):
-1. Read the batch's commits (`git -C wiki log -N --oneline` where N = batch size).
-2. Spot-check 1-2 accepts that felt weakest from the worker report. Revert any that don't hold up (`git -C wiki revert <sha>`), logging why.
-3. Suggest targets for the next batch: note 2-3 specific pages or connection gaps in `wiki/log.md` under a `## next-batch-seeds` block. The next ITERATE picks these up first.
-4. Print: `[iterate] batch of N: M accepted, K rejected, J reverted on review. Next seeds: ...`
+Returns a JSON array. Each entry is a self-contained brief: `{page, worst_dim, scores, hint, job_type, page_text, vault_snippet}`. `job_type` is `surgical` or `synthesis`. Workers get one brief and nothing else — no lint scan, no vault search, no index read.
+
+**Phase 2 — Fan-out.** Fire `parallel_workers` Agent subagents **in one tool-call message** so they run concurrently. For each brief:
+- `subagent_type: "general-purpose"`
+- `model: "<surgical_model>"` if `brief.job_type == "surgical"` else `"<synthesis_model>"`
+- prompt embeds the brief verbatim plus the worker contract below
+
+Every subagent returns one strict JSON object on its last line. Nothing more. The worker does **zero** bash calls — no lint, no compress, no git, no log write. It only produces a diff spec.
+
+Worker prompt template (embed verbatim, substituting `<BRIEF_JSON>`):
+
+> You are a curiosity-engine curator worker. You have one brief. Produce one improvement.
+>
+> Brief:
+> ```json
+> <BRIEF_JSON>
+> ```
+>
+> Task: Read the `page_text` in the brief. Produce exactly one surgical edit that addresses the `hint` and improves the `worst_dim` dimension. The edit must be expressible as an `old_string` that appears verbatim in `page_text` and a `new_string` that replaces it.
+>
+> Constraints:
+> - Preserve every existing `(vault:...)` citation.
+> - Do not add raw URLs.
+> - If you add a new citation, it must reference `vault_snippet.path` from the brief.
+> - Prefer the smallest edit that satisfies the hint. This is not a rewrite.
+> - Do not call any tools. Reply with only one JSON object.
+>
+> Return exactly this shape as the last line of your reply:
+> ```
+> {"page": "<brief.page>", "old_string": "<verbatim snippet>", "new_string": "<replacement>", "reason": "<one line>"}
+> ```
+>
+> [Embed the Bash discipline block here so subagents inherit it if they somehow do touch tools.]
+
+**Phase 3 — Apply.** Main session collects the N worker JSON outputs. For each proposal:
+
+1. Compute the candidate new full page text by replacing `old_string` with `new_string` in the current `wiki/<page>` contents (single replacement). If `old_string` is not found, reject and log.
+2. Pipe candidate text to `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin`. The script runs the compression-progress rules, writes the file on accept, leaves it untouched on reject, and prints a one-line JSON verdict.
+3. Collect accepts and rejects.
+
+**Phase 4 — Commit + review.** One batched commit for the whole batch:
+
+```
+git -C wiki add -A
+git -C wiki commit -m "iterate: batch | <A accepted, R rejected>"
+```
+
+Then the main session (user's chosen model, not a worker model):
+1. Read the commit diff via `git -C wiki show HEAD`.
+2. Spot-check 1–2 weakest accepts. Revert any that don't hold up via `git -C wiki revert <sha> --no-edit`, logging why in `wiki/log.md`.
+3. Append to `wiki/log.md`: one `iterate: <page> | <reason>` line per accept (visited-page tracking for `batch_brief.py` depends on this), and a `## next-batch-seeds` block with 2–3 suggested focus areas for the next batch.
+4. Print: `[iterate] batch of N: A accepted, R rejected, V reverted on review.`
+
+**Why this shape:** per-cycle lint scans, vault searches, and compress calls used to burn ~60% of each cycle on tool-roundtrip overhead and ~50k-token lint dumps. Moving all of that into `batch_brief.py` and `score_diff.py` makes each worker's job short enough that 10 parallel workers fit inside one batch without context pressure, and makes the main session's work purely deterministic staging and review. Target throughput at batch=30, workers=10 is roughly 10–50× the old serialized-cycle baseline.
 
 ### EVOLVE — "evolve", "evolve the curator"
 
