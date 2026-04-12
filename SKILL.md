@@ -179,7 +179,7 @@ Inner improvement loop. Four phases: **brief → fan-out → apply → review**.
 Read `wiki/.curator.json` if present for model routing and batch tuning:
 - `surgical_model` (default "haiku") — fast model for crossref/orphan fixes
 - `synthesis_model` (default "sonnet") — stronger model for citation and contradiction work
-- `reviewer_model` (default "sonnet") — model for EVOLVE spot-checks and schema proposals
+- `reviewer_model` (default "opus") — model for EVOLVE spot-checks and schema proposals
 - `parallel_workers` (default 5) — concurrent worker subagents per batch
 - `batch_size` (default 10) — pages per batch
 
