@@ -95,18 +95,17 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 
 ```json
 {
-  "surgical_model": "claude-haiku-4-5",
-  "synthesis_model": "claude-sonnet-4-6",
+  "worker_model": "claude-sonnet-4-6",
+  "reviewer_model": "claude-opus-4-6",
   "parallel_workers": 10,
-  "batch_size": 30,
   "epoch_seconds": 300
 }
 ```
 
-- **surgical_model** — used for `job_type: surgical` briefs (add wikilink, inline citation, trim duplicate claim). Haiku is ~2–3× faster and plenty for mechanical fixes.
-- **synthesis_model** — used for `job_type: synthesis` briefs (contradictions, freshness gaps, cross-page merges). Use the strongest model you have.
-- **parallel_workers** — number of workers fanned out per batch. One brief per worker, no collisions.
-- **batch_size** — number of briefs produced by `batch_brief.py` per batch.
+- **worker_model** (default "sonnet") — all ITERATE workers. Haiku was dropped after testing showed systematic citation-preservation failures.
+- **reviewer_model** (default "opus") — EVOLVE audit, evaluate, and opus judge reviews. Opus excels at judgment, meta-reasoning, and connection discovery.
+- **parallel_workers** (default 5) — concurrent worker subagents per batch.
+- **epoch_seconds** (default 300) — wallclock budget per EVOLVE epoch.
 
 ## Operations
 
@@ -118,10 +117,10 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 4. Index: `python3 <skill_path>/scripts/vault_index.py "vault/<name>.extracted.md" "<title>"`
 5. Identify key entities, concepts, claims.
 6. Create or update wiki pages in appropriate subdirectory (entities/, concepts/, etc.).
-7. Backfill source stubs deterministically: `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`. This creates a `wiki/sources/<stem>.md` placeholder for every vault extraction that doesn't have one — prevents `wiki/sources/` from ending up empty after bulk INGEST (which was observed on the 109-file test run of 2026-04-11).
-8. Clean source stubs: `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki`. Strips Wikipedia nav boilerplate and adds wikilinks to related pages.
-9. Rename source stubs to citation-style filenames: `python3 <skill_path>/scripts/sweep.py rename-sources wiki`. Converts timestamp-URL stems to `{topic}-{origin}-{year}` (Wikipedia) or `{topic}-{author}-{year}` (papers). Reads vault extraction frontmatter for origin/date and header lines for author.
-10. Set display names: `python3 <skill_path>/scripts/sweep.py fix-display-names wiki`. Adds type-prefix titles to all page frontmatter (`[con]`, `[ent]`, `[ana]`, `[src]`). Source pages get rich citation titles like `[src] Deep Learning — Wikipedia, 2026`. Requires Obsidian's "Use frontmatter title as display name" setting.
+7. Backfill source stubs deterministically: `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`.
+8. Clean source stubs: `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki`.
+9. Rename source stubs to citation-style filenames: `python3 <skill_path>/scripts/sweep.py rename-sources wiki`.
+10. Set display names: `python3 <skill_path>/scripts/sweep.py fix-display-names wiki`.
 11. Refresh the index: `python3 <skill_path>/scripts/sweep.py fix-index wiki`.
 12. Append to `wiki/log.md` with timestamp.
 13. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
@@ -142,153 +141,199 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 2. Present ranked results (worst first). Explain each problem dimension.
 3. Append summary to `wiki/log.md`.
 
-Lint dimensions (all 0-1, higher = worse). All six dimensions are now live with real implementations.
+Lint dimensions (all 0-1, higher = worse):
 
 - **crossref_sparsity** (0.25) — entities/concepts mentioned but not `[[linked]]`. Self-references excluded.
 - **orphan_rate** (0.25) — pages with few inbound wikilinks from elsewhere in the wiki.
 - **unsourced_density** (0.20) — fraction of substantive prose lines with no `(vault:...)` citation.
-- **contradictions** (0.10) — cross-page factual tension. For each sourced claim, checks other pages for claims sharing 5+ significant content words but differing in negation polarity. Deterministic, no LLM. Source stubs excluded from comparison. Incentivizes investigating and resolving conflicting information.
-- **vault_coverage_gap** (0.10) — fraction of relevant vault material not cited. Queries vault.db FTS (BM25) for the page's topic; scores how many of the top 10 vault hits aren't cited. Measures the curiosity gap: how much unexplored ground exists in the vault for this topic.
-- **query_misses** (0.10) — past queries needing vault fallback for this page. Returns 0.5 for pages with no query history.
+- **contradictions** (0.10) — cross-page factual tension. Deterministic negation-polarity check on claims sharing 5+ significant content words.
+- **vault_coverage_gap** (0.10) — fraction of relevant vault material not cited. Queries vault.db FTS (BM25).
+- **query_misses** (0.10) — past queries needing vault fallback for this page.
 
 Composite formula lives in `lint_scores.py compute_all()`.
 
 ### SWEEP — "sweep", "clean up", "hygiene pass"
 
-Mechanical whole-wiki hygiene. Distinct from ITERATE's slow semantic ratchet: SWEEP runs in seconds and targets the classes of issue ITERATE's compression-progress criterion cannot see (dead wikilinks, duplicate slugs, missing source stubs, index drift, frontmatter invalid).
+Mechanical whole-wiki hygiene. Distinct from ITERATE's semantic ratchet: SWEEP runs in seconds and targets issues ITERATE cannot see (dead wikilinks, duplicate slugs, missing source stubs, index drift).
 
-1. **Scan** — `python3 <skill_path>/scripts/sweep.py scan wiki` → JSON report covering dead wikilinks, duplicate slugs (fuzzy-normalized), orphans, frontmatter issues, index.md drift, missing source stubs, and a total `hygiene_debt` integer.
-2. **Deterministic fixes** — for issues with a single correct answer:
-   - `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki` — backfills any vault extraction missing a `wiki/sources/<stem>.md` stub.
-   - `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki` — strips Wikipedia nav boilerplate from source stubs, adds `[[hyphen-stem]]` wikilinks to related wiki pages based on title matching. No LLM needed. Run after `fix-source-stubs` to clean up the auto-generated stub bodies. ITERATE's `batch_brief.py` excludes source pages, so this is the only way source stubs get improved.
-   - `python3 <skill_path>/scripts/sweep.py rename-sources wiki` — renames source stubs from timestamp-URL form to citation-style stems (`deep-learning-wikipedia-2026`, `attention-vaswani-2017`). Parses vault extraction frontmatter for origin/year; parses `# Title (Author, Year)` headers for papers. Rewrites wikilinks across the wiki safely (only bare stems unique to sources; folder-qualified `[[sources/...]]` forms always). Run after `fix-source-boilerplate`.
-   - `python3 <skill_path>/scripts/sweep.py fix-display-names wiki` — adds type-prefix display titles to all page frontmatter: `[con]`, `[ent]`, `[ana]`, `[src]`. Source pages get rich citation titles (e.g. `[src] Deep Learning — Wikipedia, 2026`). Idempotent — pages already prefixed are skipped. Requires Obsidian's "Use frontmatter title as display name" setting for graph-view labels.
-   - `python3 <skill_path>/scripts/sweep.py fix-index wiki` — rewrites `wiki/index.md` to match on-disk pages.
-3. **LLM-decided fixes** — for issues that need judgment:
-   - **duplicate_slugs**: pick canonical form (usually the one with more sources or more inbound links), merge contents, delete the other with `git -C wiki rm`, rewrite references.
-   - **dead_wikilinks**: either create a stub page for the missing target OR retarget the link OR remove the brackets.
-   - **frontmatter_issues**: add missing required keys with sensible defaults.
+1. **Scan** — `python3 <skill_path>/scripts/sweep.py scan wiki` → JSON report.
+2. **Deterministic fixes:**
+   - `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`
+   - `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki`
+   - `python3 <skill_path>/scripts/sweep.py rename-sources wiki`
+   - `python3 <skill_path>/scripts/sweep.py fix-display-names wiki`
+   - `python3 <skill_path>/scripts/sweep.py fix-index wiki`
+3. **LLM-decided fixes** — duplicate slugs (merge), dead wikilinks (create/retarget/remove), frontmatter issues.
 4. Commit: `git -C wiki add -A && git -C wiki commit -m "sweep: <summary>"`.
 
-**Running order.** Run SWEEP before each ITERATE batch so the semantic ratchet isn't fighting phantom pages, dead references, or empty source directories. The SWEEP scan takes <1 s on a 1000-page wiki; the fix commands are likewise sub-second.
+Run SWEEP before each ITERATE batch so the semantic ratchet isn't fighting phantom pages or dead references.
 
 ### ITERATE — "iterate", "refine", "improve the wiki", "run the curator"
 
-Inner improvement loop. Four phases: **brief → fan-out → apply → review**. Deterministic Python stages everything a worker needs; workers are pure "propose one edit"; scoring and commits are one batched deterministic pass. Context per worker is flat, parallelism is linear in `parallel_workers`, and the main session never sees raw lint dumps.
+Inner improvement loop. You are the orchestrator — you pick targets, compose briefs, dispatch workers, and review results. The deterministic scripts handle measurement only.
 
-Read `wiki/.curator.json` if present for model routing and batch tuning:
-- `surgical_model` (default "haiku") — fast model for crossref/orphan fixes
-- `synthesis_model` (default "sonnet") — stronger model for citation and contradiction work
-- `reviewer_model` (default "opus") — model for EVOLVE spot-checks and schema proposals
-- `parallel_workers` (default 5) — concurrent worker subagents per batch
-- `batch_size` (default 10) — pages per batch
+Read `wiki/.curator.json` for model routing:
+- `worker_model` (default "sonnet") — all workers
+- `reviewer_model` (default "opus") — opus judge reviews
+- `parallel_workers` (default 5) — concurrent workers per batch
 
-**Phase 1 — Brief.** One command:
+**Step 1 — Pick targets.** Run `python3 <skill_path>/scripts/lint_scores.py wiki --top 20 --minimal` to see the worst-scoring pages. Choose which pages to improve this batch. Skip source stubs (`sources/` pages) — those are handled by `sweep.py`. Prefer pages you haven't recently touched (check `wiki/log.md` for history).
 
-```
-python3 <skill_path>/scripts/batch_brief.py wiki --n <batch_size>
-```
+**Step 2 — Compose briefs and fan out workers.** For each target, read the page text and identify what needs improving based on its worst lint dimension. Search the vault if needed: `python3 <skill_path>/scripts/vault_search.py "<topic>"`. Then fan out `parallel_workers` Agent subagents **in one tool-call message**:
 
-Returns a JSON array. Each entry is a self-contained brief: `{page, worst_dim, scores, hint, job_type, page_text, vault_snippet}`. `job_type` is `surgical` or `synthesis`. Workers get one brief and nothing else — no lint scan, no vault search, no index read. **Source stubs (`sources/` pages) are excluded from batching** — they are mechanical cleanup targets handled by `sweep.py fix-source-boilerplate`, not editorial-judgment targets for ITERATE workers.
+- `model: "<worker_model>"`
+- Each worker gets ONE page to improve with a clear brief
 
-**Learning-progress prioritization (Oudeyer/Schmidhuber):** batch_brief parses log.md for per-page accept/reject history across all epochs. Pages that have been targeted multiple times but keep getting rejected (low accept rate) are deprioritized in favor of never-visited pages (exploration) and actively-progressing pages (exploit momentum). This prevents the system from burning cycles on structurally stuck pages — a curiosity-inspired signal that directs attention where learning is happening fastest.
+Worker prompt template (embed verbatim, filling in the specific page and task):
 
-**Orphan-rate redirect:** when a target page's worst dimension is `orphan_rate`, batch_brief performs a reverse lookup: it finds a concept/entity page that discusses the orphan's topic but doesn't link to it, and emits a brief targeting that *linker* page instead. The hint tells the worker to add `[[orphan-stem]]` at a natural point. This is the only way to reduce orphan_rate — editing the orphan page itself doesn't help; other pages must add inbound links. The brief includes an `orphan_target` field so the main session can track which orphan was being fixed.
-
-**Phase 2 — Fan-out.** Fire `parallel_workers` Agent subagents **in one tool-call message** so they run concurrently. For each brief:
-- `subagent_type: "general-purpose"`
-- `model: "<surgical_model>"` if `brief.job_type == "surgical"` else `"<synthesis_model>"`
-- prompt embeds the brief verbatim plus the worker contract below
-
-Every subagent returns one strict JSON object on its last line. Nothing more. The worker does **zero** bash calls — no lint, no compress, no git, no log write. It only produces a diff spec.
-
-Worker prompt template (embed verbatim, substituting `<BRIEF_JSON>`):
-
-> You are a curiosity-engine curator worker. You have one brief. Produce one improvement.
+> You are a curiosity-engine curator worker. You have one page to improve.
 >
-> Brief:
-> ```json
-> <BRIEF_JSON>
+> Page path: `<PAGE_PATH>`
+> Current page text:
+> ```
+> <PAGE_TEXT>
+> ```
+> Vault material (if relevant):
+> ```
+> <VAULT_SNIPPET>
 > ```
 >
-> Task: Read the `page_text` in the brief. Produce exactly one surgical edit that addresses the `hint` and improves the `worst_dim` dimension. The edit must be expressible as an `old_string` that appears verbatim in `page_text` and a `new_string` that replaces it.
+> Task: <SPECIFIC_TASK — e.g. "add a cross-reference to [[free-energy-principle]] explaining the connection to precision-weighted prediction error" or "reduce unsourced density by adding vault citations to the uncited claims">
 >
-> Constraints:
-> - Preserve every existing `(vault:...)` citation.
-> - Do not add raw URLs.
-> - If you add a new citation, it must reference `vault_snippet.path` from the brief.
-> - Prefer the smallest edit that satisfies the hint. This is not a rewrite.
+> Hard constraints:
+> - Preserve every existing `(vault:...)` citation. Never drop a citation.
+> - Every NEW factual claim must have a `(vault:...)` citation from the vault material above.
+> - All `[[wikilinks]]` must be hyphen-case (e.g. `[[deep-learning]]` not `[[Deep Learning]]`).
+> - Do not add raw URLs anywhere in the page body.
+> - Prefer the smallest edit that accomplishes the task. This is not a rewrite.
 > - Do not call any tools. Reply with only one JSON object.
 >
-> Return exactly this shape as the last line of your reply:
+> Return exactly:
 > ```
-> {"page": "<brief.page>", "old_string": "<verbatim snippet>", "new_string": "<replacement>", "reason": "<one line>"}
+> {"page": "<page_path>", "old_string": "<verbatim snippet from current text>", "new_string": "<replacement>", "reason": "<one line>"}
 > ```
->
-> [Embed the Bash discipline block here so subagents inherit it if they somehow do touch tools.]
 
-**Phase 3 — Apply.** Main session collects the N worker JSON outputs. For each proposal:
+**Step 3 — Apply.** For each worker result:
 
-1. Compute the candidate new full page text by replacing `old_string` with `new_string` in the current `wiki/<page>` contents (single replacement). If `old_string` is not found, reject and log.
-2. Pipe candidate text to `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin [--orphan-target <stem>]`. The script runs the compression-progress rules, writes the file on accept, leaves it untouched on reject, and prints a one-line JSON verdict. Pass `--orphan-target` for orphan-redirect briefs (from `brief.orphan_target`) — when the target link is added, the edit auto-accepts without needing to pass the 2-of-3 progress gate. Wikilink counting uses lint-matchable links (hyphen-form, no spaces in target) so that Title Case→hyphen conversions register as real progress.
-3. Collect accepts and rejects.
+1. Compute the candidate page by replacing `old_string` with `new_string`. If `old_string` not found, reject.
+2. Run `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin` (pipe candidate text). The script enforces two hard floors: no citation loss, no extreme bloat (>2x tokens). It writes the file on accept.
+3. For new pages: `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-page --new-text-stdin`.
 
-**Phase 4 — Commit + review.** One batched commit for the whole batch:
+**Step 4 — Commit + log.** One batched commit:
 
 ```
 git -C wiki add -A
 git -C wiki commit -m "iterate: batch | <A accepted, R rejected>"
 ```
 
-Then the main session (user's chosen model, not a worker model):
-1. Read the commit diff via `git -C wiki show HEAD`.
-2. Spot-check 1–2 weakest accepts. Revert any that don't hold up via `git -C wiki revert <sha> --no-edit`, logging why in `wiki/log.md`.
-3. Append to `wiki/log.md`: one `iterate: <page> | <reason>` line per accept (visited-page tracking for `batch_brief.py` depends on this), and a `## next-batch-seeds` block with 2–3 suggested focus areas for the next batch.
-4. Print: `[iterate] batch of N: A accepted, R rejected, V reverted on review.`
-
-**Why this shape:** per-cycle lint scans, vault searches, and compress calls used to burn ~60% of each cycle on tool-roundtrip overhead and ~50k-token lint dumps. Moving all of that into `batch_brief.py` and `score_diff.py` makes each worker's job short enough that 10 parallel workers fit inside one batch without context pressure, and makes the main session's work purely deterministic staging and review. Target throughput at batch=30, workers=10 is roughly 10–50× the old serialized-cycle baseline.
+Append to `wiki/log.md`: one line per accept with page name and what changed. Include `## next-batch-seeds` with 2–3 focus areas for the next batch.
 
 ### EVOLVE — "evolve", "evolve the curator"
 
-Outer meta-loop. Fixed 5-minute wallclock (Karpathy-style autoresearch epoch). Runs ITERATE repeatedly, measures rate of improvement, and is allowed to propose ONE edit to `wiki/schema.md` per epoch if the rate is decaying. `schema.md` is the only curation-policy knob it can touch.
+Outer meta-loop. Three phases per epoch: **audit → execute → evaluate**. Each epoch should be an independent process invocation when possible (no cross-epoch context accumulation). State lives in `wiki/log.md` and `wiki/.epoch_plan.md`.
 
-1. **Snapshot.** Record current average composite lint score from `lint_scores.py` → `epoch_start_score`. Snapshot the guarded-script fingerprints: `bash <skill_path>/scripts/evolve_guard.sh snapshot wiki/.evolve_guard.snapshot`. Record `epoch_start_time`.
-2. **Inner loop.** Run ITERATE batches back-to-back until wallclock reaches `epoch_seconds` (default 300). Stop mid-batch if the clock runs out. Count `accepts_total` across all batches.
-3. **Measure.** Compute `rate = (epoch_start_score - epoch_end_score) / max(accepts_total, 1)` — **improvement per accepted edit**, not per minute. (Positive = improving, since higher composite = worse.) This is deliberately wallclock-independent so larger batches from the parallel ITERATE pipeline don't artifactually look like decay. Also record `elapsed_minutes` and `delta_per_minute` for diagnostic purposes only.
-4. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check wiki/.evolve_guard.snapshot`. If any guarded script drifted, **abort the epoch, revert wiki HEAD to epoch start, log "hack attempt blocked: <details>", stop.** The guarded set is compress.py, lint_scores.py, batch_brief.py, score_diff.py, sweep.py — the whole staging and scoring pipeline.
-5. **Compare.** Find the previous epoch's `rate_per_accept` in `wiki/log.md` (`## evolve-epoch` blocks). If current `rate_per_accept` ≥ previous × 0.9, do nothing — accept the epoch. **Stop condition:** if `delta_per_epoch < 0.001` for 3 consecutive epochs, stop the EVOLVE run — the ratchet has diminishing returns. (The threshold is set low because each single-page improvement dilutes across N pages: for a 200-page wiki, one page improving by 0.10 yields delta ≈ 0.0005. Requiring 3 consecutive low epochs avoids premature stopping from a single bad batch.)
-6. **Schema proposal.** If the rate-per-accept is decaying: before editing `schema.md`, read the `## evolve-epoch` history and collect prior schema-edit proposals with their outcomes. Do NOT re-try a proposal that already failed. Propose ONE new edit and write it. Run a follow-up mini-epoch (one batch, ~60 s) and compare its rate-per-accept against `epoch_start_score`. If it did not improve, `git -C wiki checkout schema.md`, revert. Always log the attempt + outcome (even on revert) in `wiki/log.md` under a `## schema-proposal` block so the next EVOLVE can see what's already been tried and concluded about what works.
-7. **Epoch log.** Append a `## evolve-epoch` block to `wiki/log.md`:
+**Model assignment:** Opus handles audit and evaluate (judgment, strategy). Sonnet handles all workers (execution).
+
+**Phase 1 — Audit (opus).** Gather data, then reason about strategy.
+
+1. **Snapshot.** Record current average composite from `lint_scores.py` → `epoch_start_score`. Snapshot guarded scripts: `bash <skill_path>/scripts/evolve_guard.sh snapshot wiki/.evolve_guard.snapshot`.
+2. **Gather.** Run `python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON with aggregate scores, dimension distributions, vault frontier (uncited sources), cross-cluster edges, connection candidates, recent log.
+3. **Plan.** Reason about the epoch summary. Produce a plan addressing:
+   - **Frontier targets** (max 3): vault sources with uncited material → which wiki pages should incorporate them.
+   - **Connection proposals** (max 3): page pairs that share sources but don't link → substantive intellectual connections only, not keyword overlap.
+   - **Question proposals** (max 3): questions the wiki can't answer well → these produce new `analyses/` pages. Depth over breadth.
+   - **Behavioral notes**: what's working, what to weight differently.
+4. **Persist.** Write the plan to `wiki/.epoch_plan.md`.
+
+**Phase 2 — Execute (sonnet workers + opus judge).**
+
+Run ITERATE batches, weaving the epoch plan targets alongside lint-ranked editorial work. For each plan target:
+
+- **Frontier targets** → read the uncited vault source, identify which wiki page should cite it, compose a worker brief with the relevant vault excerpt.
+- **Connection proposals** → read both pages, compose a worker brief asking one page to add a cross-reference with explanation.
+- **Question proposals** → compose a worker brief that creates a new analysis page synthesizing from existing wiki pages.
+
+For exploration, connection, and question edits that pass the mechanical gates, run the **opus judge**. Spawn a fresh `reviewer_model` Agent with clean context — NOT the same agent that planned or wrote. The judge evaluates:
+
+- Is every factual claim grounded in a `(vault:...)` source? Reject unsourced claims.
+- Are new wikilinks substantive? Flag interesting-but-uncertain connections for human review rather than silently rejecting.
+- For new analysis pages: is the synthesis deep or shallow padding?
+- Does the edit reward-hack any metric without adding real value?
+
+Judge prompt template:
+
+> You are a critical reviewer for a knowledge wiki. You did NOT create this content — review it with fresh eyes. Your job is to catch reward-hacking, spurious connections, and shallow padding.
+>
+> Original page text:
+> <ORIGINAL_TEXT>
+>
+> Proposed edit (or new page text):
+> <NEW_TEXT>
+>
+> What this edit was asked to do:
+> <TASK_DESCRIPTION>
+>
+> Review criteria:
+> 1. Is every factual claim grounded in a (vault:...) source? Reject unsourced claims.
+> 2. Are new wikilinks substantive? Flag interesting but uncertain connections for human review.
+> 3. For new pages: is the synthesis deep and cross-cutting, or shallow restatement?
+> 4. Does the edit reward-hack any metric without adding real value?
+>
+> Return exactly: `{"verdict": "accept"|"reject"|"flag_for_human", "reason": "...", "interesting_connections": ["..."]}`
+
+Accept only on clear `accept`. Revert opus-rejected edits. Log `flag_for_human` items in `wiki/log.md` under `## human-review-queue`.
+
+Continue with ITERATE batches until wallclock reaches `epoch_seconds`.
+
+**Phase 3 — Evaluate (opus).**
+
+1. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check wiki/.evolve_guard.snapshot`. Abort on drift.
+2. **Measure.** Compute `rate_per_accept = (start_score - end_score) / max(accepts, 1)`. Record `delta_per_epoch`, `elapsed_minutes`.
+3. **Evaluate.** Review the epoch: what worked, what didn't, what was surprising. Produce:
+   - **Behavioral proposal** for next epoch (priority shift, threshold change, schema.md edit to try).
+   - **Source wishlist**: topics where the vault is thin. Log prominently.
+   - **Curiosity metrics**: frontier_size, cross_cluster_ratio, questions generated.
+4. **Schema proposal.** If proposing a schema.md edit: apply it, run one mini-batch. If it doesn't improve rate_per_accept, revert.
+5. **Stop condition.** If `delta_per_epoch < 0.001` for 3 consecutive epochs, stop — unless the evaluate phase identified promising frontier targets or questions. Curiosity trumps diminishing editorial returns.
+6. **Epoch log.** Append to `wiki/log.md`:
 
 ```
-## evolve-epoch <ISO timestamp>
+## evolve-epoch <N> <ISO timestamp>
 start_score: X.XXX
 end_score: X.XXX
 rate_per_accept: X.XXXXX
-delta_per_minute: X.XXX (diagnostic only)
 elapsed_minutes: X.X
-batches: N
-accepted: M
-schema_proposal: <summary or "none">
-schema_outcome: <kept | reverted | n/a>
-notes: <what worked, what didn't — readable by future epochs>
+accepted: M (editorial: E, exploration: X, connection: C, question: Q)
+rejected: R
+flagged_for_human: F
+curiosity_metrics:
+  frontier_size: N
+  cross_cluster_ratio: X.XXX
+  questions_generated: N
+  source_wishlist: [topic1, topic2]
+behavioral_proposal: <summary>
+notes: <what worked, what didn't>
 ```
+
+```
+## human-review-queue
+- <page>: <connection or claim flagged by opus judge> — <reason it's interesting>
+```
+
+**Process-level restart (recommended for multi-epoch runs).** For runs longer than 2-3 epochs, each epoch should be a fresh process invocation with clean context. State lives entirely in `wiki/log.md` and `wiki/.epoch_plan.md` — no cross-epoch memory needed. This is Karpathy's autoresearch pattern: fixed-wallclock epochs, each independent.
 
 **Reward-hacking guardrails (hard constraints):**
 - Only `wiki/schema.md` may be edited as a meta-target. Never touch files under `<skill_path>/scripts/`.
-- Never alter `compress.py`, `lint_scores.py`, `batch_brief.py`, `score_diff.py`, or `sweep.py`. The snapshot/check pair enforces this; violation aborts the epoch.
-- Never edit `wiki/log.md` retroactively to inflate rates. Append-only.
-
-**On acceptance gates (context for readers of this skill):** the ITERATE acceptance test is enforced by `score_diff.py`, not `compress.py`. `compress.py` is a pure stats helper — it prints token counts and sourced-claim counts but does not accept or reject anything. `score_diff.py` is the gate: it runs the compression-progress rules in Python and writes the file only on accept. An earlier version of this skill left the enforcement implicit and workers self-graded; that was discovered and fixed in 2026-04-12.
-
-**Tiered acceptance:** `score_diff.py` requires more progress from pages that already have wikilinks. For pages with 0 existing wikilinks (fresh stubs), any 1 of 3 progress gates (tpc decrease, wikilink increase, claim increase) suffices. For pages with ≥1 existing wikilink, at least 2 of 3 gates must pass. This closes the "tpc-only escape hatch" where a 5-token trim on a dense page could pass without any semantic improvement (observed in epoch-1 maxwells-demon edit, 2026-04-12 baseline).
+- Guarded scripts: `compress.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `sweep.py`. The snapshot/check pair enforces this; violation aborts the epoch.
+- Never edit `wiki/log.md` retroactively. Append-only.
+- The opus judge MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
 
 ## Writing rules
 
 - **Never modify vault files** (only add new ones + their `.extracted.md`).
 - **Concise prose.** Short sentences. No filler. Every sentence carries information.
 - **Cite every factual claim:** `(vault:papers/attention.extracted.md)`
-- **Link generously:** `[[Entity Name]]` for every mention that has or deserves a page.
+- **Link generously:** `[[entity-name]]` for every mention that has or deserves a page. Always hyphen-case.
 - **Update index.md** on any page creation or deletion.
 - **Append to log.md** after every operation with ISO timestamp.
 - **Git commit** in wiki/ after every accepted change.
@@ -304,5 +349,5 @@ updated: YYYY-MM-DD
 sources: [path/to/source.extracted.md]
 ---
 
-Concise factual prose. [[Cross References]]. (vault:source/path) citations.
+Concise factual prose. [[cross-references]]. (vault:source/path) citations.
 ```

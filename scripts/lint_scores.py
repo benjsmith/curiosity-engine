@@ -12,7 +12,7 @@ All scores are floats in [0, 1]. Higher = needs more work.
 
 Flags exist because a full lint dump at 1000 pages is ~50k tokens, and the
 ITERATE batch phase only ever needs the top few. Pass `--top N --minimal`
-to shrink the payload ~800x for batch_brief consumers.
+to shrink the payload ~800x for ITERATE target selection.
 """
 
 import json
@@ -24,7 +24,8 @@ SKIP_FILES = {"index.md", "log.md", "schema.md"}
 
 
 def wiki_pages_in(wiki_dir: Path):
-    return [p for p in wiki_dir.rglob("*.md") if p.name not in SKIP_FILES]
+    return [p for p in wiki_dir.rglob("*.md")
+            if p.name not in SKIP_FILES and not p.name.startswith(".")]
 
 
 def crossref_sparsity(text: str, all_titles: set, own_stem: str) -> float:

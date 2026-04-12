@@ -21,9 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GUARDED=(
     "$SCRIPT_DIR/compress.py"
     "$SCRIPT_DIR/lint_scores.py"
-    "$SCRIPT_DIR/batch_brief.py"
     "$SCRIPT_DIR/score_diff.py"
     "$SCRIPT_DIR/sweep.py"
+    "$SCRIPT_DIR/epoch_summary.py"
 )
 
 fingerprint() {

@@ -27,7 +27,7 @@ Subcommands
 Design notes
 ------------
 - sweep.py is guarded by evolve_guard.sh alongside compress/lint/score_diff/
-  batch_brief. EVOLVE may not edit it.
+  epoch_summary. EVOLVE may not edit it.
 - Only the `fix-*` subcommands write. `scan` is pure read.
 - Uses only the stdlib. Runs in well under a second even on a 1000-page wiki.
 """
