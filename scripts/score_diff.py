@@ -20,34 +20,80 @@ input; parse `accept` and `applied` fields to branch.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from compress import compress, token_count, sourced_claims  # noqa: E402
 
+WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
-def metrics(text: str) -> dict:
+
+def lint_matchable_links(text: str) -> int:
+    """Count wikilinks in lint-recognized form (hyphen-case, no spaces).
+
+    lint_scores checks ``f"[[{stem}]]" in text_lower`` where stem is
+    hyphen-case. ``[[deep-learning]]`` matches; ``[[Deep Learning]]`` becomes
+    ``[[deep learning]]`` when lowered and does NOT match the stem
+    ``deep-learning``. So only space-free targets register as recognized links.
+    This fixes the Phase 1 finding where Title Case→hyphen conversions were
+    invisible to score_diff's raw ``[[`` count.
+    """
+    count = 0
+    for m in WIKILINK_RE.finditer(text):
+        target = m.group(1).strip()
+        if " " not in target:
+            count += 1
+    return count
+
+
+def metrics(text: str, orphan_target: str = None) -> dict:
     comp = compress(text)
-    return {
+    m = {
         "tokens": token_count(comp),
         "claims": max(sourced_claims(text), 1),
-        "wikilinks": text.count("[["),
+        "wikilinks": lint_matchable_links(text),
     }
+    if orphan_target:
+        text_lower = text.lower()
+        m["has_orphan_link"] = (
+            f"[[{orphan_target}]]" in text_lower
+            or f"[[{orphan_target}|" in text_lower
+        )
+    return m
 
 
 def tpc(m: dict) -> float:
     return m["tokens"] / m["claims"]
 
 
-def verdict(before: dict, after: dict) -> tuple:
+def verdict(before: dict, after: dict, orphan_target: str = None) -> tuple:
     if after["claims"] < before["claims"]:
         return False, f"sourced_claims dropped ({before['claims']}->{after['claims']})"
     if after["tokens"] > before["tokens"] * 1.2:
         return False, f"token bloat ({before['tokens']}->{after['tokens']}, >20%)"
+
     tpc_progress = tpc(after) < tpc(before)
     link_progress = after["wikilinks"] > before["wikilinks"]
     claim_progress = after["claims"] > before["claims"]
+
+    # Orphan-specific gate: if the edit adds the target orphan link, that
+    # alone is sufficient progress — the whole point of the brief was to
+    # create this inbound link. Hard floors (claims, bloat) still apply.
+    orphan_link_added = (
+        orphan_target
+        and after.get("has_orphan_link")
+        and not before.get("has_orphan_link")
+    )
+    if orphan_link_added:
+        parts = [f"orphan link [[{orphan_target}]] added"]
+        if tpc_progress:
+            parts.append(f"tpc {tpc(before):.1f}->{tpc(after):.1f}")
+        if link_progress:
+            parts.append(f"wikilinks {before['wikilinks']}->{after['wikilinks']}")
+        return True, ", ".join(parts)
+
     gates_passed = sum([tpc_progress, link_progress, claim_progress])
     required = 2 if before["wikilinks"] > 0 else 1
     if gates_passed < required:
@@ -72,6 +118,8 @@ def main():
     ap.add_argument("page")
     ap.add_argument("--new-file", default=None)
     ap.add_argument("--new-text-stdin", action="store_true")
+    ap.add_argument("--orphan-target", default=None,
+                    help="Orphan stem this edit aims to link. Activates orphan-specific gate.")
     args = ap.parse_args()
 
     page = Path(args.page)
@@ -88,9 +136,10 @@ def main():
         print(json.dumps({"error": "need --new-file or --new-text-stdin", "applied": False}))
         return
 
-    before = metrics(old_text)
-    after = metrics(new_text)
-    accept, reason = verdict(before, after)
+    ot = args.orphan_target
+    before = metrics(old_text, orphan_target=ot)
+    after = metrics(new_text, orphan_target=ot)
+    accept, reason = verdict(before, after, orphan_target=ot)
 
     result = {
         "page": str(page),

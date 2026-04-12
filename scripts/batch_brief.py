@@ -57,6 +57,70 @@ def visited_in_current_epoch(log_text: str) -> set:
     return set(re.findall(r'iterate:\s*([^\s|]+)', tail))
 
 
+def page_learning_progress(log_text: str) -> dict:
+    """Parse log for per-page accept/reject counts across ALL epochs.
+
+    Returns {page_stem: {"accepts": int, "rejects": int}}.
+    Used to compute a curiosity-inspired exploration signal:
+    pages with many rejects and few accepts are "stuck" and should be
+    deprioritized in favor of pages where progress is happening
+    (Oudeyer/Schmidhuber learning-progress heuristic).
+    """
+    if not log_text:
+        return {}
+    history = {}
+    page_re = re.compile(r'-\s+(\S+\.md)\s*:')
+    section = None  # "accepted" or "rejected"
+    for line in log_text.split("\n"):
+        upper = line.strip().upper()
+        if upper.startswith("ACCEPTED"):
+            section = "accepted"
+            continue
+        elif upper.startswith("REJECTED"):
+            section = "rejected"
+            continue
+        elif line.startswith("##") or line.startswith("###"):
+            if "batch" not in line.lower() and "detail" not in line.lower():
+                section = None
+            continue
+
+        if section and line.strip().startswith("-"):
+            m = page_re.match(line.strip())
+            if m:
+                stem = Path(m.group(1)).stem.lower()
+                if stem not in history:
+                    history[stem] = {"accepts": 0, "rejects": 0}
+                if section == "accepted":
+                    history[stem]["accepts"] += 1
+                else:
+                    history[stem]["rejects"] += 1
+    return history
+
+
+def stagnation_penalty(page_stem: str, history: dict) -> float:
+    """Penalty multiplier for stuck pages (higher = deprioritize).
+
+    Never-visited pages: 1.0 (full priority — explore the unknown).
+    Progressing pages (accept rate > 50%): 1.0 (exploit momentum).
+    Stuck pages (accept rate < 30%, 3+ visits): up to 0.3 (heavy penalty).
+
+    The composite score is multiplied by this factor for sorting, so
+    pages with high composite but low stagnation_penalty bubble down.
+    """
+    if page_stem not in history:
+        return 1.0  # never visited — full curiosity priority
+    h = history[page_stem]
+    visits = h["accepts"] + h["rejects"]
+    if visits < 2:
+        return 1.0  # not enough data
+    accept_rate = h["accepts"] / visits
+    if accept_rate >= 0.5:
+        return 1.0  # progressing — keep going
+    # Stuck: penalty increases with visit count
+    # 2 visits: 0.7, 3 visits: 0.5, 5+ visits: 0.3
+    return max(0.3, 1.0 - (visits - 1) * 0.15)
+
+
 def vault_snippet(db_path: Path, query: str) -> Optional[dict]:
     if not db_path.exists() or not query.strip():
         return None
@@ -76,7 +140,8 @@ def vault_snippet(db_path: Path, query: str) -> Optional[dict]:
     return None
 
 
-LIVE_DIMS = {"crossref_sparsity", "orphan_rate", "unsourced_density"}
+LIVE_DIMS = {"crossref_sparsity", "orphan_rate", "unsourced_density",
+             "contradictions", "vault_coverage_gap", "query_misses"}
 
 
 def worst_live_dim(scores: dict) -> str:
@@ -173,10 +238,20 @@ def main():
     log_path = wiki_dir / "log.md"
     log_text = log_path.read_text() if log_path.exists() else ""
     visited = visited_in_current_epoch(log_text)
+    history = page_learning_progress(log_text)
 
     non_source = [r for r in results if not r["page"].startswith("sources/")]
     unvisited = [r for r in non_source if r["page"] not in visited]
     pool = unvisited if unvisited else non_source
+
+    # Re-sort by composite × stagnation_penalty (Oudeyer/Schmidhuber).
+    # Pages where the system is stuck get deprioritized; never-visited
+    # and actively-progressing pages bubble up.
+    for r in pool:
+        stem = Path(r["page"]).stem.lower()
+        r["_priority"] = r["scores"]["composite"] * stagnation_penalty(stem, history)
+    pool.sort(key=lambda r: r["_priority"], reverse=True)
+
     targets = pool[: args.n]
 
     all_titles = {Path(r["page"]).stem.lower() for r in results}

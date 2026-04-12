@@ -120,40 +120,151 @@ def query_misses(page_stem: str, log_text: str) -> float:
     return round(fallbacks / len(relevant), 2)
 
 
-def contradictions(text: str) -> float:
-    """Fraction of claims with contradicting evidence.
+NEGATION_WORDS = {"not", "no", "never", "neither", "nor", "without",
+                   "cannot", "can't", "doesn't", "don't", "isn't", "aren't",
+                   "wasn't", "weren't", "won't", "wouldn't", "shouldn't",
+                   "couldn't", "unlikely", "false", "incorrect", "wrong"}
 
-    Stub for v1: returns 0.0. Full implementation would:
-    1. Extract each sourced claim
-    2. Search vault for same topic
-    3. Use LLM to judge contradiction
+
+def _extract_sourced_claims(text: str) -> list:
+    """Extract lines with (vault:...) citations as sourced claim strings."""
+    claims = []
+    for line in text.split("\n"):
+        s = line.strip()
+        if "(vault:" in s and len(s.split()) >= 4:
+            claims.append(s)
+    return claims
+
+
+def _significant_words(text: str) -> set:
+    """Extract lowercase content words (>3 chars, no stopwords).
+
+    Strips (vault:...) citations and [[wikilink]] markup before extraction
+    to avoid false matches on vault filenames and link syntax.
     """
-    return 0.0
+    stop = {"the", "and", "for", "are", "was", "were", "been", "being",
+            "have", "has", "had", "with", "from", "that", "this", "which",
+            "their", "there", "about", "also", "more", "than", "into",
+            "some", "only", "other", "such", "each", "used", "using",
+            "source", "material", "related", "vault", "wiki", "wikipedia",
+            "extracted"}
+    # Strip vault citations and wikilinks before word extraction
+    cleaned = re.sub(r"\(vault:[^)]*\)", "", text)
+    cleaned = re.sub(r"\[\[[^\]]*\]\]", "", cleaned)
+    words = re.findall(r"[a-z]{4,}", cleaned.lower())
+    return {w for w in words if w not in stop}
 
 
-def freshness_gap(text: str) -> float:
-    """Fraction of cited sources that are stale when newer ones exist.
+def _has_negation(text: str) -> bool:
+    """Check if text contains negation words."""
+    words = set(re.findall(r"[a-z']+", text.lower()))
+    return bool(words & NEGATION_WORDS)
 
-    Stub for v1: returns 0.0. Full implementation would:
-    1. Parse source dates from vault metadata
-    2. Search vault for newer sources on same topics
-    3. Score = stale_sources / total_sources
+
+def contradictions(text: str, all_page_claims: dict, own_stem: str) -> float:
+    """Fraction of sourced claims that potentially contradict another page.
+
+    For each sourced claim on this page, finds claims on other pages that
+    share >= 4 distinctive content words but differ in negation polarity.
+    Requires at least one shared word > 6 chars to avoid false positives
+    from common short words. Deterministic, no LLM.
+
+    Source stubs (pages in sources/) are excluded from cross-comparison
+    since their boilerplate text shares words without making factual claims.
     """
-    return 0.0
+    own_claims = _extract_sourced_claims(text)
+    if not own_claims:
+        return 0.0
+
+    # Filter out source stubs from comparison pool
+    concept_claims = {k: v for k, v in all_page_claims.items()
+                      if not k.startswith("sources/")}
+
+    flagged = 0
+    for claim in own_claims:
+        claim_words = _significant_words(claim)
+        claim_neg = _has_negation(claim)
+        found_tension = False
+        for other_stem, other_claims in concept_claims.items():
+            if other_stem == own_stem or found_tension:
+                break
+            for other_claim in other_claims:
+                other_words = _significant_words(other_claim)
+                shared = claim_words & other_words
+                # Require heavy overlap with multiple distinctive words
+                # to avoid false positives in a densely-connected wiki
+                distinctive = [w for w in shared if len(w) > 6]
+                if len(shared) >= 5 and len(distinctive) >= 2:
+                    if claim_neg != _has_negation(other_claim):
+                        flagged += 1
+                        found_tension = True
+                        break
+
+    return round(min(1.0, flagged / len(own_claims)), 2)
+
+
+def vault_coverage_gap(page_stem: str, text: str, vault_db_path) -> float:
+    """Fraction of relevant vault material not cited on this page.
+
+    Queries vault.db FTS (BM25) for the page's topic. Counts how many of
+    the top vault hits aren't cited via (vault:...). Higher = more relevant
+    source material that this page hasn't incorporated yet. Measures
+    curiosity gap: how much unexplored ground exists in the vault.
+
+    Returns 0.0 if vault.db doesn't exist or has no relevant hits.
+    """
+    if vault_db_path is None or not vault_db_path.exists():
+        return 0.0
+
+    query = page_stem.replace("-", " ").replace("_", " ")
+    if len(query) < 3:
+        return 0.0
+
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(vault_db_path))
+        rows = conn.execute(
+            "SELECT path FROM sources WHERE sources MATCH ? "
+            "ORDER BY bm25(sources) LIMIT 10",
+            (query,),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return 0.0
+
+    if not rows:
+        return 0.0
+
+    text_lower = text.lower()
+    uncited = 0
+    for (path,) in rows:
+        # Check both (vault:filename) and bare filename mentions
+        if f"(vault:{path})" not in text_lower and path.lower() not in text_lower:
+            uncited += 1
+
+    return round(uncited / len(rows), 2)
 
 
 def compute_all(wiki_dir: Path) -> list:
     """Score every page under wiki_dir. Sorted worst-first by composite.
 
-    Two passes: gather inbound-link counts across the whole wiki, then score
-    each page. orphan_rate and crossref_sparsity are live signals;
-    contradictions and freshness_gap remain stubs that return 0.
+    Three passes: (1) gather inbound-link counts, (2) gather sourced claims
+    for cross-page contradiction detection, (3) score each page.
+
+    All six dimensions are now live with real implementations:
+    - crossref_sparsity (0.25) — outbound link quality
+    - orphan_rate (0.25) — inbound link coverage
+    - unsourced_density (0.20) — citation coverage
+    - contradictions (0.10) — cross-page factual tension
+    - vault_coverage_gap (0.10) — unexplored vault material
+    - query_misses (0.10) — vault fallback frequency in queries
     """
     pages = wiki_pages_in(wiki_dir)
     pages_text = {p: p.read_text() for p in pages}
     titles = {p.stem.lower() for p in pages}
     log_path = wiki_dir / "log.md"
     log_text = log_path.read_text() if log_path.exists() else ""
+    vault_db_path = wiki_dir.parent / "vault" / "vault.db"
 
     # Pass 1: global inbound-link count per title (excluding self-links)
     inbound = {t: 0 for t in titles}
@@ -166,23 +277,36 @@ def compute_all(wiki_dir: Path) -> list:
             if f"[[{t}]]" in text_lower or f"[[{t}|" in text_lower:
                 inbound[t] += 1
 
-    # Pass 2: per-page scoring
+    # Pass 2: gather sourced claims per page for contradiction detection.
+    # Keys use relative path so contradictions() can filter source stubs.
+    all_page_claims = {}
+    for page, text in pages_text.items():
+        claims = _extract_sourced_claims(text)
+        if claims:
+            rel = str(page.relative_to(wiki_dir))
+            all_page_claims[rel] = claims
+
+    # Pass 3: per-page scoring
     results = []
     for page, text in pages_text.items():
         own = page.stem.lower()
         scores = {
-            "contradictions": contradictions(text),
-            "freshness_gap": freshness_gap(text),
             "crossref_sparsity": crossref_sparsity(text, titles, own),
-            "query_misses": query_misses(page.stem, log_text),
             "orphan_rate": orphan_rate(own, inbound),
             "unsourced_density": unsourced_density(text),
+            "contradictions": contradictions(text, all_page_claims,
+                                             str(page.relative_to(wiki_dir))),
+            "vault_coverage_gap": vault_coverage_gap(own, text, vault_db_path),
+            "query_misses": query_misses(page.stem, log_text),
         }
         scores["composite"] = round(
-            0.35 * scores["crossref_sparsity"]
-            + 0.35 * scores["orphan_rate"]
-            + 0.30 * scores["unsourced_density"],
-            3
+            0.25 * scores["crossref_sparsity"]
+            + 0.25 * scores["orphan_rate"]
+            + 0.20 * scores["unsourced_density"]
+            + 0.10 * scores["contradictions"]
+            + 0.10 * scores["vault_coverage_gap"]
+            + 0.10 * scores["query_misses"],
+            3,
         )
         results.append({
             "page": str(page.relative_to(wiki_dir)),

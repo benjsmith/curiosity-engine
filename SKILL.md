@@ -142,19 +142,16 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 2. Present ranked results (worst first). Explain each problem dimension.
 3. Append summary to `wiki/log.md`.
 
-Lint dimensions (all 0-1, higher = worse). Composite uses only live dimensions; stub dimensions are computed for diagnostics but have zero weight until their implementations are real.
+Lint dimensions (all 0-1, higher = worse). All six dimensions are now live with real implementations.
 
-Live dimensions (contribute to composite):
-- **crossref_sparsity** (0.35) — entities/concepts mentioned but not `[[linked]]`. Self-references excluded (the epoch-5/2026-04-11 self-link reward hack is closed).
-- **orphan_rate** (0.35) — pages with few inbound wikilinks from elsewhere in the wiki. Complementary to crossref_sparsity: catches under-connection that outbound-only metrics miss.
-- **unsourced_density** (0.30) — fraction of substantive prose lines with no `(vault:...)` citation. Second live signal independent of wikilink counting.
+- **crossref_sparsity** (0.25) — entities/concepts mentioned but not `[[linked]]`. Self-references excluded.
+- **orphan_rate** (0.25) — pages with few inbound wikilinks from elsewhere in the wiki.
+- **unsourced_density** (0.20) — fraction of substantive prose lines with no `(vault:...)` citation.
+- **contradictions** (0.10) — cross-page factual tension. For each sourced claim, checks other pages for claims sharing 5+ significant content words but differing in negation polarity. Deterministic, no LLM. Source stubs excluded from comparison. Incentivizes investigating and resolving conflicting information.
+- **vault_coverage_gap** (0.10) — fraction of relevant vault material not cited. Queries vault.db FTS (BM25) for the page's topic; scores how many of the top 10 vault hits aren't cited. Measures the curiosity gap: how much unexplored ground exists in the vault for this topic.
+- **query_misses** (0.10) — past queries needing vault fallback for this page. Returns 0.5 for pages with no query history.
 
-Stub dimensions (weight 0 — computed for diagnostics, not scored):
-- **contradictions** — claims disputed by other pages/vault. Stub in v1, returns 0.
-- **freshness_gap** — stale sources when newer exist. Stub in v1, returns 0.
-- **query_misses** — past queries needing vault fallback for this page. Returns 0.5 for pages with no query history.
-
-When tasks #34/#35/#36 land real implementations for these dimensions, restore their weights and re-normalize. The composite formula lives in `lint_scores.py compute_all()` — it's a one-line change.
+Composite formula lives in `lint_scores.py compute_all()`.
 
 ### SWEEP — "sweep", "clean up", "hygiene pass"
 
@@ -179,7 +176,12 @@ Mechanical whole-wiki hygiene. Distinct from ITERATE's slow semantic ratchet: SW
 
 Inner improvement loop. Four phases: **brief → fan-out → apply → review**. Deterministic Python stages everything a worker needs; workers are pure "propose one edit"; scoring and commits are one batched deterministic pass. Context per worker is flat, parallelism is linear in `parallel_workers`, and the main session never sees raw lint dumps.
 
-Read `wiki/.curator.json` if present for `surgical_model`, `synthesis_model`, `parallel_workers`, `batch_size`; otherwise defaults.
+Read `wiki/.curator.json` if present for model routing and batch tuning:
+- `surgical_model` (default "haiku") — fast model for crossref/orphan fixes
+- `synthesis_model` (default "sonnet") — stronger model for citation and contradiction work
+- `reviewer_model` (default "sonnet") — model for EVOLVE spot-checks and schema proposals
+- `parallel_workers` (default 5) — concurrent worker subagents per batch
+- `batch_size` (default 10) — pages per batch
 
 **Phase 1 — Brief.** One command:
 
@@ -188,6 +190,8 @@ python3 <skill_path>/scripts/batch_brief.py wiki --n <batch_size>
 ```
 
 Returns a JSON array. Each entry is a self-contained brief: `{page, worst_dim, scores, hint, job_type, page_text, vault_snippet}`. `job_type` is `surgical` or `synthesis`. Workers get one brief and nothing else — no lint scan, no vault search, no index read. **Source stubs (`sources/` pages) are excluded from batching** — they are mechanical cleanup targets handled by `sweep.py fix-source-boilerplate`, not editorial-judgment targets for ITERATE workers.
+
+**Learning-progress prioritization (Oudeyer/Schmidhuber):** batch_brief parses log.md for per-page accept/reject history across all epochs. Pages that have been targeted multiple times but keep getting rejected (low accept rate) are deprioritized in favor of never-visited pages (exploration) and actively-progressing pages (exploit momentum). This prevents the system from burning cycles on structurally stuck pages — a curiosity-inspired signal that directs attention where learning is happening fastest.
 
 **Orphan-rate redirect:** when a target page's worst dimension is `orphan_rate`, batch_brief performs a reverse lookup: it finds a concept/entity page that discusses the orphan's topic but doesn't link to it, and emits a brief targeting that *linker* page instead. The hint tells the worker to add `[[orphan-stem]]` at a natural point. This is the only way to reduce orphan_rate — editing the orphan page itself doesn't help; other pages must add inbound links. The brief includes an `orphan_target` field so the main session can track which orphan was being fixed.
 
@@ -226,7 +230,7 @@ Worker prompt template (embed verbatim, substituting `<BRIEF_JSON>`):
 **Phase 3 — Apply.** Main session collects the N worker JSON outputs. For each proposal:
 
 1. Compute the candidate new full page text by replacing `old_string` with `new_string` in the current `wiki/<page>` contents (single replacement). If `old_string` is not found, reject and log.
-2. Pipe candidate text to `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin`. The script runs the compression-progress rules, writes the file on accept, leaves it untouched on reject, and prints a one-line JSON verdict.
+2. Pipe candidate text to `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin [--orphan-target <stem>]`. The script runs the compression-progress rules, writes the file on accept, leaves it untouched on reject, and prints a one-line JSON verdict. Pass `--orphan-target` for orphan-redirect briefs (from `brief.orphan_target`) — when the target link is added, the edit auto-accepts without needing to pass the 2-of-3 progress gate. Wikilink counting uses lint-matchable links (hyphen-form, no spaces in target) so that Title Case→hyphen conversions register as real progress.
 3. Collect accepts and rejects.
 
 **Phase 4 — Commit + review.** One batched commit for the whole batch:
