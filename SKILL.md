@@ -120,9 +120,11 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 6. Create or update wiki pages in appropriate subdirectory (entities/, concepts/, etc.).
 7. Backfill source stubs deterministically: `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`. This creates a `wiki/sources/<stem>.md` placeholder for every vault extraction that doesn't have one — prevents `wiki/sources/` from ending up empty after bulk INGEST (which was observed on the 109-file test run of 2026-04-11).
 8. Clean source stubs: `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki`. Strips Wikipedia nav boilerplate and adds wikilinks to related pages.
-9. Refresh the index: `python3 <skill_path>/scripts/sweep.py fix-index wiki`.
-10. Append to `wiki/log.md` with timestamp.
-11. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
+9. Rename source stubs to citation-style filenames: `python3 <skill_path>/scripts/sweep.py rename-sources wiki`. Converts timestamp-URL stems to `{topic}-{origin}-{year}` (Wikipedia) or `{topic}-{author}-{year}` (papers). Reads vault extraction frontmatter for origin/date and header lines for author.
+10. Set display names: `python3 <skill_path>/scripts/sweep.py fix-display-names wiki`. Adds type-prefix titles to all page frontmatter (`[con]`, `[ent]`, `[ana]`, `[src]`). Source pages get rich citation titles like `[src] Deep Learning — Wikipedia, 2026`. Requires Obsidian's "Use frontmatter title as display name" setting.
+11. Refresh the index: `python3 <skill_path>/scripts/sweep.py fix-index wiki`.
+12. Append to `wiki/log.md` with timestamp.
+13. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -162,6 +164,8 @@ Mechanical whole-wiki hygiene. Distinct from ITERATE's slow semantic ratchet: SW
 2. **Deterministic fixes** — for issues with a single correct answer:
    - `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki` — backfills any vault extraction missing a `wiki/sources/<stem>.md` stub.
    - `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki` — strips Wikipedia nav boilerplate from source stubs, adds `[[hyphen-stem]]` wikilinks to related wiki pages based on title matching. No LLM needed. Run after `fix-source-stubs` to clean up the auto-generated stub bodies. ITERATE's `batch_brief.py` excludes source pages, so this is the only way source stubs get improved.
+   - `python3 <skill_path>/scripts/sweep.py rename-sources wiki` — renames source stubs from timestamp-URL form to citation-style stems (`deep-learning-wikipedia-2026`, `attention-vaswani-2017`). Parses vault extraction frontmatter for origin/year; parses `# Title (Author, Year)` headers for papers. Rewrites wikilinks across the wiki safely (only bare stems unique to sources; folder-qualified `[[sources/...]]` forms always). Run after `fix-source-boilerplate`.
+   - `python3 <skill_path>/scripts/sweep.py fix-display-names wiki` — adds type-prefix display titles to all page frontmatter: `[con]`, `[ent]`, `[ana]`, `[src]`. Source pages get rich citation titles (e.g. `[src] Deep Learning — Wikipedia, 2026`). Idempotent — pages already prefixed are skipped. Requires Obsidian's "Use frontmatter title as display name" setting for graph-view labels.
    - `python3 <skill_path>/scripts/sweep.py fix-index wiki` — rewrites `wiki/index.md` to match on-disk pages.
 3. **LLM-decided fixes** — for issues that need judgment:
    - **duplicate_slugs**: pick canonical form (usually the one with more sources or more inbound links), merge contents, delete the other with `git -C wiki rm`, rewrite references.
