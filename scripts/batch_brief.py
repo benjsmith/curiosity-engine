@@ -76,17 +76,52 @@ def vault_snippet(db_path: Path, query: str) -> Optional[dict]:
     return None
 
 
+LIVE_DIMS = {"crossref_sparsity", "orphan_rate", "unsourced_density"}
+
+
+def worst_live_dim(scores: dict) -> str:
+    """Highest-value live dimension. Ignores stub dims (zero composite weight)."""
+    live = {k: v for k, v in scores.items() if k in LIVE_DIMS and v > 0}
+    return max(live, key=live.get) if live else "crossref_sparsity"
+
+
+def find_orphan_linker(orphan_stem: str, all_page_texts: dict,
+                       assigned: set) -> Optional[tuple]:
+    """Find a concept/entity page that discusses orphan's topic but doesn't link to it.
+
+    Returns (relative_page_path: str, page_text: str) or None.
+    """
+    stem_words = {w for w in orphan_stem.replace("-", " ").split() if len(w) > 3}
+    if not stem_words:
+        return None
+
+    candidates = []
+    for rel_path, text in all_page_texts.items():
+        page_stem = Path(rel_path).stem.lower()
+        if page_stem == orphan_stem or page_stem in assigned:
+            continue
+        text_lower = text.lower()
+        if f"[[{orphan_stem}]]" in text_lower or f"[[{orphan_stem}|" in text_lower:
+            continue
+        mentions = sum(1 for w in stem_words if w in text_lower)
+        if mentions > 0:
+            candidates.append((rel_path, text, mentions))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[2], reverse=True)
+    return (candidates[0][0], candidates[0][1])
+
+
 def build_brief(wiki_dir: Path, result: dict, all_titles: set, db_path: Path) -> dict:
     page_path = wiki_dir / result["page"]
     text = page_path.read_text()
     scores = result["scores"]
     own_stem = page_path.stem.lower()
 
-    active_dims = {k: v for k, v in scores.items()
-                   if k != "composite" and v > 0}
-    worst_dim = max(active_dims, key=active_dims.get) if active_dims else "crossref_sparsity"
+    wdim = worst_live_dim(scores)
 
-    if worst_dim == "crossref_sparsity":
+    if wdim == "crossref_sparsity":
         missing = missing_wikilinks(text, all_titles, own_stem)
         if missing:
             hint = "add missing wikilinks in exact hyphen form: " + ", ".join(
@@ -95,27 +130,18 @@ def build_brief(wiki_dir: Path, result: dict, all_titles: set, db_path: Path) ->
         else:
             hint = "add at least one new [[hyphen-stem]] wikilink to a related page"
         job_type = "surgical"
-    elif worst_dim == "orphan_rate":
+    elif wdim == "orphan_rate":
         hint = (
             "this page has no inbound wikilinks. Find 2-3 related pages that "
             "should mention it and add [[" + own_stem + "]] to them instead of "
             "editing this page."
         )
         job_type = "surgical"
-    elif worst_dim == "unsourced_density":
+    elif wdim == "unsourced_density":
         hint = (
             "most prose lines lack a (vault:...) citation. Add citations to "
             "substantive claims using existing vault sources; do not invent sources."
         )
-        job_type = "synthesis"
-    elif worst_dim == "query_misses":
-        hint = "broaden vault sourcing: this page has underperformed on past queries"
-        job_type = "synthesis"
-    elif worst_dim == "contradictions":
-        hint = "resolve flagged contradictions by reconciling or scoping claims"
-        job_type = "synthesis"
-    elif worst_dim == "freshness_gap":
-        hint = "replace or supplement stale citations with newer vault sources"
         job_type = "synthesis"
     else:
         hint = "tighten prose; add one sourced claim"
@@ -126,7 +152,7 @@ def build_brief(wiki_dir: Path, result: dict, all_titles: set, db_path: Path) ->
 
     return {
         "page": result["page"],
-        "worst_dim": worst_dim,
+        "worst_dim": wdim,
         "scores": scores,
         "hint": hint,
         "job_type": job_type,
@@ -153,12 +179,55 @@ def main():
     pool = unvisited if unvisited else non_source
     targets = pool[: args.n]
 
-    # Titles in the exact hyphen-stemmed form that lint_scores.crossref_sparsity
-    # credits — matches what a worker must literally type for the lint to score it.
     all_titles = {Path(r["page"]).stem.lower() for r in results}
     db_path = wiki_dir.parent / "vault" / "vault.db"
 
-    briefs = [build_brief(wiki_dir, r, all_titles, db_path) for r in targets]
+    # Pre-read all non-source pages for orphan linker reverse lookups.
+    all_page_texts = {}
+    for r in non_source:
+        p = wiki_dir / r["page"]
+        all_page_texts[r["page"]] = p.read_text()
+
+    # Track all pages assigned to a worker — prevents two workers editing
+    # the same file in one batch (collision).
+    assigned_pages = set()
+    briefs = []
+    for r in targets:
+        wdim = worst_live_dim(r["scores"])
+
+        if wdim == "orphan_rate":
+            orphan_stem = Path(r["page"]).stem.lower()
+            linker = find_orphan_linker(
+                orphan_stem, all_page_texts, assigned_pages
+            )
+            if linker:
+                linker_page, linker_text = linker
+                assigned_pages.add(Path(linker_page).stem.lower())
+                query = orphan_stem.replace("-", " ")
+                briefs.append({
+                    "page": linker_page,
+                    "worst_dim": "orphan_rate",
+                    "scores": r["scores"],
+                    "hint": (
+                        f"add a [[{orphan_stem}]] wikilink to this page. "
+                        f"It discusses the topic but doesn't link to the "
+                        f"{orphan_stem} page, which is an orphan with no "
+                        f"inbound links. Find the most natural place in the "
+                        f"prose to insert the link."
+                    ),
+                    "job_type": "surgical",
+                    "page_text": linker_text,
+                    "vault_snippet": vault_snippet(db_path, query),
+                    "orphan_target": orphan_stem,
+                })
+                continue
+
+        page_stem = Path(r["page"]).stem.lower()
+        if page_stem in assigned_pages:
+            continue
+        assigned_pages.add(page_stem)
+        briefs.append(build_brief(wiki_dir, r, all_titles, db_path))
+
     print(json.dumps(briefs, indent=2))
 
 
