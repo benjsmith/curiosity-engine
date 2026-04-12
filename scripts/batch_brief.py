@@ -148,8 +148,9 @@ def main():
     log_text = log_path.read_text() if log_path.exists() else ""
     visited = visited_in_current_epoch(log_text)
 
-    unvisited = [r for r in results if r["page"] not in visited]
-    pool = unvisited if unvisited else results
+    non_source = [r for r in results if not r["page"].startswith("sources/")]
+    unvisited = [r for r in non_source if r["page"] not in visited]
+    pool = unvisited if unvisited else non_source
     targets = pool[: args.n]
 
     # Titles in the exact hyphen-stemmed form that lint_scores.crossref_sparsity

@@ -48,8 +48,15 @@ def verdict(before: dict, after: dict) -> tuple:
     tpc_progress = tpc(after) < tpc(before)
     link_progress = after["wikilinks"] > before["wikilinks"]
     claim_progress = after["claims"] > before["claims"]
-    if not (tpc_progress or link_progress or claim_progress):
-        return False, "no progress: tpc flat, no new wikilink, no new sourced claim"
+    gates_passed = sum([tpc_progress, link_progress, claim_progress])
+    required = 2 if before["wikilinks"] > 0 else 1
+    if gates_passed < required:
+        return False, (
+            f"insufficient progress ({gates_passed}/{required} gates): "
+            f"tpc {'down' if tpc_progress else 'flat'}, "
+            f"wikilinks {'up' if link_progress else 'flat'}, "
+            f"claims {'up' if claim_progress else 'flat'}"
+        )
     parts = []
     if tpc_progress:
         parts.append(f"tpc {tpc(before):.1f}->{tpc(after):.1f}")

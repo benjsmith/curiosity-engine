@@ -119,9 +119,10 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 5. Identify key entities, concepts, claims.
 6. Create or update wiki pages in appropriate subdirectory (entities/, concepts/, etc.).
 7. Backfill source stubs deterministically: `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`. This creates a `wiki/sources/<stem>.md` placeholder for every vault extraction that doesn't have one — prevents `wiki/sources/` from ending up empty after bulk INGEST (which was observed on the 109-file test run of 2026-04-11).
-8. Refresh the index: `python3 <skill_path>/scripts/sweep.py fix-index wiki`.
-9. Append to `wiki/log.md` with timestamp.
-10. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
+8. Clean source stubs: `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki`. Strips Wikipedia nav boilerplate and adds wikilinks to related pages.
+9. Refresh the index: `python3 <skill_path>/scripts/sweep.py fix-index wiki`.
+10. Append to `wiki/log.md` with timestamp.
+11. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -139,13 +140,19 @@ Optional `wiki/.curator.json` tunes the improvement loops. Absent file = default
 2. Present ranked results (worst first). Explain each problem dimension.
 3. Append summary to `wiki/log.md`.
 
-Lint dimensions (all 0-1, higher = worse). Composite is a weighted average; weights in parentheses:
-- **contradictions** (0.10) — claims disputed by other pages/vault. Stub in v1, returns 0.
-- **freshness_gap** (0.10) — stale sources when newer exist. Stub in v1, returns 0.
-- **crossref_sparsity** (0.25) — entities/concepts mentioned but not `[[linked]]`. Self-references excluded (the epoch-5/2026-04-11 self-link reward hack is closed).
-- **query_misses** (0.10) — past queries needing vault fallback for this page. Returns 0.5 for pages with no query history.
-- **orphan_rate** (0.25) — pages with few inbound wikilinks from elsewhere in the wiki. Complementary to crossref_sparsity: catches under-connection that outbound-only metrics miss.
-- **unsourced_density** (0.20) — fraction of substantive prose lines with no `(vault:...)` citation. Second live signal independent of wikilink counting.
+Lint dimensions (all 0-1, higher = worse). Composite uses only live dimensions; stub dimensions are computed for diagnostics but have zero weight until their implementations are real.
+
+Live dimensions (contribute to composite):
+- **crossref_sparsity** (0.35) — entities/concepts mentioned but not `[[linked]]`. Self-references excluded (the epoch-5/2026-04-11 self-link reward hack is closed).
+- **orphan_rate** (0.35) — pages with few inbound wikilinks from elsewhere in the wiki. Complementary to crossref_sparsity: catches under-connection that outbound-only metrics miss.
+- **unsourced_density** (0.30) — fraction of substantive prose lines with no `(vault:...)` citation. Second live signal independent of wikilink counting.
+
+Stub dimensions (weight 0 — computed for diagnostics, not scored):
+- **contradictions** — claims disputed by other pages/vault. Stub in v1, returns 0.
+- **freshness_gap** — stale sources when newer exist. Stub in v1, returns 0.
+- **query_misses** — past queries needing vault fallback for this page. Returns 0.5 for pages with no query history.
+
+When tasks #34/#35/#36 land real implementations for these dimensions, restore their weights and re-normalize. The composite formula lives in `lint_scores.py compute_all()` — it's a one-line change.
 
 ### SWEEP — "sweep", "clean up", "hygiene pass"
 
@@ -154,6 +161,7 @@ Mechanical whole-wiki hygiene. Distinct from ITERATE's slow semantic ratchet: SW
 1. **Scan** — `python3 <skill_path>/scripts/sweep.py scan wiki` → JSON report covering dead wikilinks, duplicate slugs (fuzzy-normalized), orphans, frontmatter issues, index.md drift, missing source stubs, and a total `hygiene_debt` integer.
 2. **Deterministic fixes** — for issues with a single correct answer:
    - `python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki` — backfills any vault extraction missing a `wiki/sources/<stem>.md` stub.
+   - `python3 <skill_path>/scripts/sweep.py fix-source-boilerplate wiki` — strips Wikipedia nav boilerplate from source stubs, adds `[[hyphen-stem]]` wikilinks to related wiki pages based on title matching. No LLM needed. Run after `fix-source-stubs` to clean up the auto-generated stub bodies. ITERATE's `batch_brief.py` excludes source pages, so this is the only way source stubs get improved.
    - `python3 <skill_path>/scripts/sweep.py fix-index wiki` — rewrites `wiki/index.md` to match on-disk pages.
 3. **LLM-decided fixes** — for issues that need judgment:
    - **duplicate_slugs**: pick canonical form (usually the one with more sources or more inbound links), merge contents, delete the other with `git -C wiki rm`, rewrite references.
@@ -175,7 +183,7 @@ Read `wiki/.curator.json` if present for `surgical_model`, `synthesis_model`, `p
 python3 <skill_path>/scripts/batch_brief.py wiki --n <batch_size>
 ```
 
-Returns a JSON array. Each entry is a self-contained brief: `{page, worst_dim, scores, hint, job_type, page_text, vault_snippet}`. `job_type` is `surgical` or `synthesis`. Workers get one brief and nothing else — no lint scan, no vault search, no index read.
+Returns a JSON array. Each entry is a self-contained brief: `{page, worst_dim, scores, hint, job_type, page_text, vault_snippet}`. `job_type` is `surgical` or `synthesis`. Workers get one brief and nothing else — no lint scan, no vault search, no index read. **Source stubs (`sources/` pages) are excluded from batching** — they are mechanical cleanup targets handled by `sweep.py fix-source-boilerplate`, not editorial-judgment targets for ITERATE workers.
 
 **Phase 2 — Fan-out.** Fire `parallel_workers` Agent subagents **in one tool-call message** so they run concurrently. For each brief:
 - `subagent_type: "general-purpose"`
@@ -238,7 +246,7 @@ Outer meta-loop. Fixed 5-minute wallclock (Karpathy-style autoresearch epoch). R
 2. **Inner loop.** Run ITERATE batches back-to-back until wallclock reaches `epoch_seconds` (default 300). Stop mid-batch if the clock runs out. Count `accepts_total` across all batches.
 3. **Measure.** Compute `rate = (epoch_start_score - epoch_end_score) / max(accepts_total, 1)` — **improvement per accepted edit**, not per minute. (Positive = improving, since higher composite = worse.) This is deliberately wallclock-independent so larger batches from the parallel ITERATE pipeline don't artifactually look like decay. Also record `elapsed_minutes` and `delta_per_minute` for diagnostic purposes only.
 4. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check wiki/.evolve_guard.snapshot`. If any guarded script drifted, **abort the epoch, revert wiki HEAD to epoch start, log "hack attempt blocked: <details>", stop.** The guarded set is compress.py, lint_scores.py, batch_brief.py, score_diff.py, sweep.py — the whole staging and scoring pipeline.
-5. **Compare.** Find the previous epoch's `rate_per_accept` in `wiki/log.md` (`## evolve-epoch` blocks). If current `rate_per_accept` ≥ previous × 0.9, do nothing — accept the epoch.
+5. **Compare.** Find the previous epoch's `rate_per_accept` in `wiki/log.md` (`## evolve-epoch` blocks). If current `rate_per_accept` ≥ previous × 0.9, do nothing — accept the epoch. **Stop condition:** if `delta_per_epoch < 0.005` for 2 consecutive epochs, stop the EVOLVE run — the ratchet has diminishing returns. (The old `rate_per_accept < 0.002` threshold was mathematically unreachable for wikis with >50 pages because each single-page improvement dilutes across N pages.)
 6. **Schema proposal.** If the rate-per-accept is decaying: before editing `schema.md`, read the `## evolve-epoch` history and collect prior schema-edit proposals with their outcomes. Do NOT re-try a proposal that already failed. Propose ONE new edit and write it. Run a follow-up mini-epoch (one batch, ~60 s) and compare its rate-per-accept against `epoch_start_score`. If it did not improve, `git -C wiki checkout schema.md`, revert. Always log the attempt + outcome (even on revert) in `wiki/log.md` under a `## schema-proposal` block so the next EVOLVE can see what's already been tried and concluded about what works.
 7. **Epoch log.** Append a `## evolve-epoch` block to `wiki/log.md`:
 
@@ -262,6 +270,8 @@ notes: <what worked, what didn't — readable by future epochs>
 - Never edit `wiki/log.md` retroactively to inflate rates. Append-only.
 
 **On acceptance gates (context for readers of this skill):** the ITERATE acceptance test is enforced by `score_diff.py`, not `compress.py`. `compress.py` is a pure stats helper — it prints token counts and sourced-claim counts but does not accept or reject anything. `score_diff.py` is the gate: it runs the compression-progress rules in Python and writes the file only on accept. An earlier version of this skill left the enforcement implicit and workers self-graded; that was discovered and fixed in 2026-04-12.
+
+**Tiered acceptance:** `score_diff.py` requires more progress from pages that already have wikilinks. For pages with 0 existing wikilinks (fresh stubs), any 1 of 3 progress gates (tpc decrease, wikilink increase, claim increase) suffices. For pages with ≥1 existing wikilink, at least 2 of 3 gates must pass. This closes the "tpc-only escape hatch" where a 5-token trim on a dense page could pass without any semantic improvement (observed in epoch-1 maxwells-demon edit, 2026-04-12 baseline).
 
 ## Writing rules
 

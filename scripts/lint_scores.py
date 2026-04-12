@@ -179,12 +179,9 @@ def compute_all(wiki_dir: Path) -> list:
             "unsourced_density": unsourced_density(text),
         }
         scores["composite"] = round(
-            0.10 * scores["contradictions"]
-            + 0.10 * scores["freshness_gap"]
-            + 0.25 * scores["crossref_sparsity"]
-            + 0.10 * scores["query_misses"]
-            + 0.25 * scores["orphan_rate"]
-            + 0.20 * scores["unsourced_density"],
+            0.35 * scores["crossref_sparsity"]
+            + 0.35 * scores["orphan_rate"]
+            + 0.30 * scores["unsourced_density"],
             3
         )
         results.append({

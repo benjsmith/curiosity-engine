@@ -238,6 +238,110 @@ def cmd_fix_source_stubs(wiki_dir: Path):
                       "created_paths": created}, indent=2))
 
 
+WIKIPEDIA_BOILERPLATE = re.compile(
+    r"(?:Wikipedia\s+)?Jump to (?:content|navigation|search)|"
+    r"From Wikipedia,? the free encyclopedia|"
+    r"Main menu\b|"
+    r"Article\s+Talk\b|"
+    r"Read\s+Edit\s+View history\b|"
+    r"Tools\b.*?What links here|"
+    r"Categories?\s*:|"
+    r"Hidden categories?\s*:|"
+    r"This (?:article|page) (?:is about|needs|has)\b|"
+    r"^\s*\[\s*edit\s*\]\s*$|"
+    r"^\s*Contents\s*$|"
+    r"^\s*References\s*$|"
+    r"^\s*External links\s*$|"
+    r"^\s*See also\s*$|"
+    r"^\s*Notes\s*$|"
+    r"^\s*Further reading\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _extract_topic(stem: str) -> str:
+    """Pull the topic name from a source stub stem like '20260411-...-wiki-game-theory'."""
+    m = re.search(r"-wiki-(.+)$", stem)
+    if m:
+        return m.group(1)
+    m = re.search(r"-org-(.+)$", stem)
+    if m:
+        return m.group(1)
+    parts = stem.split("-")
+    for i, p in enumerate(parts):
+        if not p.isdigit() and p not in ("en", "wikipedia", "org", "wiki", "www", "http", "https"):
+            return "-".join(parts[i:])
+    return stem
+
+
+def cmd_fix_source_boilerplate(wiki_dir: Path):
+    """Strip Wikipedia nav boilerplate from source stubs, add wikilinks.
+
+    Deterministic: no LLM calls. Runs in under a second. For each source
+    stub, strips known boilerplate patterns and inserts [[hyphen-stem]]
+    wikilinks to related wiki pages based on title matching.
+    """
+    sources_dir = wiki_dir / "sources"
+    if not sources_dir.exists():
+        print(json.dumps({"fixed": 0, "skipped": 0}))
+        return
+
+    concept_entity_pages = [p for p in wiki_pages(wiki_dir)
+                            if not str(p.relative_to(wiki_dir)).startswith("sources/")]
+    ce_stems = {p.stem.lower() for p in concept_entity_pages}
+
+    fixed = 0
+    skipped = 0
+    for stub_path in sorted(sources_dir.glob("*.md")):
+        text = stub_path.read_text()
+        fm, body = read_frontmatter(text)
+
+        vault_citation = None
+        vault_match = re.search(r"\(vault:[^)]+\)", body)
+        if vault_match:
+            vault_citation = vault_match.group(0)
+
+        has_boilerplate = bool(WIKIPEDIA_BOILERPLATE.search(body))
+
+        title = fm.get("title", stub_path.stem.replace("-", " ").title())
+        topic = _extract_topic(stub_path.stem)
+        topic_words = set(topic.lower().replace("-", " ").replace("_", " ").split())
+        topic_words -= {"en", "wikipedia", "org", "wiki", "27s", "28"}
+
+        related_stems = []
+        for stem in sorted(ce_stems):
+            stem_words = set(stem.replace("-", " ").split())
+            if stem_words & topic_words and len(stem) > 3:
+                related_stems.append(stem)
+            if len(related_stems) >= 4:
+                break
+
+        topic_title = topic.replace("-", " ").replace("_", " ").title()
+
+        link_text = ""
+        if related_stems:
+            link_text = " Related: " + ", ".join(f"[[{s}]]" for s in related_stems) + "."
+
+        citation = vault_citation or ""
+        if citation and not citation.startswith(" "):
+            citation = " " + citation
+
+        fm_block = "---\n"
+        for k, v in fm.items():
+            fm_block += f"{k}: {v}\n"
+        fm_block += "---\n\n"
+
+        new_text = fm_block + f"Source material on {topic_title}." + link_text + citation + "\n"
+
+        if new_text != text:
+            stub_path.write_text(new_text)
+            fixed += 1
+        else:
+            skipped += 1
+
+    print(json.dumps({"fixed": fixed, "skipped": skipped}))
+
+
 def cmd_fix_index(wiki_dir: Path):
     """Rewrite wiki/index.md so it matches the pages on disk.
 
@@ -277,7 +381,7 @@ def cmd_fix_index(wiki_dir: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["scan", "fix-source-stubs", "fix-index"])
+    ap.add_argument("command", choices=["scan", "fix-source-stubs", "fix-source-boilerplate", "fix-index"])
     ap.add_argument("wiki", nargs="?", default="wiki")
     args = ap.parse_args()
 
@@ -290,6 +394,8 @@ def main():
         cmd_scan(wiki_dir)
     elif args.command == "fix-source-stubs":
         cmd_fix_source_stubs(wiki_dir)
+    elif args.command == "fix-source-boilerplate":
+        cmd_fix_source_boilerplate(wiki_dir)
     elif args.command == "fix-index":
         cmd_fix_index(wiki_dir)
 
