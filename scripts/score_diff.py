@@ -4,13 +4,17 @@
 Hard floors only — the opus judge handles nuanced quality review.
 These gates catch catastrophic regressions that no edit should cause:
   1. No citation loss: sourced_claims(after) >= sourced_claims(before)
-  2. No extreme bloat: tokens(after) <= tokens(before) * 2.0
-  3. New pages: ≥2 citations, ≥2 wikilinks, ≥100 words
+  2. No extreme raw-token bloat: raw_tokens(after) <= raw_tokens(before) * 2.0
+  3. New pages: >=2 citations, >=2 wikilinks, >=100 words
+
+Raw-token counting only — read-time compression (if any) is the caveman
+skill's job, not this gate's. The ratchet is about factual density, not
+written terseness.
 
 Usage:
     echo "<new text>" | python3 score_diff.py <page.md> --new-text-stdin
     python3 score_diff.py <page.md> --new-file <candidate.md>
-    python3 score_diff.py <page.md> --new-page --new-file <candidate.md>
+    python3 score_diff.py <page.md> --new-page --new-text-stdin
 
 Outputs one JSON line to stdout. Exit code always 0 on well-formed input.
 """
@@ -20,13 +24,21 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from compress import compress, token_count, sourced_claims  # noqa: E402
-
 WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
 
-def lint_matchable_links(text: str) -> int:
+def raw_tokens(text: str) -> int:
+    """Whitespace-split token count. Close enough for ratio gates."""
+    return len(text.split())
+
+
+def sourced_claims(text: str) -> int:
+    """Count lines containing a (vault:...) citation."""
+    return sum(1 for line in text.split("\n")
+               if "(vault:" in line and line.strip())
+
+
+def matchable_links(text: str) -> int:
     """Count wikilinks in hyphen-case form (no spaces)."""
     count = 0
     for m in WIKILINK_RE.finditer(text):
@@ -37,16 +49,15 @@ def lint_matchable_links(text: str) -> int:
 
 
 def metrics(text: str) -> dict:
-    comp = compress(text)
     return {
-        "tokens": token_count(comp),
+        "tokens": raw_tokens(text),
         "claims": max(sourced_claims(text), 1),
-        "wikilinks": lint_matchable_links(text),
+        "wikilinks": matchable_links(text),
     }
 
 
 def verdict(before: dict, after: dict) -> tuple:
-    """Minimal accept/reject: citation loss and extreme bloat only."""
+    """Minimal accept/reject: citation loss and extreme raw-token bloat only."""
     if after["claims"] < before["claims"]:
         return False, f"citation loss ({before['claims']}->{after['claims']})"
     if before["tokens"] > 0 and after["tokens"] > before["tokens"] * 2.0:
@@ -59,11 +70,11 @@ def new_page_verdict(text: str) -> tuple:
     m = metrics(text)
     words = len(text.split())
     if m["claims"] < 2:
-        return False, f"too few citations ({m['claims']}; need ≥2)"
+        return False, f"too few citations ({m['claims']}; need >=2)"
     if m["wikilinks"] < 2:
-        return False, f"too few wikilinks ({m['wikilinks']}; need ≥2)"
+        return False, f"too few wikilinks ({m['wikilinks']}; need >=2)"
     if words < 100:
-        return False, f"too short ({words} words; need ≥100)"
+        return False, f"too short ({words} words; need >=100)"
     return True, f"claims={m['claims']}, wikilinks={m['wikilinks']}, words={words}"
 
 

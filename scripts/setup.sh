@@ -74,7 +74,6 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(git -C */wiki rev-parse:*)",
       "Bash(git -C */wiki show:*)",
       "Bash(python3 $SKILL_ROOT/scripts/lint_scores.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/compress.py:*)",
       "Bash(python3 $SKILL_ROOT/scripts/vault_search.py:*)",
       "Bash(python3 $SKILL_ROOT/scripts/vault_index.py:*)",
       "Bash(python3 $SKILL_ROOT/scripts/local_ingest.py:*)",

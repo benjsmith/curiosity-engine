@@ -26,8 +26,10 @@ Subcommands
 
 Design notes
 ------------
-- sweep.py is guarded by evolve_guard.sh alongside compress/lint/score_diff/
-  epoch_summary. EVOLVE may not edit it.
+- sweep.py is workspace-agent-editable (lives at .curator/sweep.py). The
+  pristine reference copy ships with the skill at <skill>/scripts/sweep.py
+  and is hash-guarded — CURATE may edit the workspace copy but never the
+  reference.
 - Only the `fix-*` subcommands write. `scan` is pure read.
 - Uses only the stdlib. Runs in well under a second even on a 1000-page wiki.
 """
