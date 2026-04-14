@@ -26,7 +26,7 @@ from lint_scores import compute_all, wiki_pages_in, SKIP_FILES  # noqa: E402
 def dimension_distribution(results: list) -> dict:
     """Per-dimension: mean, pages > 0.5, pages at 0.0."""
     dims = ["crossref_sparsity", "orphan_rate", "unsourced_density",
-            "contradictions", "vault_coverage_gap", "query_misses"]
+            "vault_coverage_gap"]
     dist = {}
     for d in dims:
         vals = [r["scores"][d] for r in results]
@@ -39,7 +39,7 @@ def dimension_distribution(results: list) -> dict:
 
 
 LIVE_DIMS = {"crossref_sparsity", "orphan_rate", "unsourced_density",
-             "contradictions", "vault_coverage_gap", "query_misses"}
+             "vault_coverage_gap"}
 
 
 def worst_live_dim(scores: dict) -> str:
