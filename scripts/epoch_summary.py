@@ -153,7 +153,7 @@ def page_type_counts(wiki_dir: Path) -> dict:
 
 def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     """Extract last N log section headers with key metrics."""
-    log_path = wiki_dir / "log.md"
+    log_path = wiki_dir.parent / ".curator" / "log.md"
     if not log_path.exists():
         return []
     text = log_path.read_text()

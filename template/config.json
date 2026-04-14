@@ -1,0 +1,14 @@
+{
+  "worker_model": "claude-sonnet-4-6",
+  "reviewer_model": "claude-opus-4-6",
+  "parallel_workers": 10,
+  "epoch_seconds": 300,
+  "wallclock_max_hours": 24,
+  "saturation_rate_threshold": 0.001,
+  "saturation_consecutive_epochs": 3,
+  "caveman": {
+    "wiki_pages": "ultra",
+    "analyses": "lite",
+    "query_output": "lite"
+  }
+}

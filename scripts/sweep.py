@@ -115,8 +115,12 @@ def scan_frontmatter(pages: list) -> list:
     return issues
 
 
+def curator_dir(wiki_dir: Path) -> Path:
+    return wiki_dir.parent / ".curator"
+
+
 def scan_index_drift(wiki_dir: Path, pages: list) -> dict:
-    index_path = wiki_dir / "index.md"
+    index_path = curator_dir(wiki_dir) / "index.md"
     listed = set()
     if index_path.exists():
         for m in WIKILINK_RE.finditer(index_path.read_text()):
@@ -242,13 +246,17 @@ def cmd_fix_source_stubs(wiki_dir: Path):
 
 
 def cmd_fix_index(wiki_dir: Path):
-    """Rewrite wiki/index.md so it matches the pages on disk.
+    """Rewrite .curator/index.md so it matches the pages on disk.
 
-    Preserves any prose before the first list item (treated as a hand-written
-    header/intro). Everything after is regenerated, grouped by subdirectory.
+    index.md lives in .curator/ (auto-generated, not git-tracked), so
+    regenerating it never produces a wiki commit. Preserves any prose
+    before the first list item (treated as a hand-written header/intro).
+    Everything after is regenerated, grouped by subdirectory.
     """
     pages = wiki_pages(wiki_dir)
-    index_path = wiki_dir / "index.md"
+    cur = curator_dir(wiki_dir)
+    cur.mkdir(parents=True, exist_ok=True)
+    index_path = cur / "index.md"
     header = "# Index\n\n"
     if index_path.exists():
         old = index_path.read_text()

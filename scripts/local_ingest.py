@@ -44,7 +44,7 @@ RAW_DIR = VAULT_DIR / "raw"
 
 
 def load_config() -> dict:
-    cfg_path = Path("wiki/.curator.json")
+    cfg_path = Path(".curator/config.json")
     auto = {}
     if cfg_path.exists():
         try:
