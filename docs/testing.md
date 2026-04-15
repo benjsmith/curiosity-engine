@@ -1,6 +1,15 @@
 # Improvement-loop test results
 
-Record of a one-shot test of the ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward. No tests are shipped in the skill.
+> **Historical (pre-caveman, pre-CURATE-consolidation).** These results
+> were produced against the earlier ITERATE + EVOLVE split-loop design
+> and the deleted `compress.py` tokens-per-claim (tpc) ratchet. The tpc
+> figures below are not reproducible under the current skill: the gate
+> is now raw-token bloat + citation count, and the two loops are a
+> single CURATE pass. Keeping the numbers as a record of what the
+> predecessor design actually achieved; do not use them to calibrate
+> current behavior.
+
+Record of a one-shot test of the (now-retired) ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward. No tests are shipped in the skill.
 
 ## Setup
 
