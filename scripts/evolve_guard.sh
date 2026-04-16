@@ -19,6 +19,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GUARDED=(
+    "$SCRIPT_DIR/evolve_guard.sh"
     "$SCRIPT_DIR/lint_scores.py"
     "$SCRIPT_DIR/score_diff.py"
     "$SCRIPT_DIR/epoch_summary.py"
@@ -26,12 +27,20 @@ GUARDED=(
     "$SCRIPT_DIR/naming.py"
 )
 
+sha256_cmd() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
 fingerprint() {
     for f in "${GUARDED[@]}"; do
         if [ ! -f "$f" ]; then
             echo "MISSING:$(basename "$f")"
         else
-            printf '%s:%s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "$(basename "$f")"
+            printf '%s:%s\n' "$(sha256_cmd "$f")" "$(basename "$f")"
         fi
     done
 }

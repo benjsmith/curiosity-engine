@@ -60,6 +60,11 @@ def wiki_pages(wiki_dir: Path) -> list:
             if p.name not in SKIP_FILES and "_suspect" not in p.parts]
 
 
+_NO_DEPLURAL = {"analysis", "basis", "bias", "chaos", "corpus", "thesis",
+                 "atlas", "lens", "bus", "gas", "plus", "canvas", "status",
+                 "focus", "radius", "virus", "census", "consensus"}
+
+
 def normalize_slug(stem: str) -> str:
     """Fuzzy normalization for duplicate-slug detection."""
     s = stem.lower().replace("-", " ").replace("_", " ")
@@ -67,7 +72,7 @@ def normalize_slug(stem: str) -> str:
     for article in ("a ", "an ", "the "):
         if s.startswith(article):
             s = s[len(article):]
-    if s.endswith("s") and not s.endswith("ss"):
+    if s.endswith("s") and not s.endswith("ss") and s not in _NO_DEPLURAL:
         s = s[:-1]
     return s
 

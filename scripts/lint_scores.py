@@ -43,14 +43,20 @@ def wiki_pages_in(wiki_dir: Path):
 def crossref_sparsity(text: str, all_titles: set, own_stem: str) -> float:
     """Fraction of linkable entity/concept mentions that aren't [[linked]].
 
-    Self-references excluded. Pages with zero mentions return 0 (informationless
-    for this dimension; orphan_rate picks up the under-connection signal).
+    Self-references excluded. Uses word-boundary matching on hyphen-expanded
+    stems to avoid false positives (e.g. stem "data" matching "metadata").
+    Pages with zero mentions return 0.
     """
     if not all_titles:
         return 0.0
     text_lower = text.lower()
-    mentioned = {t for t in all_titles
-                 if t != own_stem and len(t) > 3 and t in text_lower}
+    mentioned = set()
+    for t in all_titles:
+        if t == own_stem or len(t) < 4:
+            continue
+        pattern = r"\b" + re.escape(t.replace("-", " ")) + r"\b"
+        if re.search(pattern, text_lower):
+            mentioned.add(t)
     if not mentioned:
         return 0.0
     linked = {t for t in mentioned

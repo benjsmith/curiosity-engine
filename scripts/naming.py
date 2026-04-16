@@ -42,7 +42,11 @@ TYPE_PREFIX = {
 
 
 def read_frontmatter(text: str) -> tuple:
-    """Parse leading `---\\n...\\n---\\n` frontmatter. Returns (dict, body)."""
+    """Parse leading ``---\\n...\\n---\\n`` frontmatter. Returns (dict, body).
+
+    Handles: quoted values (``title: "Some: Title"``), bracket lists
+    (``sources: [a.md, b.md]`` → Python list), bare scalars.
+    """
     if not text.startswith("---"):
         return {}, text
     end = text.find("\n---", 3)
@@ -56,7 +60,14 @@ def read_frontmatter(text: str) -> tuple:
         if not line or ":" not in line:
             continue
         k, _, v = line.partition(":")
-        fm[k.strip()] = v.strip()
+        v = v.strip()
+        if v.startswith("[") and v.endswith("]"):
+            fm[k.strip()] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
+        elif (v.startswith('"') and v.endswith('"')) or \
+             (v.startswith("'") and v.endswith("'")):
+            fm[k.strip()] = v[1:-1]
+        else:
+            fm[k.strip()] = v
     return fm, body
 
 
@@ -80,10 +91,11 @@ def url_to_origin(url: str) -> str:
 
 
 def extract_topic(stem: str) -> str:
-    """Pull the topic name from a source stub stem like '20260411-...-wiki-game-theory'.
+    """Pull the topic name from a source stub stem.
 
-    Strips URL-encoded characters (``27s`` for apostrophe, ``e2-80-93`` for
-    em-dash, ``28``/``29`` for parens) that leak through from Wikipedia URLs.
+    Handles URL-derived stems (``20260411-...-wiki-game-theory``) and plain
+    stems. Strips leaked hex-encoded characters generically (any sequence of
+    2-char hex fragments separated by hyphens, e.g. ``e2-80-93``).
     """
     m = re.search(r"-wiki-(.+)$", stem)
     if m:
@@ -100,19 +112,31 @@ def extract_topic(stem: str) -> str:
                     break
             else:
                 return stem
-    topic = re.sub(r"-?27s-?", "s-", topic)
-    topic = re.sub(r"-?e2-80-9[0-9]-?", "-", topic)
-    topic = re.sub(r"-?2[89]-?", "-", topic)
+    topic = re.sub(r"(?:-[0-9a-f]{2})+", "-", topic)
     topic = re.sub(r"-{2,}", "-", topic).strip("-")
     return topic
+
+
+_TITLE_STOP = {"a", "an", "the", "of", "in", "for", "and", "is", "are", "on", "to", "with"}
+
+
+def _topic_from_title(title: str) -> str:
+    words = [w for w in title.split() if w.lower() not in _TITLE_STOP]
+    return "-".join(w.lower() for w in words[:3])
 
 
 def parse_source_meta(vault_path: Path) -> dict:
     """Extract metadata from a vault extraction for citation-style naming.
 
     Returns dict with keys: topic, origin, year, author, full_title.
-    Works for structured frontmatter (web fetches with source_url) and
-    plain markdown (papers with ``# Title (Author et al., Year)`` headers).
+
+    Fallback chain (first match wins):
+      1. Frontmatter ``source_url`` → origin from domain, topic from stem.
+      2. Frontmatter ``title`` / ``author`` / ``date`` / ``subject`` / ``from``
+         → handles webclips, memos, emails, book chapters, simple notes.
+      3. First ``# Heading (Author, Year)`` in body → academic papers.
+      4. First ``# Heading`` in body (no parenthetical) → simple notes.
+      5. Filename stem → last resort.
     """
     text = vault_path.read_text()
     fm, body = read_frontmatter(text)
@@ -127,31 +151,47 @@ def parse_source_meta(vault_path: Path) -> dict:
         if fetched:
             meta["year"] = fetched[:4]
         meta["full_title"] = meta["topic"].replace("-", " ").title()
-    else:
-        for line in body.split("\n"):
-            line = line.strip()
-            if not line.startswith("#"):
-                continue
-            header = line.lstrip("#").strip()
-            m = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", header)
-            if m:
-                title_part = m.group(1).strip()
-                paren = m.group(2).strip()
-                meta["full_title"] = title_part
-                ym = re.search(r"\b(19|20)\d{2}\b", paren)
-                if ym:
-                    meta["year"] = ym.group(0)
-                author_str = re.sub(r"\b(19|20)\d{2}\b", "", paren)
-                author_str = author_str.replace("et al.", "").replace(",", "").strip()
-                if author_str:
-                    meta["author"] = author_str.split()[0]
-                stop = {"a", "an", "the", "of", "in", "for", "and", "is", "are", "on", "to", "with"}
-                words = [w for w in title_part.split() if w.lower() not in stop]
-                meta["topic"] = "-".join(w.lower() for w in words[:3])
-            else:
-                meta["full_title"] = header
-                meta["topic"] = vault_path.stem.replace(".extracted", "")
-            break
+        return meta
+
+    fm_title = fm.get("title", "")
+    if isinstance(fm_title, list):
+        fm_title = fm_title[0] if fm_title else ""
+    fm_author = fm.get("author") or fm.get("from", "")
+    fm_date = fm.get("date") or fm.get("created", "")
+    fm_subject = fm.get("subject", "")
+
+    if fm_title or fm_subject:
+        meta["full_title"] = fm_title or fm_subject
+        meta["topic"] = _topic_from_title(meta["full_title"]) or vault_path.stem.replace(".extracted", "")
+        if fm_author:
+            meta["author"] = fm_author.split()[0] if isinstance(fm_author, str) else str(fm_author)
+        ym = re.search(r"\b(19|20)\d{2}\b", str(fm_date))
+        if ym:
+            meta["year"] = ym.group(0)
+        return meta
+
+    for line in body.split("\n"):
+        line = line.strip()
+        if not line.startswith("#"):
+            continue
+        header = line.lstrip("#").strip()
+        m = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", header)
+        if m:
+            title_part = m.group(1).strip()
+            paren = m.group(2).strip()
+            meta["full_title"] = title_part
+            ym = re.search(r"\b(19|20)\d{2}\b", paren)
+            if ym:
+                meta["year"] = ym.group(0)
+            author_str = re.sub(r"\b(19|20)\d{2}\b", "", paren)
+            author_str = author_str.replace("et al.", "").replace(",", "").strip()
+            if author_str:
+                meta["author"] = author_str.split()[0]
+            meta["topic"] = _topic_from_title(title_part)
+        else:
+            meta["full_title"] = header
+            meta["topic"] = _topic_from_title(header)
+        break
 
     if not meta["topic"]:
         meta["topic"] = vault_path.stem.replace(".extracted", "")

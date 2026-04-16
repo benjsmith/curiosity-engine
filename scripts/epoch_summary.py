@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Gather wiki-wide metrics for the EVOLVE opus audit phase.
+"""Gather wiki-wide metrics for the CURATE plan phase.
 
-Produces a compact JSON summary that opus reads to create an epoch plan.
-Includes: aggregate scores, dimension distributions, frontier analysis
-(uncited vault material), cross-cluster edge density, and recent log history.
+Produces a compact JSON summary that the reviewer reads to create an
+epoch plan. Includes: aggregate scores, dimension distributions, frontier
+analysis (uncited vault material), cross-cluster edge density, connection
+candidates, and recent log history.
 
 Usage:
     python3 epoch_summary.py wiki              # default
@@ -162,6 +163,16 @@ def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     return entries[-last_n:] if entries else []
 
 
+def _format_frontier(vf) -> dict:
+    uncited, total, uncited_count = vf
+    return {
+        "uncited_sources": uncited,
+        "total_vault_entries": total,
+        "uncited_count": uncited_count,
+        "utilization": round(1 - uncited_count / max(total, 1), 3),
+    }
+
+
 def connection_candidates(wiki_dir: Path, results: list, limit: int = 5) -> list:
     """Find pairs of non-source pages that share vault sources but don't link to each other.
 
@@ -229,12 +240,7 @@ def main():
         "dimension_distribution": dimension_distribution(non_source),
         "worst_dimension_counts": worst_dimension_per_page(results),
         "cluster_analysis": cluster_analysis(wiki_dir, results),
-        "vault_frontier": (lambda vf: {
-            "uncited_sources": vf[0],
-            "total_vault_entries": vf[1],
-            "uncited_count": vf[2],
-            "utilization": round(1 - vf[2] / max(vf[1], 1), 3),
-        })(vault_frontier(wiki_dir, results)),
+        "vault_frontier": _format_frontier(vault_frontier(wiki_dir, results)),
         "connection_candidates": connection_candidates(wiki_dir, results),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
     }
