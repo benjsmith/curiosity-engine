@@ -231,7 +231,7 @@ Append per-accept lines to `.curator/log.md` with page name and what changed.
 
 1. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check .curator/.guard.snapshot`. Drift = abort + revert.
 2. **Measure.** Compute `rate_per_accept = (start_score - end_score) / max(accepts, 1)`. Record `delta_per_epoch`, `elapsed_minutes`.
-3. **Semantic contradiction scan.** On concept, entity, and fact pages touched this epoch (and a small neighborhood of cross-linked pages), run the reviewer with the contradiction-scan template in `.curator/prompts.md`. For each finding:
+3. **Semantic contradiction scan.** On concept, entity, and fact pages touched this epoch, expand to a 2-hop neighborhood via `python3 <skill_path>/scripts/graph.py neighbors wiki <page> --hops 2`. Run the reviewer with the contradiction-scan template in `.curator/prompts.md` on each pair within the neighborhood. For each finding:
    - `auto-correct` + concrete correction → apply the edit through the usual score_diff gate.
    - `human-review` → append to `## human-review-queue` in `.curator/log.md`.
 4. **Curiosity metrics.** Record `frontier_size`, `cross_cluster_ratio`, `questions_generated`, and an updated `source_wishlist` (topics where the vault is thin).

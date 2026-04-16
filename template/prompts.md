@@ -27,12 +27,13 @@ this file; don't duplicate prompts there.
 > Hard constraints:
 > - Preserve every existing `(vault:...)` citation. Never drop a citation.
 > - Every NEW factual claim must have a `(vault:...)` citation from the
->   vault material above.
+>   vault material above or from a vault file you read yourself.
 > - All `[[wikilinks]]` must be hyphen-case (e.g. `[[deep-learning]]` not
 >   `[[Deep Learning]]`).
 > - Do not add raw URLs anywhere in the page body.
 > - Prefer the smallest edit that accomplishes the task. This is not a rewrite.
-> - Do not call any tools. Reply with only one JSON object.
+> - You may use the Read tool to read `vault/*.extracted.md` files if the
+>   brief's vault snippet is insufficient. No other tools.
 >
 > Return exactly:
 > ```
@@ -76,6 +77,10 @@ this file; don't duplicate prompts there.
 
 Run on concept, entity, and fact pages during the evaluate phase of each
 CURATE epoch. Replaces the retired deterministic negation-polarity check.
+
+Page pairs are selected by the orchestrator using:
+`python3 <skill_path>/scripts/graph.py neighbors wiki <touched_page> --hops 2`
+to get the cross-linked neighborhood of each page touched in the epoch.
 
 > You are reviewing a knowledge wiki for semantic contradictions between
 > pages. Each page below cites vault sources.

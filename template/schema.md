@@ -11,6 +11,8 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
 
 ## Modes
 - **query** — answer from wiki + vault, end with one follow-up question.
+  For structural questions, query the kuzu graph first (`graph.py`).
+- **ingest** — processing source material. No teacher follow-up.
 - **collaborate** — propose connections, invite pushback, record human input.
 - **curate** — CURATE loop. No questions. Aggressive ratchet. Operates only
   on existing vault content.
@@ -19,11 +21,15 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
 - **Vault** (`vault/`): raw source files, append-only, never modify.
   Search: `python3 <skill_path>/scripts/vault_search.py "query"`
   Read files directly — you see PDFs, images, docs natively.
+  Drop folder: `vault/raw/` — user drops files here for bulk ingest.
 - **Wiki** (`wiki/`): git-tracked markdown content. Pages only.
   Subdirs: `sources/`, `entities/`, `concepts/`, `analyses/`, `evidence/`, `facts/`.
+- **Graph** (`.curator/graph.kuzu`): kuzu property graph tracking WikiPage
+  and VaultSource nodes, WikiLink and Cites edges. Rebuild after any
+  structural wiki change via `python3 <skill_path>/scripts/graph.py rebuild wiki`.
 - **Curator state** (`.curator/`): not git-tracked. Operating protocol,
   prompts, config, log, auto-generated index, sweep copy, guard snapshot,
-  epoch plan.
+  epoch plan, graph.
 
 ## Page format
 ```
@@ -43,13 +49,14 @@ Concise prose. [[Wikilinks]]. (vault:path) citations.
 - `[[Wikilink]]` every entity/concept with its own page.
 - Short sentences. No filler. Every sentence carries information.
 - Regenerate `.curator/index.md` via `sweep.py fix-index` after any batch.
+- Rebuild graph via `graph.py rebuild wiki` after any structural change.
 - Append to `.curator/log.md` after every operation with ISO timestamp.
 - Git commit in wiki/ after every accepted change to a wiki page.
 
 ## Acceptance criterion (CURATE)
 Accept a change if BOTH:
 1. `sourced_claims(after) >= sourced_claims(before)`  (no citation loss)
-2. `raw_tokens(after) <= raw_tokens(before) * 2.0`    (no extreme bloat)
+2. `body_tokens(after) <= body_tokens(before) * 1.5`   (no bloat; frontmatter excluded)
 
 Measure: `python3 <skill_path>/scripts/score_diff.py wiki/<page>.md --new-text-stdin`
 (pipe candidate text on stdin).

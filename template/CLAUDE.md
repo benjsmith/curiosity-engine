@@ -9,12 +9,16 @@ file from the template.
 
 ## Layout
 - `vault/` — raw source files + FTS5 search index. Append-only.
+  - `vault/raw/` — drop folder. User drops files here; `local_ingest.py`
+    extracts, moves originals to `vault/`, removes from drop folder.
 - `wiki/` — git-tracked markdown content. Subdirs: `sources/`, `entities/`,
   `concepts/`, `analyses/`, `evidence/`, `facts/`.
 - `.curator/` — curator state, not git-tracked.
   - `schema.md`, `prompts.md`, `config.json` — human-edited.
   - `sweep.py` — agent-editable workspace copy (pristine ref at
     `<skill>/scripts/sweep.py`).
+  - `graph.kuzu` — kuzu property graph (WikiPage/VaultSource nodes,
+    WikiLink/Cites edges). Rebuilt via `graph.py rebuild wiki`.
   - `log.md`, `index.md`, `.epoch_plan.md`, `.guard.snapshot` — auto.
 
 Read `.curator/schema.md` before any operation.
@@ -23,7 +27,7 @@ Read `.curator/schema.md` before any operation.
 - "Add <file> to the vault" — ingest a source
 - "What do I know about X?" — query the wiki
 - "Lint" — check wiki health
-- "Curate" / "run" / "improve" / "iterate" — autonomous CURATE loop
+- "Curate" / "run" / "improve" / "iterate" / "evolve" — autonomous CURATE loop
 
 ## Naming (naming.py)
 
@@ -44,8 +48,11 @@ bash commands allowed:
 2. `python3 <skill_path>/scripts/<named_script>.py ...` — never
    `python3 -c "..."`
 3. `python3 .curator/sweep.py ...` — the workspace sweep copy
-4. `bash <skill_path>/scripts/evolve_guard.sh ...`
-5. `date ...`
+4. `python3 <skill_path>/scripts/graph.py <subcommand> wiki ...` — kuzu
+   knowledge graph: `rebuild`, `shared-sources`, `path`, `neighbors`,
+   `bridge-candidates`. Rebuild after any structural wiki change.
+5. `bash <skill_path>/scripts/evolve_guard.sh ...`
+6. `date ...`
 
 **For everything else, use the tool layer:**
 - Read (not `cat`/`head`/`tail`/`less`)
