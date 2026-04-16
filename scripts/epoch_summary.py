@@ -174,41 +174,56 @@ def _format_frontier(vf) -> dict:
 
 
 def connection_candidates(wiki_dir: Path, results: list, limit: int = 5) -> list:
-    """Find pairs of non-source pages that share vault sources but don't link to each other.
+    """Bridge candidates via kuzu graph (falls back to O(n^2) if kuzu unavailable)."""
+    try:
+        graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
+        if not graph_path.exists():
+            return _connection_candidates_fallback(wiki_dir, limit)
+        import kuzu
+        db = kuzu.Database(str(graph_path))
+        conn = kuzu.Connection(db)
+        result = conn.execute(
+            "MATCH (a:WikiPage)-[:Cites]->(v:VaultSource)<-[:Cites]-(b:WikiPage) "
+            "WHERE a.path < b.path "
+            "AND NOT EXISTS { MATCH (a)-[:WikiLink]->(b) } "
+            "AND NOT EXISTS { MATCH (b)-[:WikiLink]->(a) } "
+            "AND a.type <> 'source' AND b.type <> 'source' "
+            "WITH a.path AS page_a, b.path AS page_b, count(v) AS shared "
+            "ORDER BY shared DESC "
+            f"LIMIT {limit} "
+            "RETURN page_a, page_b, shared"
+        )
+        candidates = []
+        while result.has_next():
+            r = result.get_next()
+            candidates.append({"page_a": r[0], "page_b": r[1], "shared_sources": r[2]})
+        return candidates
+    except Exception:
+        return _connection_candidates_fallback(wiki_dir, limit)
 
-    These are natural connection targets — pages drawing from the same
-    material should cross-reference.
-    """
+
+def _connection_candidates_fallback(wiki_dir: Path, limit: int) -> list:
+    """O(n^2) fallback when kuzu graph is not available."""
     pages = [p for p in wiki_pages_in(wiki_dir)
              if not str(p.relative_to(wiki_dir)).startswith("sources/")]
     page_sources = {}
     page_links = {}
-
     wikilink_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-
     for p in pages:
         text = p.read_text()
         stem = p.stem.lower()
-        # Extract vault citations
-        vaults = set(re.findall(r"\(vault:([^)]+)\)", text.lower()))
-        page_sources[stem] = vaults
-        # Extract wikilink targets
+        page_sources[stem] = set(re.findall(r"\(vault:([^)]+)\)", text.lower()))
         links = set()
         for m in wikilink_re.finditer(text):
             links.add(m.group(1).strip().lower().replace(" ", "-"))
         page_links[stem] = links
-
     candidates = []
     stems = list(page_sources.keys())
     for i, a in enumerate(stems):
         for b in stems[i+1:]:
             shared = page_sources[a] & page_sources[b]
-            if len(shared) >= 1 and b not in page_links.get(a, set()) and a not in page_links.get(b, set()):
-                candidates.append({
-                    "page_a": a,
-                    "page_b": b,
-                    "shared_sources": len(shared),
-                })
+            if shared and b not in page_links.get(a, set()) and a not in page_links.get(b, set()):
+                candidates.append({"page_a": a, "page_b": b, "shared_sources": len(shared)})
     candidates.sort(key=lambda x: x["shared_sources"], reverse=True)
     return candidates[:limit]
 
