@@ -3,14 +3,26 @@
 
 Hard floors only — the opus judge handles nuanced quality review.
 These gates catch catastrophic regressions that no edit should cause:
-  1. No citation loss: sourced_claims(after) >= sourced_claims(before)
-  2. No extreme bloat: tokens(after) <= tokens(before) * 2.0
-  3. New pages: ≥2 citations, ≥2 wikilinks, ≥100 words
+  1. No citation loss: citations(after) >= citations(before)
+  2. No extreme raw-token bloat: body_tokens(after) <= body_tokens(before) * 1.5
+  3. New pages: >=2 citations, >=2 wikilinks, >=100 body words
+  4. Citation relevance (optional): new citations must match their source
+     in FTS5. Catches spurious citations without a full reviewer pass.
+
+Token counting ignores YAML frontmatter so the ceiling measures actual
+prose growth.
 
 Usage:
     echo "<new text>" | python3 score_diff.py <page.md> --new-text-stdin
-    python3 score_diff.py <page.md> --new-file <candidate.md>
-    python3 score_diff.py <page.md> --new-page --new-file <candidate.md>
+    python3 score_diff.py <page.md> --new-text-stdin --vault-db vault/vault.db
+    python3 score_diff.py <page.md> --new-page --new-text-stdin
+    python3 score_diff.py <page.md> --new-text-stdin --dry-run
+
+--vault-db enables citation verification: for each newly added (vault:...)
+  citation, queries FTS5 to confirm the cited source contains words related
+  to the claim. Rejects if any new citation is suspect. One FTS5 query per
+  new citation — negligible overhead.
+--dry-run returns the verdict without writing the file (for batch review).
 
 Outputs one JSON line to stdout. Exit code always 0 on well-formed input.
 """
@@ -20,51 +32,118 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from compress import compress, token_count, sourced_claims  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from naming import WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
 
-WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
+CITATION_RAW_RE = re.compile(r"\(vault:[^)]+\)")
 
 
-def lint_matchable_links(text: str) -> int:
+def body_tokens(text: str) -> int:
+    """Whitespace-split token count on body only (frontmatter excluded)."""
+    _, body = read_frontmatter(text)
+    return len(body.split())
+
+
+def citation_count(text: str) -> int:
+    """Count individual (vault:...) citations across the entire text."""
+    return len(CITATION_RAW_RE.findall(text))
+
+
+def _citations_set(text: str) -> set:
+    """Extract the set of vault paths cited in text."""
+    return set(CITATION_RE.findall(text))
+
+
+def _claim_words(line: str) -> str:
+    """Extract significant content words from a citation line for FTS5 matching."""
+    cleaned = CITATION_RAW_RE.sub("", line)
+    cleaned = re.sub(r"\[\[[^\]]*\]\]", "", cleaned)
+    words = re.findall(r"[a-zA-Z]{4,}", cleaned)
+    stop = {"the", "and", "for", "are", "was", "were", "with", "from",
+            "that", "this", "which", "have", "has", "been", "also",
+            "more", "than", "about", "their", "other", "some"}
+    return " ".join(w for w in words if w.lower() not in stop)
+
+
+def verify_new_citations(old_text: str, new_text: str,
+                          vault_db: Path) -> list:
+    """Check that each newly added citation actually relates to the claim.
+
+    For each (vault:path) in new_text but not in old_text, extracts the
+    content words from the line containing the citation and queries FTS5
+    for a match in that specific source. If no match, the citation is
+    suspect — the source doesn't mention anything the claim talks about.
+
+    Returns a list of suspect citations (empty = all OK).
+    """
+    if not vault_db.exists():
+        return []
+
+    old_citations = _citations_set(old_text)
+    new_citations = _citations_set(new_text)
+    added = new_citations - old_citations
+    if not added:
+        return []
+
+    line_map = {}
+    for line in new_text.split("\n"):
+        for m in CITATION_RE.finditer(line):
+            vp = m.group(1)
+            if vp in added:
+                line_map.setdefault(vp, line)
+
+    import sqlite3
+    suspects = []
+    try:
+        conn = sqlite3.connect(str(vault_db))
+        for vp, line in line_map.items():
+            words = _claim_words(line)
+            if not words:
+                continue
+            row = conn.execute(
+                "SELECT count(*) FROM sources WHERE path = ? AND sources MATCH ?",
+                (vp, words)
+            ).fetchone()
+            if row[0] == 0:
+                suspects.append({"citation": vp, "claim_words": words})
+        conn.close()
+    except Exception:
+        pass
+    return suspects
+
+
+def matchable_links(text: str) -> int:
     """Count wikilinks in hyphen-case form (no spaces)."""
-    count = 0
-    for m in WIKILINK_RE.finditer(text):
-        target = m.group(1).strip()
-        if " " not in target:
-            count += 1
-    return count
+    return sum(1 for m in WIKILINK_RE.finditer(text)
+               if " " not in m.group(1).strip())
 
 
 def metrics(text: str) -> dict:
-    comp = compress(text)
     return {
-        "tokens": token_count(comp),
-        "claims": max(sourced_claims(text), 1),
-        "wikilinks": lint_matchable_links(text),
+        "tokens": body_tokens(text),
+        "citations": max(citation_count(text), 1),
+        "wikilinks": matchable_links(text),
     }
 
 
 def verdict(before: dict, after: dict) -> tuple:
-    """Minimal accept/reject: citation loss and extreme bloat only."""
-    if after["claims"] < before["claims"]:
-        return False, f"citation loss ({before['claims']}->{after['claims']})"
-    if before["tokens"] > 0 and after["tokens"] > before["tokens"] * 2.0:
-        return False, f"extreme bloat ({before['tokens']}->{after['tokens']}, >100%)"
+    if after["citations"] < before["citations"]:
+        return False, f"citation loss ({before['citations']}->{after['citations']})"
+    if before["tokens"] > 0 and after["tokens"] > before["tokens"] * 1.5:
+        return False, f"bloat ({before['tokens']}->{after['tokens']}, >50%)"
     return True, "pass"
 
 
 def new_page_verdict(text: str) -> tuple:
-    """Minimum-quality floors for new pages."""
     m = metrics(text)
-    words = len(text.split())
-    if m["claims"] < 2:
-        return False, f"too few citations ({m['claims']}; need ≥2)"
+    words = body_tokens(text)
+    if m["citations"] < 2:
+        return False, f"too few citations ({m['citations']}; need >=2)"
     if m["wikilinks"] < 2:
-        return False, f"too few wikilinks ({m['wikilinks']}; need ≥2)"
+        return False, f"too few wikilinks ({m['wikilinks']}; need >=2)"
     if words < 100:
-        return False, f"too short ({words} words; need ≥100)"
-    return True, f"claims={m['claims']}, wikilinks={m['wikilinks']}, words={words}"
+        return False, f"too short ({words} words; need >=100)"
+    return True, f"citations={m['citations']}, wikilinks={m['wikilinks']}, words={words}"
 
 
 def main():
@@ -72,13 +151,16 @@ def main():
     ap.add_argument("page")
     ap.add_argument("--new-file", default=None)
     ap.add_argument("--new-text-stdin", action="store_true")
-    ap.add_argument("--new-page", action="store_true",
-                    help="Page does not exist yet; uses new-page gates.")
+    ap.add_argument("--new-page", action="store_true")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Return verdict without writing the file.")
+    ap.add_argument("--vault-db", default=None,
+                    help="Path to vault.db for citation verification.")
     args = ap.parse_args()
 
     page = Path(args.page)
+    write = not args.dry_run
 
-    # Read candidate text
     if args.new_file:
         new_text = Path(args.new_file).read_text()
     elif args.new_text_stdin:
@@ -87,21 +169,19 @@ def main():
         print(json.dumps({"error": "need --new-file or --new-text-stdin", "applied": False}))
         return
 
-    # New page path
     if args.new_page:
         accept, reason = new_page_verdict(new_text)
         result = {
             "page": str(page), "accept": accept, "reason": reason,
             "after": metrics(new_text), "applied": False, "new_page": True,
         }
-        if accept:
+        if accept and write:
             page.parent.mkdir(parents=True, exist_ok=True)
             page.write_text(new_text)
             result["applied"] = True
         print(json.dumps(result))
         return
 
-    # Existing page edit path
     if not page.exists():
         print(json.dumps({"error": f"page not found: {page}", "applied": False}))
         return
@@ -115,7 +195,15 @@ def main():
         "page": str(page), "accept": accept, "reason": reason,
         "before": before, "after": after, "applied": False,
     }
-    if accept:
+
+    if accept and args.vault_db:
+        suspects = verify_new_citations(old_text, new_text, Path(args.vault_db))
+        if suspects:
+            accept = False
+            reason = f"suspect citations: {', '.join(s['citation'] for s in suspects)}"
+            result.update({"accept": False, "reason": reason, "suspects": suspects})
+
+    if accept and write:
         page.write_text(new_text)
         result["applied"] = True
 

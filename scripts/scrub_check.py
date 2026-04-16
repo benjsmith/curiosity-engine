@@ -2,18 +2,22 @@
 """scrub_check.py — prompt-injection tripwire for curator writes.
 
 Scans a markdown file for known injection markers. Exit 1 if any match.
-Intended to run on:
-  - wiki pages the agent writes in auto mode (before commit)
-  - vault extractions (optional, after fetch)
 
-Scanning only looks at the authored body: frontmatter is ignored and any
-<!-- BEGIN FETCHED CONTENT --> ... <!-- END FETCHED CONTENT --> blocks are
-stripped before the scan, because those are quarantined data by construction.
+Three modes:
+  --mode wiki    Agent-authored wiki pages (before commit). Checks the
+                 authored body AND any FETCHED CONTENT blocks. Also bans
+                 raw URLs in the authored body.
+  --mode vault   Vault extractions at ingest time. Checks FETCHED CONTENT
+                 blocks for injection markers. Advisory: hits are logged
+                 but the file is still ingested (quarantine is the caller's
+                 job).
+  --mode ingest  Alias for vault — used in the INGEST pipeline.
+
+Frontmatter is always skipped (structured metadata, not prose).
 
 Usage:
-    scrub_check.py <path.md>
-    scrub_check.py --mode wiki <path.md>   # stricter: also bans raw URLs in body
-    scrub_check.py --mode vault <path.md>  # marker scan only
+    scrub_check.py --mode wiki <path.md>
+    scrub_check.py --mode vault <path.md>
 """
 
 import argparse
@@ -63,35 +67,42 @@ def strip_frontmatter(text: str) -> str:
     return text
 
 
-def strip_fetched_blocks(text: str) -> str:
-    return FETCHED_BLOCK.sub("", text)
+def _scan_markers(text: str) -> list:
+    low = text.lower()
+    return [name for pattern, name in MARKERS if re.search(pattern, low)]
 
 
 def scan(text: str, mode: str) -> list:
-    body = strip_frontmatter(strip_fetched_blocks(text))
-    low = body.lower()
-    hits: list = []
-    for pattern, name in MARKERS:
-        if re.search(pattern, low):
-            hits.append(name)
+    body = strip_frontmatter(text)
+    hits = []
+
     if mode == "wiki":
-        urls = URL_IN_BODY.findall(body)
-        if urls:
-            hits.append(f"url-in-body:{len(urls)}")
-    return hits
+        hits.extend(_scan_markers(body))
+        authored = FETCHED_BLOCK.sub("", body)
+        if URL_IN_BODY.search(authored):
+            hits.append("url-in-body")
+    else:
+        fetched_blocks = FETCHED_BLOCK.findall(body)
+        for block in fetched_blocks:
+            hits.extend(_scan_markers(block))
+        if not fetched_blocks:
+            hits.extend(_scan_markers(body))
+
+    return list(dict.fromkeys(hits))
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("path", type=Path)
-    ap.add_argument("--mode", choices=["wiki", "vault"], default="wiki")
+    ap.add_argument("--mode", choices=["wiki", "vault", "ingest"], default="wiki")
     args = ap.parse_args()
+    mode = "vault" if args.mode == "ingest" else args.mode
     if not args.path.exists():
         print(json.dumps({"path": str(args.path), "error": "missing"}))
         return 2
     text = args.path.read_text()
-    hits = scan(text, args.mode)
-    print(json.dumps({"path": str(args.path), "mode": args.mode, "hits": hits}))
+    hits = scan(text, mode)
+    print(json.dumps({"path": str(args.path), "mode": mode, "hits": hits}))
     return 1 if hits else 0
 
 

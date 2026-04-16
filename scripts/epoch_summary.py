@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Gather wiki-wide metrics for the EVOLVE opus audit phase.
+"""Gather wiki-wide metrics for the CURATE plan phase.
 
-Produces a compact JSON summary that opus reads to create an epoch plan.
-Includes: aggregate scores, dimension distributions, frontier analysis
-(uncited vault material), cross-cluster edge density, and recent log history.
+Produces a compact JSON summary that the reviewer reads to create an
+epoch plan. Includes: aggregate scores, dimension distributions, frontier
+analysis (uncited vault material), cross-cluster edge density, connection
+candidates, and recent log history.
 
 Usage:
     python3 epoch_summary.py wiki              # default
@@ -26,7 +27,7 @@ from lint_scores import compute_all, wiki_pages_in, SKIP_FILES  # noqa: E402
 def dimension_distribution(results: list) -> dict:
     """Per-dimension: mean, pages > 0.5, pages at 0.0."""
     dims = ["crossref_sparsity", "orphan_rate", "unsourced_density",
-            "contradictions", "vault_coverage_gap", "query_misses"]
+            "vault_coverage_gap"]
     dist = {}
     for d in dims:
         vals = [r["scores"][d] for r in results]
@@ -39,7 +40,7 @@ def dimension_distribution(results: list) -> dict:
 
 
 LIVE_DIMS = {"crossref_sparsity", "orphan_rate", "unsourced_density",
-             "contradictions", "vault_coverage_gap", "query_misses"}
+             "vault_coverage_gap"}
 
 
 def worst_live_dim(scores: dict) -> str:
@@ -153,7 +154,7 @@ def page_type_counts(wiki_dir: Path) -> dict:
 
 def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     """Extract last N log section headers with key metrics."""
-    log_path = wiki_dir / "log.md"
+    log_path = wiki_dir.parent / ".curator" / "log.md"
     if not log_path.exists():
         return []
     text = log_path.read_text()
@@ -162,42 +163,99 @@ def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     return entries[-last_n:] if entries else []
 
 
-def connection_candidates(wiki_dir: Path, results: list, limit: int = 5) -> list:
-    """Find pairs of non-source pages that share vault sources but don't link to each other.
+def saturation_check(wiki_dir: Path, threshold: float = 0.001,
+                      consecutive: int = 3) -> dict:
+    """Parse recent epoch logs and detect editorial saturation.
 
-    These are natural connection targets — pages drawing from the same
-    material should cross-reference.
+    Reads rate_per_accept from the last N curate-epoch blocks in
+    .curator/log.md. Returns a structured signal the orchestrator can
+    branch on without judgment calls.
     """
+    log_path = wiki_dir.parent / ".curator" / "log.md"
+    if not log_path.exists():
+        return {"saturated": False, "epochs_checked": 0, "rates": []}
+
+    text = log_path.read_text()
+    rates = [float(m) for m in re.findall(
+        r"^rate_per_accept:\s*([\d.]+)", text, re.MULTILINE)]
+
+    if len(rates) < consecutive:
+        return {"saturated": False, "epochs_checked": len(rates), "rates": rates}
+
+    recent = rates[-consecutive:]
+    saturated = all(r < threshold for r in recent)
+    return {
+        "saturated": saturated,
+        "epochs_checked": len(rates),
+        "consecutive_low": sum(1 for r in reversed(rates) if r < threshold),
+        "threshold": threshold,
+        "required_consecutive": consecutive,
+        "recent_rates": recent,
+        "action": "pivot_to_exploration" if saturated else "continue_editorial",
+    }
+
+
+def _format_frontier(vf) -> dict:
+    uncited, total, uncited_count = vf
+    return {
+        "uncited_sources": uncited,
+        "total_vault_entries": total,
+        "uncited_count": uncited_count,
+        "utilization": round(1 - uncited_count / max(total, 1), 3),
+    }
+
+
+def connection_candidates(wiki_dir: Path, results: list, limit: int = 5) -> list:
+    """Bridge candidates via kuzu graph (falls back to O(n^2) if kuzu unavailable)."""
+    try:
+        graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
+        if not graph_path.exists():
+            return _connection_candidates_fallback(wiki_dir, limit)
+        import kuzu
+        db = kuzu.Database(str(graph_path))
+        conn = kuzu.Connection(db)
+        result = conn.execute(
+            "MATCH (a:WikiPage)-[:Cites]->(v:VaultSource)<-[:Cites]-(b:WikiPage) "
+            "WHERE a.path < b.path "
+            "AND NOT EXISTS { MATCH (a)-[:WikiLink]->(b) } "
+            "AND NOT EXISTS { MATCH (b)-[:WikiLink]->(a) } "
+            "AND a.type <> 'source' AND b.type <> 'source' "
+            "WITH a.path AS page_a, b.path AS page_b, count(v) AS shared "
+            "ORDER BY shared DESC "
+            f"LIMIT {limit} "
+            "RETURN page_a, page_b, shared"
+        )
+        candidates = []
+        while result.has_next():
+            r = result.get_next()
+            candidates.append({"page_a": r[0], "page_b": r[1], "shared_sources": r[2]})
+        return candidates
+    except Exception:
+        return _connection_candidates_fallback(wiki_dir, limit)
+
+
+def _connection_candidates_fallback(wiki_dir: Path, limit: int) -> list:
+    """O(n^2) fallback when kuzu graph is not available."""
     pages = [p for p in wiki_pages_in(wiki_dir)
              if not str(p.relative_to(wiki_dir)).startswith("sources/")]
     page_sources = {}
     page_links = {}
-
     wikilink_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-
     for p in pages:
         text = p.read_text()
         stem = p.stem.lower()
-        # Extract vault citations
-        vaults = set(re.findall(r"\(vault:([^)]+)\)", text.lower()))
-        page_sources[stem] = vaults
-        # Extract wikilink targets
+        page_sources[stem] = set(re.findall(r"\(vault:([^)]+)\)", text.lower()))
         links = set()
         for m in wikilink_re.finditer(text):
             links.add(m.group(1).strip().lower().replace(" ", "-"))
         page_links[stem] = links
-
     candidates = []
     stems = list(page_sources.keys())
     for i, a in enumerate(stems):
         for b in stems[i+1:]:
             shared = page_sources[a] & page_sources[b]
-            if len(shared) >= 1 and b not in page_links.get(a, set()) and a not in page_links.get(b, set()):
-                candidates.append({
-                    "page_a": a,
-                    "page_b": b,
-                    "shared_sources": len(shared),
-                })
+            if shared and b not in page_links.get(a, set()) and a not in page_links.get(b, set()):
+                candidates.append({"page_a": a, "page_b": b, "shared_sources": len(shared)})
     candidates.sort(key=lambda x: x["shared_sources"], reverse=True)
     return candidates[:limit]
 
@@ -229,13 +287,9 @@ def main():
         "dimension_distribution": dimension_distribution(non_source),
         "worst_dimension_counts": worst_dimension_per_page(results),
         "cluster_analysis": cluster_analysis(wiki_dir, results),
-        "vault_frontier": (lambda vf: {
-            "uncited_sources": vf[0],
-            "total_vault_entries": vf[1],
-            "uncited_count": vf[2],
-            "utilization": round(1 - vf[2] / max(vf[1], 1), 3),
-        })(vault_frontier(wiki_dir, results)),
+        "vault_frontier": _format_frontier(vault_frontier(wiki_dir, results)),
         "connection_candidates": connection_candidates(wiki_dir, results),
+        "saturation": saturation_check(wiki_dir),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
     }
 

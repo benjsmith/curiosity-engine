@@ -1,6 +1,15 @@
 # Improvement-loop test results
 
-Record of a one-shot test of the ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward. No tests are shipped in the skill.
+> **Historical (pre-caveman, pre-CURATE-consolidation).** These results
+> were produced against the earlier ITERATE + EVOLVE split-loop design
+> and the deleted `compress.py` tokens-per-claim (tpc) ratchet. The tpc
+> figures below are not reproducible under the current skill: the gate
+> is now raw-token bloat + citation count, and the two loops are a
+> single CURATE pass. Keeping the numbers as a record of what the
+> predecessor design actually achieved; do not use them to calibrate
+> current behavior.
+
+Record of a one-shot test of the (now-retired) ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward. No tests are shipped in the skill.
 
 ## Setup
 
@@ -57,7 +66,7 @@ The reward-hacking guard was tested end-to-end with `scripts/evolve_guard.sh`.
 
 The guard reliably detects tampering with the scoring pipeline. A real EVOLVE epoch that tried to modify these files would abort and revert per the SKILL.md protocol.
 
-A full 5-minute EVOLVE epoch was not run end-to-end: the test wiki is too small (6 pages, converged to avg 0.14 after one ITERATE) to produce a meaningful rate-of-improvement comparison or justify a schema edit. The schema-proposal path is specified in `SKILL.md` and logging format in `wiki/log.md`, and the guard it depends on is verified working. Full-scale epoch testing will be more meaningful against a wiki with ~30+ pages; noted for a follow-up.
+A full 5-minute EVOLVE epoch was not run end-to-end: the test wiki is too small (6 pages, converged to avg 0.14 after one ITERATE) to produce a meaningful rate-of-improvement comparison or justify a schema edit. The schema-proposal path is specified in `SKILL.md` and logging format in `.curator/log.md`, and the guard it depends on is verified working. Full-scale epoch testing will be more meaningful against a wiki with ~30+ pages; noted for a follow-up.
 
 ## What I did NOT test
 

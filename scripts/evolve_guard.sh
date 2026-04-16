@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# evolve_guard.sh — reward-hacking guard for the EVOLVE meta-loop.
+# evolve_guard.sh — reward-hacking guard for the CURATE loop.
 #
-# EVOLVE is allowed to edit wiki/schema.md but nothing about the scoring or
-# staging pipeline. This script records a fingerprint of the guarded scripts
-# at epoch start and compares it at epoch end. If anything drifted, the epoch
-# must be aborted and the schema edit reverted.
+# Hash-guards the scoring/measurement scripts (and itself). Records a
+# fingerprint at epoch start, compares at epoch end. Drift aborts the
+# epoch. CURATE may edit .curator/sweep.py but nothing in this list.
 #
 # Usage:
 #   evolve_guard.sh hash                    # print fingerprint to stdout
@@ -19,19 +18,28 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GUARDED=(
-    "$SCRIPT_DIR/compress.py"
+    "$SCRIPT_DIR/evolve_guard.sh"
     "$SCRIPT_DIR/lint_scores.py"
     "$SCRIPT_DIR/score_diff.py"
-    "$SCRIPT_DIR/sweep.py"
     "$SCRIPT_DIR/epoch_summary.py"
+    "$SCRIPT_DIR/scrub_check.py"
+    "$SCRIPT_DIR/naming.py"
 )
+
+sha256_cmd() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
 
 fingerprint() {
     for f in "${GUARDED[@]}"; do
         if [ ! -f "$f" ]; then
             echo "MISSING:$(basename "$f")"
         else
-            printf '%s:%s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "$(basename "$f")"
+            printf '%s:%s\n' "$(sha256_cmd "$f")" "$(basename "$f")"
         fi
     done
 }
@@ -64,18 +72,6 @@ case "${1:-}" in
         echo "$expected"
         echo "--- actual ---"
         echo "$actual"
-        exit 1
-        ;;
-    verify)
-        # Legacy stdin-based mode kept for any stale callers; not recommended
-        # under the bash discipline rule. Prefer snapshot/check.
-        expected="$(cat)"
-        actual="$(fingerprint)"
-        if [ "$expected" = "$actual" ]; then
-            echo "ok"
-            exit 0
-        fi
-        echo "DRIFT"
         exit 1
         ;;
     *)
