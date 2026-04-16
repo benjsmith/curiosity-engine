@@ -66,7 +66,7 @@ The reward-hacking guard was tested end-to-end with `scripts/evolve_guard.sh`.
 
 The guard reliably detects tampering with the scoring pipeline. A real EVOLVE epoch that tried to modify these files would abort and revert per the SKILL.md protocol.
 
-A full 5-minute EVOLVE epoch was not run end-to-end: the test wiki is too small (6 pages, converged to avg 0.14 after one ITERATE) to produce a meaningful rate-of-improvement comparison or justify a schema edit. The schema-proposal path is specified in `SKILL.md` and logging format in `wiki/log.md`, and the guard it depends on is verified working. Full-scale epoch testing will be more meaningful against a wiki with ~30+ pages; noted for a follow-up.
+A full 5-minute EVOLVE epoch was not run end-to-end: the test wiki is too small (6 pages, converged to avg 0.14 after one ITERATE) to produce a meaningful rate-of-improvement comparison or justify a schema edit. The schema-proposal path is specified in `SKILL.md` and logging format in `.curator/log.md`, and the guard it depends on is verified working. Full-scale epoch testing will be more meaningful against a wiki with ~30+ pages; noted for a follow-up.
 
 ## What I did NOT test
 

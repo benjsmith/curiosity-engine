@@ -61,7 +61,7 @@ The loop runs until one of: user interrupt, 24h wallclock, or guard drift. When 
 
 A wiki edit is accepted only if:
 1. No sourced claims are lost (`sourced_claims(after) >= sourced_claims(before)`)
-2. No extreme bloat (`raw_tokens(after) <= raw_tokens(before) * 2.0`)
+2. No extreme bloat (`body_tokens(after) <= body_tokens(before) * 1.5`, frontmatter excluded)
 
 These are hard floors. Quality beyond the floors is judged by a fresh-context reviewer (opus by default), not by the mechanical gate.
 

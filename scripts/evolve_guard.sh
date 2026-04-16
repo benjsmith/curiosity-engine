@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# evolve_guard.sh — reward-hacking guard for the EVOLVE meta-loop.
+# evolve_guard.sh — reward-hacking guard for the CURATE loop.
 #
-# EVOLVE is allowed to edit wiki/schema.md but nothing about the scoring or
-# staging pipeline. This script records a fingerprint of the guarded scripts
-# at epoch start and compares it at epoch end. If anything drifted, the epoch
-# must be aborted and the schema edit reverted.
+# Hash-guards the scoring/measurement scripts (and itself). Records a
+# fingerprint at epoch start, compares at epoch end. Drift aborts the
+# epoch. CURATE may edit .curator/sweep.py but nothing in this list.
 #
 # Usage:
 #   evolve_guard.sh hash                    # print fingerprint to stdout

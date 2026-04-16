@@ -2,7 +2,7 @@
 """naming.py — shared naming + display-title utilities for the curiosity engine.
 
 Used by:
-  - sweep.py rename-sources / fix-display-names  (batch hygiene passes)
+  - sweep.py fix-source-stubs                    (citation-style stub creation)
   - local_ingest.py                              (source stubs on ingest)
   - CURATE workers / reviewers                   (new page creation)
 

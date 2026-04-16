@@ -20,7 +20,7 @@ Subcommands
         Idempotent. Prints JSON summary of what was created.
 
     sweep.py fix-index [wiki_dir]
-        Rewrite `wiki/index.md` so it matches the pages actually on disk.
+        Rewrite `.curator/index.md` so it matches the pages on disk.
         Preserves any top-of-file prose (before the first list item).
         Prints JSON summary of drift resolved.
 
