@@ -75,5 +75,5 @@ not by the mechanical gate.
   degrades vs. the previous sweep-change, restore from the reference.
 - Off-limits (hash-guarded by evolve_guard.sh): `lint_scores.py`,
   `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`,
-  `evolve_guard.sh` itself.
+  `graph.py`, `evolve_guard.sh` itself.
 - `.curator/log.md` is append-only. Never rewrite history to inflate rates.

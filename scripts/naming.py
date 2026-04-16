@@ -35,6 +35,20 @@ CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence", "fact"}
 
+# Allowlist of frontmatter keys the curator actually reads. Unknown keys are
+# dropped by read_frontmatter so an adversarial source cannot smuggle
+# arbitrary keyed data into downstream callers via frontmatter.
+ALLOWED_FM_KEYS = frozenset({
+    # Wiki page schema
+    "title", "type", "created", "updated", "sources",
+    # Source-stub / ingest provenance
+    "source_path", "source_url", "source_type", "ingested_at", "fetched_at",
+    "sha256", "vault_sha256", "bytes", "kept_as", "extraction",
+    "max_extract_bytes", "untrusted",
+    # Author/metadata (used by parse_source_meta)
+    "author", "from", "date", "subject",
+})
+
 TYPE_PREFIX = {
     "concept": "[con]",
     "entity": "[ent]",
@@ -49,7 +63,8 @@ def read_frontmatter(text: str) -> tuple:
     """Parse leading ``---\\n...\\n---\\n`` frontmatter. Returns (dict, body).
 
     Handles: quoted values (``title: "Some: Title"``), bracket lists
-    (``sources: [a.md, b.md]`` → Python list), bare scalars.
+    (``sources: [a.md, b.md]`` → Python list), bare scalars. Keys outside
+    ``ALLOWED_FM_KEYS`` are silently dropped.
     """
     if not text.startswith("---"):
         return {}, text
@@ -64,14 +79,17 @@ def read_frontmatter(text: str) -> tuple:
         if not line or ":" not in line:
             continue
         k, _, v = line.partition(":")
+        key = k.strip()
+        if key not in ALLOWED_FM_KEYS:
+            continue
         v = v.strip()
         if v.startswith("[") and v.endswith("]"):
-            fm[k.strip()] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
+            fm[key] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
         elif (v.startswith('"') and v.endswith('"')) or \
              (v.startswith("'") and v.endswith("'")):
-            fm[k.strip()] = v[1:-1]
+            fm[key] = v[1:-1]
         else:
-            fm[k.strip()] = v
+            fm[key] = v
     return fm, body
 
 

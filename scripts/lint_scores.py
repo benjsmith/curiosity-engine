@@ -27,6 +27,7 @@ CURATE batch phase only ever needs the top few. Pass `--top N --minimal`
 to shrink the payload ~800x for target selection.
 """
 
+import argparse
 import json
 import re
 import sys
@@ -140,6 +141,50 @@ def vault_coverage_gap(page_stem: str, text: str, vault_db_path) -> float:
     return round(uncited / len(rows), 2)
 
 
+def _inbound_from_graph(wiki_dir: Path, titles: set):
+    """Inbound wikilink counts from the kuzu graph (stems -> count).
+
+    Returns None if kuzu isn't installed or the graph file is missing so
+    callers can fall back. Counts distinct source pages, matching the
+    substring-scan semantics of the fallback.
+    """
+    graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
+    if not graph_path.exists():
+        return None
+    try:
+        import kuzu
+        db = kuzu.Database(str(graph_path))
+        conn = kuzu.Connection(db)
+        result = conn.execute(
+            "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
+            "WHERE a.path <> b.path "
+            "RETURN b.path, count(DISTINCT a)"
+        )
+        counts = {t: 0 for t in titles}
+        while result.has_next():
+            target_path, n = result.get_next()
+            stem = Path(target_path).stem.lower()
+            if stem in counts:
+                counts[stem] = n
+        return counts
+    except Exception:
+        return None
+
+
+def _inbound_from_scan(pages_text: dict, titles: set) -> dict:
+    """O(n^2) fallback: substring-scan every page for [[stem]] references."""
+    inbound = {t: 0 for t in titles}
+    for page, text in pages_text.items():
+        own = page.stem.lower()
+        text_lower = text.lower()
+        for t in titles:
+            if t == own:
+                continue
+            if f"[[{t}]]" in text_lower or f"[[{t}|" in text_lower:
+                inbound[t] += 1
+    return inbound
+
+
 def compute_all(wiki_dir: Path) -> list:
     """Score every page under wiki_dir. Sorted worst-first by composite.
 
@@ -156,15 +201,9 @@ def compute_all(wiki_dir: Path) -> list:
     titles = {p.stem.lower() for p in pages}
     vault_db_path = wiki_dir.parent / "vault" / "vault.db"
 
-    inbound = {t: 0 for t in titles}
-    for page, text in pages_text.items():
-        own = page.stem.lower()
-        text_lower = text.lower()
-        for t in titles:
-            if t == own:
-                continue
-            if f"[[{t}]]" in text_lower or f"[[{t}|" in text_lower:
-                inbound[t] += 1
+    inbound = _inbound_from_graph(wiki_dir, titles)
+    if inbound is None:
+        inbound = _inbound_from_scan(pages_text, titles)
 
     results = []
     for page, text in pages_text.items():
@@ -192,29 +231,22 @@ def compute_all(wiki_dir: Path) -> list:
 
 
 def main():
-    args = [a for a in sys.argv[1:]]
-    top_n = None
-    minimal = False
-    positional = []
-    i = 0
-    while i < len(args):
-        if args[i] == "--top":
-            top_n = int(args[i + 1])
-            i += 2
-        elif args[i] == "--minimal":
-            minimal = True
-            i += 1
-        else:
-            positional.append(args[i])
-            i += 1
+    ap = argparse.ArgumentParser()
+    ap.add_argument("wiki", nargs="?", default="wiki",
+                    help="wiki directory (default: wiki)")
+    ap.add_argument("--top", type=int, default=None,
+                    help="only emit top N worst pages")
+    ap.add_argument("--minimal", action="store_true",
+                    help="emit {page, composite} only")
+    args = ap.parse_args()
 
-    wiki_dir = Path(positional[0]) if positional else Path("wiki")
-    results = compute_all(wiki_dir)
+    results = compute_all(Path(args.wiki))
 
-    if top_n is not None:
-        results = results[:top_n]
-    if minimal:
-        results = [{"page": r["page"], "composite": r["scores"]["composite"]} for r in results]
+    if args.top is not None:
+        results = results[: args.top]
+    if args.minimal:
+        results = [{"page": r["page"], "composite": r["scores"]["composite"]}
+                   for r in results]
 
     print(json.dumps(results, indent=2))
 
