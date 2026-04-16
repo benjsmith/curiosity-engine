@@ -24,6 +24,7 @@ GUARDED=(
     "$SCRIPT_DIR/epoch_summary.py"
     "$SCRIPT_DIR/scrub_check.py"
     "$SCRIPT_DIR/naming.py"
+    "$SCRIPT_DIR/graph.py"
 )
 
 sha256_cmd() {

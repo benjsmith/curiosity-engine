@@ -10,9 +10,6 @@ Subcommands
         Drop and rebuild the entire graph from wiki pages on disk.
         Writes to .curator/graph.kuzu (single file, not git-tracked).
 
-    graph.py query <wiki_dir> <cypher>
-        Run an arbitrary Cypher query and print results as JSON.
-
     graph.py shared-sources <wiki_dir> <page_a> <page_b>
         Vault sources cited by both pages.
 
@@ -155,12 +152,6 @@ def _query_to_json(conn, cypher, params=None):
     return rows
 
 
-def cmd_query(wiki_dir: Path, cypher: str):
-    conn = _connect(wiki_dir)
-    rows = _query_to_json(conn, cypher)
-    print(json.dumps(rows, indent=2, default=str))
-
-
 def cmd_shared_sources(wiki_dir: Path, page_a: str, page_b: str):
     conn = _connect(wiki_dir)
     rows = _query_to_json(conn,
@@ -174,6 +165,7 @@ def cmd_shared_sources(wiki_dir: Path, page_a: str, page_b: str):
 
 def cmd_path(wiki_dir: Path, page_a: str, page_b: str, max_hops: int):
     conn = _connect(wiki_dir)
+    max_hops = max(1, min(int(max_hops), 20))
     rows = _query_to_json(conn,
         f"MATCH (a:WikiPage)-[e:WikiLink* SHORTEST 1..{max_hops}]->(b:WikiPage) "
         "WHERE a.path = $a AND b.path = $b "
@@ -189,6 +181,7 @@ def cmd_path(wiki_dir: Path, page_a: str, page_b: str, max_hops: int):
 
 def cmd_neighbors(wiki_dir: Path, page: str, hops: int):
     conn = _connect(wiki_dir)
+    hops = max(1, min(int(hops), 10))
     rows = _query_to_json(conn,
         f"MATCH (a:WikiPage)-[:WikiLink*1..{hops}]->(b:WikiPage) "
         "WHERE a.path = $p AND a.path <> b.path "
@@ -200,6 +193,7 @@ def cmd_neighbors(wiki_dir: Path, page: str, hops: int):
 
 def cmd_bridge_candidates(wiki_dir: Path, limit: int):
     conn = _connect(wiki_dir)
+    limit = max(1, min(int(limit), 100))
     rows = _query_to_json(conn,
         "MATCH (a:WikiPage)-[:Cites]->(v:VaultSource)<-[:Cites]-(b:WikiPage) "
         "WHERE a.path < b.path "
@@ -220,10 +214,6 @@ def main():
     sub = ap.add_subparsers(dest="command")
 
     sub.add_parser("rebuild").add_argument("wiki", default="wiki", nargs="?")
-
-    q = sub.add_parser("query")
-    q.add_argument("wiki")
-    q.add_argument("cypher")
 
     ss = sub.add_parser("shared-sources")
     ss.add_argument("wiki")
@@ -254,8 +244,6 @@ def main():
 
     if args.command == "rebuild":
         rebuild(wiki_dir)
-    elif args.command == "query":
-        cmd_query(wiki_dir, args.cypher)
     elif args.command == "shared-sources":
         cmd_shared_sources(wiki_dir, args.page_a, args.page_b)
     elif args.command == "path":

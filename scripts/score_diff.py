@@ -96,19 +96,27 @@ def verify_new_citations(old_text: str, new_text: str,
     suspects = []
     try:
         conn = sqlite3.connect(str(vault_db))
-        for vp, line in line_map.items():
-            words = _claim_words(line)
-            if not words:
-                continue
+    except sqlite3.Error as e:
+        # DB exists but can't be opened -> fail closed: every new citation is suspect.
+        return [{"citation": vp, "claim_words": "<db-unavailable>", "error": str(e)}
+                for vp in line_map]
+
+    for vp, line in line_map.items():
+        words = _claim_words(line)
+        if not words:
+            continue
+        try:
             row = conn.execute(
                 "SELECT count(*) FROM sources WHERE path = ? AND sources MATCH ?",
                 (vp, words)
             ).fetchone()
-            if row[0] == 0:
-                suspects.append({"citation": vp, "claim_words": words})
-        conn.close()
-    except Exception:
-        pass
+        except sqlite3.Error as e:
+            # FTS5 syntax / lock errors -> fail closed on this citation.
+            suspects.append({"citation": vp, "claim_words": words, "error": str(e)})
+            continue
+        if row[0] == 0:
+            suspects.append({"citation": vp, "claim_words": words})
+    conn.close()
     return suspects
 
 
@@ -121,7 +129,7 @@ def matchable_links(text: str) -> int:
 def metrics(text: str) -> dict:
     return {
         "tokens": body_tokens(text),
-        "citations": max(citation_count(text), 1),
+        "citations": citation_count(text),
         "wikilinks": matchable_links(text),
     }
 

@@ -70,6 +70,9 @@ def slugify(path: Path, root: Path) -> str:
 
 def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
     result = {"source_path": str(path), "ok": False, "reason": None}
+    if path.is_symlink():
+        result["reason"] = "symlink (not ingested)"
+        return result
     try:
         raw = path.read_bytes()
         if len(raw) > cfg["max_raw_bytes"]:
@@ -159,7 +162,8 @@ def main() -> int:
     cfg = load_config()
 
     candidates = [p for p in args.directory.rglob("*")
-                  if p.is_file() and p.suffix.lower() in exts]
+                  if p.is_file() and not p.is_symlink()
+                  and p.suffix.lower() in exts]
     candidates.sort()
     candidates = candidates[: args.max_files]
 
