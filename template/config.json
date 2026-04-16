@@ -7,8 +7,8 @@
   "saturation_rate_threshold": 0.001,
   "saturation_consecutive_epochs": 3,
   "caveman": {
-    "wiki_pages": "ultra",
-    "analyses": "lite",
-    "query_output": "lite"
+    "read": "ultra",
+    "write_analysis": "lite",
+    "write_other": "ultra"
   }
 }

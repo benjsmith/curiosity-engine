@@ -24,6 +24,10 @@ this file; don't duplicate prompts there.
 > explaining the connection to precision-weighted prediction error", or
 > "reduce unsourced density by adding vault citations to the uncited claims")
 >
+> Write level: <CAVEMAN_LEVEL or "verbatim">
+> (ultra = strip articles, copula, filler, pronouns, transitions, prepositions;
+>  lite = strip only filler adverbs + transition words; verbatim = no compression)
+>
 > Hard constraints:
 > - Preserve every existing `(vault:...)` citation. Never drop a citation.
 > - Every NEW factual claim must have a `(vault:...)` citation from the

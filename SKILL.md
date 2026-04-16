@@ -115,7 +115,7 @@ Read `.curator/schema.md` before any operation.
   "wallclock_max_hours": 24,
   "saturation_rate_threshold": 0.001,
   "saturation_consecutive_epochs": 3,
-  "caveman": { "wiki_pages": "ultra", "analyses": "lite", "query_output": "lite" }
+  "caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
 }
 ```
 
@@ -125,7 +125,12 @@ Read `.curator/schema.md` before any operation.
 - **epoch_seconds** — wallclock budget per CURATE epoch.
 - **wallclock_max_hours** — hard stop on the outer loop.
 - **saturation_rate_threshold** / **saturation_consecutive_epochs** — stop criterion on editorial rate-of-improvement (`rate_per_accept`). When saturated, CURATE shifts to analyses + questions + source-wishlist rather than stopping outright (curiosity trumps diminishing editorial returns).
-- **caveman** — read-time compression levels passed to the optional [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) skill. Absent caveman, see the "No-caveman fallback" note below.
+- **caveman** — compression levels for the optional [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) skill. Three keys:
+  - `read` — applied when reading any wiki/vault text into context (orchestrator briefs, epoch_summary input). Ultra strips articles, copula, filler adverbs, pronouns, transitions, prepositions. ~30-40% token reduction.
+  - `write_analysis` — applied when writing `analyses/` pages. Lite strips only filler adverbs and transition words, keeping articles and prepositions. Human-comfortable prose. ~10-15% token reduction.
+  - `write_other` — applied when writing all other page types (`entities/`, `concepts/`, `sources/`, `evidence/`, `facts/`). Ultra for maximum density. Users wanting expanded prose can request an analysis page.
+  
+  Absent caveman, see the "No-caveman fallback" note below.
 
 ## Operations
 
@@ -292,14 +297,26 @@ CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`
 - **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates.
 - **Fresh-context rule:** the reviewer MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
 
-### No-caveman fallback
+### Caveman integration
 
-If the caveman skill is not installed, the `caveman` block in `.curator/config.json` is ignored and the curator reads wiki pages verbatim. CURATE still works; it just burns more context per page. To keep context budgets reasonable without caveman: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices (frontmatter + substantive prose) rather than full files when only the prose body matters, (c) prefer the `--minimal` output of `lint_scores.py`.
+If the caveman skill is installed (setup.sh prompts for this), `.curator/config.json`'s `caveman` block controls compression at two points:
+
+**Read-time (level: `read`, default ultra).** Before including any wiki page or vault passage in a worker brief or reading it for plan/evaluate, compress it through caveman at the configured level. The worker never sees the uncompressed text — it writes from compressed input. This is the main context-budget win: ~30-40% fewer input tokens per page read.
+
+**Write-time (level: `write_analysis` or `write_other`).** Workers write pages at the configured level:
+- `analyses/` pages → `write_analysis` level (default lite). Lite strips only filler adverbs and transition words. Prose stays human-comfortable in Obsidian.
+- All other page types (`entities/`, `concepts/`, `sources/`, `evidence/`, `facts/`) → `write_other` level (default ultra). Dense, telegraphic text. LLMs reconstruct grammar natively; humans wanting expanded prose can request an analysis page.
+
+Write-time compression compounds: every future read of a compressed page is cheaper. A 1000-page wiki at ultra write saves ~30-40% on every full scan (lint, epoch_summary, query).
+
+Include the write-level instruction in the worker brief: "Write at caveman `<level>` level."
+
+**No-caveman fallback.** If caveman is not installed, the `caveman` block is ignored. CURATE works verbatim — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices (frontmatter + substantive prose) rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
 
 ## Writing rules
 
 - **Never modify vault files** (only add new ones + their `.extracted.md`).
-- **Concise prose.** Short sentences. No filler. Every sentence carries information.
+- **Concise prose.** Short sentences. No filler. Every sentence carries information. If caveman is installed, workers write at the configured level (ultra for most page types, lite for analyses). If not installed, write clean standard prose — the same rules apply, just not mechanically enforced.
 - **Cite every factual claim:** `(vault:papers/attention.extracted.md)`
 - **Link generously:** `[[entity-name]]` for every mention that has or deserves a page. Always hyphen-case.
 - **Filename + display-title:** workers and reviewers that create or rename pages MUST use `naming.py` (`citation_stem`, `source_display_title`, `TYPE_PREFIX`). No ad-hoc schemes.

@@ -118,27 +118,29 @@ if [ ! -d wiki/.git ]; then
     echo "  Initialized wiki git repo"
 fi
 
-# Optional: install the caveman read-time compression skill.
-# Caveman strips grammar at read-time so the curator burns less context on
-# filler. It is OFF by default because it changes how the curator *reads*,
-# not what it writes. Accept the prompt to install and wire it in.
+# Optional: install the caveman compression skill.
+# Caveman strips predictable grammar tokens (articles, filler adverbs, etc.)
+# so the curator burns less context. Used at read-time (ultra: ~30-40% fewer
+# input tokens) and write-time (ultra for most pages, lite for analyses).
 if [ -t 0 ] && [ -t 1 ]; then
-    printf "\nInstall the optional caveman read-time compression skill? [y/N] "
+    echo ""
+    echo "Install caveman compression? Saves ~30-40% tokens on reads,"
+    echo "~10-15% on analysis writes, ~30-40% on other page writes."
+    printf "Install? [y/N] "
     read -r reply || reply="n"
     case "$reply" in
         y|Y|yes|YES)
             if command -v npx >/dev/null 2>&1; then
                 echo "  Installing JuliusBrussee/caveman via npx skills ..."
-                npx skills add JuliusBrussee/caveman || echo "  (install failed — re-run manually: npx skills add JuliusBrussee/caveman)"
-                echo "  Caveman levels already configured in .curator/config.json:"
-                echo "    wiki_pages=ultra, analyses=lite, query_output=lite"
+                npx skills add JuliusBrussee/caveman || echo "  (install failed — re-run: npx skills add JuliusBrussee/caveman)"
+                echo "  Levels configured in .curator/config.json:"
+                echo "    read=ultra, write_analysis=lite, write_other=ultra"
             else
-                echo "  npx not found — skipping. To install later: npx skills add JuliusBrussee/caveman"
+                echo "  npx not found. Install later: npx skills add JuliusBrussee/caveman"
             fi
             ;;
         *)
-            echo "  Skipping caveman. The curator will work without it; see SKILL.md"
-            echo "  for the no-caveman fallback prose guidance."
+            echo "  Skipping caveman. Curator works without it (see SKILL.md)."
             ;;
     esac
 fi

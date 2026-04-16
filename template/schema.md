@@ -45,6 +45,9 @@ Concise prose. [[Wikilinks]]. (vault:path) citations.
 ```
 
 ## Rules
+- If caveman is installed, write at the configured level: ultra for most page
+  types (dense, telegraphic), lite for `analyses/` (human-comfortable).
+  Users wanting expanded prose should request an analysis page.
 - Cite every factual claim: `(vault:path/to/source.extracted.md)`
 - `[[Wikilink]]` every entity/concept with its own page.
 - Short sentences. No filler. Every sentence carries information.
