@@ -196,16 +196,20 @@ Worker + reviewer prompt templates live in `.curator/prompts.md` — read them v
 **Phase 1 — Plan (reviewer model).**
 
 1. **Snapshot guarded scripts.** `bash <skill_path>/scripts/evolve_guard.sh snapshot .curator/.guard.snapshot`.
-2. **Gather.** `python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON with aggregate scores, dimension distributions, vault frontier, cluster analysis, connection candidates, recent log.
-3. **Plan.** Produce `.curator/.epoch_plan.md` with:
-   - **Editorial targets** (worst lint pages, max ~10 per batch) — skip `sources/`.
+2. **Gather.** `python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON with aggregate scores, dimension distributions, vault frontier, cluster analysis, connection candidates, saturation signal, recent log.
+3. **Plan.** Check `summary.saturation.action`:
+   - `"continue_editorial"` → normal plan with editorial targets.
+   - `"pivot_to_exploration"` → editorial rate has saturated. Shift the plan: drop editorial targets to at most 2 background items, prioritize frontier targets, connection proposals, and question proposals. This is a code-driven pivot, not a judgment call.
+   
+   Produce `.curator/.epoch_plan.md` with:
+   - **Editorial targets** (worst lint pages, max ~10 normally, max ~2 if saturated) — skip `sources/`.
    - **Frontier targets** (max 3): uncited vault sources → which wiki page should incorporate them.
    - **Connection proposals** (max 3): page pairs sharing sources but not linking — substantive intellectual connections only.
    - **Question proposals** (max 3): gaps → new `analyses/` pages. Depth over breadth.
 
 **Phase 2 — Execute (worker model + fresh-context reviewer).**
 
-For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in.
+For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in. Workers have no tool access — the orchestrator must pre-read all vault material and include full relevant passages in the brief. Use `python3 <skill_path>/scripts/vault_search.py "<topic>" --text` for full extracted bodies, or Read the `.extracted.md` file directly. Never send workers a 40-token snippet and expect them to cite from it.
 
 **Worker protocol:** workers must return exactly
 ```
@@ -214,7 +218,7 @@ For each target, read the relevant page(s) and vault material, then fan out `par
 
 Apply each result:
 
-1. Pipe `new_text` into `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin`. The gate enforces: no citation loss, no raw-token bloat (>1.5× body tokens, frontmatter excluded). It writes the file on accept. Add `--dry-run` to get the verdict without writing (for batch review).
+1. Pipe `new_text` into `python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db`. The gate enforces: no citation loss, no body-token bloat (>1.5×, frontmatter excluded), and citation relevance (each new `(vault:...)` citation must FTS5-match its source — catches spurious citations without a full reviewer pass). It writes the file on accept. Add `--dry-run` to get the verdict without writing (for batch review).
 2. For new pages add `--new-page` (minimum floors: ≥2 citations, ≥2 wikilinks, ≥100 words).
 3. Run `python3 <skill_path>/scripts/scrub_check.py --mode wiki <page>` before any commit drawn from vault content. Hit = quarantine + stop cycle.
 4. For exploration / connection / new-page edits that pass the mechanical gate, run the **fresh-context reviewer** (a separate `reviewer_model` Agent — NOT the worker, NOT you). Use the reviewer template in `.curator/prompts.md`. Accept on `accept`; revert on `reject`; log `flag_for_human` under `## human-review-queue` in `.curator/log.md`.
@@ -266,7 +270,7 @@ notes: <what worked, what didn't>
 - **User interrupt.** `^C` or `/stop`.
 - **Wallclock.** Total elapsed ≥ `wallclock_max_hours` (default 24).
 - **Guard drift.** Hash-guarded script changed mid-epoch → abort and revert.
-- **Saturation.** `delta_per_epoch < saturation_rate_threshold` for `saturation_consecutive_epochs` consecutive epochs (defaults 0.001 / 3). On saturation, **do not stop**: shift the plan to analyses + questions + source-wishlist. Editorial ratchet continues as background load. Curiosity trumps diminishing editorial returns. The loop only truly stops on user interrupt, wallclock, or guard drift.
+- **Saturation.** Detected by `epoch_summary.py`'s `saturation` field (code-driven, not a judgment call). When `saturation.action == "pivot_to_exploration"`, **do not stop**: Phase 1 automatically shifts the plan to analyses + questions + source-wishlist with minimal editorial background. The loop only truly stops on user interrupt, wallclock, or guard drift.
 
 **Process-level restart.** For long runs, each epoch can be a fresh process invocation with clean context. All state lives in `.curator/log.md`, `.curator/.epoch_plan.md`, and `.curator/.guard.snapshot` — no cross-epoch memory needed.
 

@@ -163,6 +163,38 @@ def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     return entries[-last_n:] if entries else []
 
 
+def saturation_check(wiki_dir: Path, threshold: float = 0.001,
+                      consecutive: int = 3) -> dict:
+    """Parse recent epoch logs and detect editorial saturation.
+
+    Reads rate_per_accept from the last N curate-epoch blocks in
+    .curator/log.md. Returns a structured signal the orchestrator can
+    branch on without judgment calls.
+    """
+    log_path = wiki_dir.parent / ".curator" / "log.md"
+    if not log_path.exists():
+        return {"saturated": False, "epochs_checked": 0, "rates": []}
+
+    text = log_path.read_text()
+    rates = [float(m) for m in re.findall(
+        r"^rate_per_accept:\s*([\d.]+)", text, re.MULTILINE)]
+
+    if len(rates) < consecutive:
+        return {"saturated": False, "epochs_checked": len(rates), "rates": rates}
+
+    recent = rates[-consecutive:]
+    saturated = all(r < threshold for r in recent)
+    return {
+        "saturated": saturated,
+        "epochs_checked": len(rates),
+        "consecutive_low": sum(1 for r in reversed(rates) if r < threshold),
+        "threshold": threshold,
+        "required_consecutive": consecutive,
+        "recent_rates": recent,
+        "action": "pivot_to_exploration" if saturated else "continue_editorial",
+    }
+
+
 def _format_frontier(vf) -> dict:
     uncited, total, uncited_count = vf
     return {
@@ -257,6 +289,7 @@ def main():
         "cluster_analysis": cluster_analysis(wiki_dir, results),
         "vault_frontier": _format_frontier(vault_frontier(wiki_dir, results)),
         "connection_candidates": connection_candidates(wiki_dir, results),
+        "saturation": saturation_check(wiki_dir),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
     }
 

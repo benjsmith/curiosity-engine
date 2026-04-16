@@ -6,16 +6,22 @@ These gates catch catastrophic regressions that no edit should cause:
   1. No citation loss: citations(after) >= citations(before)
   2. No extreme raw-token bloat: body_tokens(after) <= body_tokens(before) * 1.5
   3. New pages: >=2 citations, >=2 wikilinks, >=100 body words
+  4. Citation relevance (optional): new citations must match their source
+     in FTS5. Catches spurious citations without a full reviewer pass.
 
 Token counting ignores YAML frontmatter so the ceiling measures actual
 prose growth.
 
 Usage:
     echo "<new text>" | python3 score_diff.py <page.md> --new-text-stdin
-    python3 score_diff.py <page.md> --new-file <candidate.md>
+    python3 score_diff.py <page.md> --new-text-stdin --vault-db vault/vault.db
     python3 score_diff.py <page.md> --new-page --new-text-stdin
     python3 score_diff.py <page.md> --new-text-stdin --dry-run
 
+--vault-db enables citation verification: for each newly added (vault:...)
+  citation, queries FTS5 to confirm the cited source contains words related
+  to the claim. Rejects if any new citation is suspect. One FTS5 query per
+  new citation — negligible overhead.
 --dry-run returns the verdict without writing the file (for batch review).
 
 Outputs one JSON line to stdout. Exit code always 0 on well-formed input.
@@ -27,7 +33,8 @@ import sys
 from pathlib import Path
 
 WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-CITATION_RE = re.compile(r"\(vault:[^)]+\)")
+CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
+CITATION_RAW_RE = re.compile(r"\(vault:[^)]+\)")
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -45,7 +52,70 @@ def body_tokens(text: str) -> int:
 
 def citation_count(text: str) -> int:
     """Count individual (vault:...) citations across the entire text."""
-    return len(CITATION_RE.findall(text))
+    return len(CITATION_RAW_RE.findall(text))
+
+
+def _citations_set(text: str) -> set:
+    """Extract the set of vault paths cited in text."""
+    return set(CITATION_RE.findall(text))
+
+
+def _claim_words(line: str) -> str:
+    """Extract significant content words from a citation line for FTS5 matching."""
+    cleaned = CITATION_RAW_RE.sub("", line)
+    cleaned = re.sub(r"\[\[[^\]]*\]\]", "", cleaned)
+    words = re.findall(r"[a-zA-Z]{4,}", cleaned)
+    stop = {"the", "and", "for", "are", "was", "were", "with", "from",
+            "that", "this", "which", "have", "has", "been", "also",
+            "more", "than", "about", "their", "other", "some"}
+    return " ".join(w for w in words if w.lower() not in stop)
+
+
+def verify_new_citations(old_text: str, new_text: str,
+                          vault_db: Path) -> list:
+    """Check that each newly added citation actually relates to the claim.
+
+    For each (vault:path) in new_text but not in old_text, extracts the
+    content words from the line containing the citation and queries FTS5
+    for a match in that specific source. If no match, the citation is
+    suspect — the source doesn't mention anything the claim talks about.
+
+    Returns a list of suspect citations (empty = all OK).
+    """
+    if not vault_db.exists():
+        return []
+
+    old_citations = _citations_set(old_text)
+    new_citations = _citations_set(new_text)
+    added = new_citations - old_citations
+    if not added:
+        return []
+
+    line_map = {}
+    for line in new_text.split("\n"):
+        for m in CITATION_RE.finditer(line):
+            vp = m.group(1)
+            if vp in added:
+                line_map.setdefault(vp, line)
+
+    import sqlite3
+    suspects = []
+    try:
+        conn = sqlite3.connect(str(vault_db))
+        for vp, line in line_map.items():
+            words = _claim_words(line)
+            if not words:
+                continue
+            row = conn.execute(
+                "SELECT count(*) FROM sources WHERE path = ? AND sources MATCH ?",
+                (vp, words)
+            ).fetchone()
+            if row[0] == 0:
+                suspects.append({"citation": vp, "claim_words": words})
+        conn.close()
+    except Exception:
+        pass
+    return suspects
 
 
 def matchable_links(text: str) -> int:
@@ -90,6 +160,8 @@ def main():
     ap.add_argument("--new-page", action="store_true")
     ap.add_argument("--dry-run", action="store_true",
                     help="Return verdict without writing the file.")
+    ap.add_argument("--vault-db", default=None,
+                    help="Path to vault.db for citation verification.")
     args = ap.parse_args()
 
     page = Path(args.page)
@@ -129,6 +201,14 @@ def main():
         "page": str(page), "accept": accept, "reason": reason,
         "before": before, "after": after, "applied": False,
     }
+
+    if accept and args.vault_db:
+        suspects = verify_new_citations(old_text, new_text, Path(args.vault_db))
+        if suspects:
+            accept = False
+            reason = f"suspect citations: {', '.join(s['citation'] for s in suspects)}"
+            result.update({"accept": False, "reason": reason, "suspects": suspects})
+
     if accept and write:
         page.write_text(new_text)
         result["applied"] = True

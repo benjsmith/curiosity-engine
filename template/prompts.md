@@ -27,13 +27,12 @@ this file; don't duplicate prompts there.
 > Hard constraints:
 > - Preserve every existing `(vault:...)` citation. Never drop a citation.
 > - Every NEW factual claim must have a `(vault:...)` citation from the
->   vault material above or from a vault file you read yourself.
+>   vault material provided in this brief.
 > - All `[[wikilinks]]` must be hyphen-case (e.g. `[[deep-learning]]` not
 >   `[[Deep Learning]]`).
 > - Do not add raw URLs anywhere in the page body.
 > - Prefer the smallest edit that accomplishes the task. This is not a rewrite.
-> - You may use the Read tool to read `vault/*.extracted.md` files if the
->   brief's vault snippet is insufficient. No other tools.
+> - Do not call any tools. Reply with only one JSON object.
 >
 > Return exactly:
 > ```
