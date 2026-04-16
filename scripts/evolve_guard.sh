@@ -74,18 +74,6 @@ case "${1:-}" in
         echo "$actual"
         exit 1
         ;;
-    verify)
-        # Legacy stdin-based mode kept for any stale callers; not recommended
-        # under the bash discipline rule. Prefer snapshot/check.
-        expected="$(cat)"
-        actual="$(fingerprint)"
-        if [ "$expected" = "$actual" ]; then
-            echo "ok"
-            exit 0
-        fi
-        echo "DRIFT"
-        exit 1
-        ;;
     *)
         echo "usage: evolve_guard.sh {hash|snapshot <file>|check <file>}" >&2
         exit 2

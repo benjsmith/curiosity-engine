@@ -32,22 +32,16 @@ import re
 import sys
 from pathlib import Path
 
-WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from naming import WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
+
 CITATION_RAW_RE = re.compile(r"\(vault:[^)]+\)")
-
-
-def _strip_frontmatter(text: str) -> str:
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            return text[end + 4:]
-    return text
 
 
 def body_tokens(text: str) -> int:
     """Whitespace-split token count on body only (frontmatter excluded)."""
-    return len(_strip_frontmatter(text).split())
+    _, body = read_frontmatter(text)
+    return len(body.split())
 
 
 def citation_count(text: str) -> int:

@@ -29,6 +29,10 @@ import re
 from pathlib import Path
 
 
+SKIP_FILES = {"index.md", "log.md", "schema.md"}
+WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
+CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
+
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence", "fact"}
 
 TYPE_PREFIX = {

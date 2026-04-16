@@ -34,14 +34,13 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from naming import SKIP_FILES, WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
+
 try:
     import kuzu
 except ImportError:
     kuzu = None
-
-WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
-SKIP_FILES = {"index.md", "log.md", "schema.md"}
 
 
 def _graph_path(wiki_dir: Path) -> str:
@@ -68,24 +67,6 @@ def _init_schema(conn):
         conn.execute(stmt)
 
 
-def _read_frontmatter_light(text: str) -> dict:
-    if not text.startswith("---"):
-        return {}
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}
-    fm = {}
-    for line in text[3:end].strip().split("\n"):
-        if ":" in line:
-            k, _, v = line.partition(":")
-            v = v.strip()
-            if (v.startswith('"') and v.endswith('"')) or \
-               (v.startswith("'") and v.endswith("'")):
-                v = v[1:-1]
-            fm[k.strip()] = v
-    return fm
-
-
 def rebuild(wiki_dir: Path):
     path = _graph_path(wiki_dir)
     p = Path(path)
@@ -103,7 +84,7 @@ def rebuild(wiki_dir: Path):
 
     for page in pages:
         text = page.read_text()
-        fm = _read_frontmatter_light(text)
+        fm, _ = read_frontmatter(text)
         rel = str(page.relative_to(wiki_dir))
         page_type = fm.get("type", "")
         title = fm.get("title", page.stem.replace("-", " ").title())

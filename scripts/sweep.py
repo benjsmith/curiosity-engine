@@ -46,12 +46,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from naming import (  # noqa: E402
     FRONTMATTER_TYPES,
+    SKIP_FILES,
+    WIKILINK_RE,
     read_frontmatter,
 )
 
-
-SKIP_FILES = {"index.md", "log.md", "schema.md"}
-WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 FRONTMATTER_REQUIRED = {"title", "type", "created"}
 
 

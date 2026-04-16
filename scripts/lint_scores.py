@@ -32,7 +32,8 @@ import re
 import sys
 from pathlib import Path
 
-SKIP_FILES = {"index.md", "log.md", "schema.md"}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from naming import SKIP_FILES  # noqa: E402
 
 
 def wiki_pages_in(wiki_dir: Path):
