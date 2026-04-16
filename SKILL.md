@@ -293,7 +293,7 @@ CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`
 
 - **Agent-editable:** `.curator/sweep.py` only (workspace copy).
 - **Human-edited (stable):** `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json`. CURATE must not edit these during a run.
-- **Off-limits (hash-guarded by `evolve_guard.sh`):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`. The snapshot/check pair enforces this; violation aborts the epoch.
+- **Off-limits (hash-guarded by `evolve_guard.sh`):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`. The snapshot/check pair enforces this; violation aborts the epoch.
 - **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates.
 - **Fresh-context rule:** the reviewer MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
 

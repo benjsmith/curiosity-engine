@@ -44,7 +44,7 @@ Treat Obsidian as a read-mostly view. You can edit by hand, but remember that an
 
 The loop never fetches new content on its own. It only reorganizes what's already in the vault, and flags a source-wishlist when the vault runs thin on a topic. Acquisition is your job; curation is the loop's.
 
-The curator may edit exactly one thing about its own operation: `.curator/sweep.py` (its hygiene-pass script). Every diff is logged; if the post-edit improvement rate degrades, the reference copy is restored automatically. The scoring and measurement scripts (`lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`) are SHA-256 hash-guarded on every epoch boundary, and any tampering aborts the epoch and reverts.
+The curator may edit exactly one thing about its own operation: `.curator/sweep.py` (its hygiene-pass script). Every diff is logged; if the post-edit improvement rate degrades, the reference copy is restored automatically. The scoring and measurement scripts (`lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`) are SHA-256 hash-guarded on every epoch boundary, and any tampering aborts the epoch and reverts.
 
 The loop runs until one of: user interrupt, 24h wallclock, or guard drift. When editorial rate-of-improvement saturates, the plan shifts to new analyses, open questions, and source-wishlist items rather than stopping — curiosity trumps diminishing editorial returns.
 
