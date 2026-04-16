@@ -137,28 +137,43 @@ def scan_index_drift(wiki_dir: Path, pages: list) -> dict:
     }
 
 
-def _vault_files_covered_by_stubs(wiki_dir: Path) -> set:
+def _vault_files_covered_by_stubs(wiki_dir: Path) -> tuple:
+    """Returns (covered_hashes: set, covered_paths: set) from source stubs."""
     sources_dir = wiki_dir / "sources"
-    covered = set()
+    hashes = set()
+    paths = set()
     if not sources_dir.exists():
-        return covered
+        return hashes, paths
     for stub in sources_dir.glob("*.md"):
         fm, _ = read_frontmatter(stub.read_text())
+        h = fm.get("vault_sha256", "")
+        if h:
+            hashes.add(h.lower())
         raw = fm.get("sources", "")
-        for name in re.findall(r"[\w./-]+\.extracted\.md", raw):
-            covered.add(name.lower())
-    return covered
+        if isinstance(raw, list):
+            for name in raw:
+                if name.endswith(".extracted.md"):
+                    paths.add(name.lower())
+        else:
+            for name in re.findall(r"[\w./-]+\.extracted\.md", raw):
+                paths.add(name.lower())
+    return hashes, paths
 
 
 def scan_missing_source_stubs(wiki_dir: Path) -> list:
     vault_dir = wiki_dir.parent / "vault"
     if not vault_dir.exists():
         return []
-    covered = _vault_files_covered_by_stubs(wiki_dir)
+    covered_hashes, covered_paths = _vault_files_covered_by_stubs(wiki_dir)
     missing = []
     for f in sorted(vault_dir.glob("*.extracted.md")):
-        if f.name.lower() not in covered:
-            missing.append(str(f))
+        if f.name.lower() in covered_paths:
+            continue
+        import hashlib
+        sha = hashlib.sha256(f.read_bytes()).hexdigest()
+        if sha.lower() in covered_hashes:
+            continue
+        missing.append(str(f))
     return missing
 
 
@@ -193,17 +208,19 @@ def cmd_fix_source_stubs(wiki_dir: Path):
     filename and naming.source_display_title for the frontmatter title.
     Idempotent.
     """
+    import hashlib
     from naming import citation_stem, parse_source_meta, source_display_title, TYPE_PREFIX
 
     vault_dir = wiki_dir.parent / "vault"
     sources_dir = wiki_dir / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    covered = _vault_files_covered_by_stubs(wiki_dir)
+    covered_hashes, covered_paths = _vault_files_covered_by_stubs(wiki_dir)
     used_stems = {p.stem.lower() for p in sources_dir.glob("*.md")}
     created = []
     skipped = 0
     for extracted in sorted(vault_dir.glob("*.extracted.md")):
-        if extracted.name.lower() in covered:
+        sha = hashlib.sha256(extracted.read_bytes()).hexdigest()
+        if extracted.name.lower() in covered_paths or sha.lower() in covered_hashes:
             skipped += 1
             continue
 
@@ -241,6 +258,7 @@ def cmd_fix_source_stubs(wiki_dir: Path):
             f"created: {fm.get('date', '2026-04-12')}\n"
             f"updated: 2026-04-12\n"
             f"sources: [{extracted.name}]\n"
+            f"vault_sha256: {sha}\n"
             f"---\n\n"
             f"{summary} (vault:{extracted.name})\n"
         )
