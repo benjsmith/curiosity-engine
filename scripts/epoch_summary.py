@@ -17,11 +17,12 @@ import json
 import re
 import sqlite3
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from lint_scores import compute_all, wiki_pages_in, SKIP_FILES  # noqa: E402
+from lint_scores import compute_all, wiki_pages_in  # noqa: E402
+from naming import WIKILINK_RE, CITATION_RE  # noqa: E402
 
 
 def dimension_distribution(results: list) -> dict:
@@ -60,21 +61,18 @@ def worst_dimension_per_page(results: list) -> dict:
     return dict(counts)
 
 
-def cluster_analysis(wiki_dir: Path, results: list) -> dict:
+def cluster_analysis(wiki_dir: Path, pages_text: dict) -> dict:
     """Analyze cross-cluster connectivity.
 
     Clusters are subdirectories (concepts/, entities/, analyses/).
     Cross-cluster edges are wikilinks between pages in different clusters.
     """
-    pages = wiki_pages_in(wiki_dir)
-    pages_text = {p: p.read_text() for p in pages}
     titles_to_cluster = {}
-    for p in pages:
+    for p in pages_text:
         rel = str(p.relative_to(wiki_dir))
         cluster = rel.split("/")[0] if "/" in rel else "root"
         titles_to_cluster[p.stem.lower()] = cluster
 
-    wikilink_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
     intra_cluster = 0
     cross_cluster = 0
     cross_edges = []
@@ -84,7 +82,7 @@ def cluster_analysis(wiki_dir: Path, results: list) -> dict:
         own_cluster = titles_to_cluster.get(own_stem, "unknown")
         if own_cluster == "sources":
             continue
-        for m in wikilink_re.finditer(text):
+        for m in WIKILINK_RE.finditer(text):
             target = m.group(1).strip().lower().replace(" ", "-")
             target_cluster = titles_to_cluster.get(target, None)
             if target_cluster is None or target_cluster == "sources":
@@ -104,7 +102,7 @@ def cluster_analysis(wiki_dir: Path, results: list) -> dict:
     }
 
 
-def vault_frontier(wiki_dir: Path, results: list, limit: int = 10) -> list:
+def vault_frontier(wiki_dir: Path, pages_text: dict, limit: int = 10):
     """Find vault sources with the most uncited material across the wiki.
 
     These are exploration targets: the vault has knowledge the wiki hasn't
@@ -112,40 +110,38 @@ def vault_frontier(wiki_dir: Path, results: list, limit: int = 10) -> list:
     """
     vault_db_path = wiki_dir.parent / "vault" / "vault.db"
     if not vault_db_path.exists():
-        return []
+        return [], 0, 0
 
     # Gather vault paths cited in non-source pages only.
     # Source stubs always cite their own extraction — that doesn't count
     # as the wiki having synthesized the knowledge.
     cited = set()
-    for p in wiki_pages_in(wiki_dir):
+    for p, text in pages_text.items():
         rel = str(p.relative_to(wiki_dir))
         if rel.startswith("sources/"):
             continue
-        text = p.read_text().lower()
-        for m in re.finditer(r"\(vault:([^)]+)\)", text):
+        for m in CITATION_RE.finditer(text):
             cited.add(m.group(1).strip())
 
-    # Get all vault entries
     try:
         conn = sqlite3.connect(str(vault_db_path))
         rows = conn.execute("SELECT path, title FROM sources").fetchall()
         conn.close()
-    except Exception:
-        return []
+    except sqlite3.Error:
+        return [], 0, 0
 
     uncited = []
     for path, title in rows:
-        if path.lower() not in cited and path not in cited:
+        if path not in cited and path.lower() not in cited:
             uncited.append({"path": path, "title": title or path})
 
     return uncited[:limit], len(rows), len(uncited)
 
 
-def page_type_counts(wiki_dir: Path) -> dict:
+def page_type_counts(pages_text: dict, wiki_dir: Path) -> dict:
     """Count pages by subdirectory."""
     counts = Counter()
-    for p in wiki_pages_in(wiki_dir):
+    for p in pages_text:
         rel = str(p.relative_to(wiki_dir))
         cluster = rel.split("/")[0] if "/" in rel else "root"
         counts[cluster] += 1
@@ -158,7 +154,6 @@ def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     if not log_path.exists():
         return []
     text = log_path.read_text()
-    # Find ## headers
     entries = re.findall(r'^## (.+)$', text, re.MULTILINE)
     return entries[-last_n:] if entries else []
 
@@ -205,15 +200,24 @@ def _format_frontier(vf) -> dict:
     }
 
 
-def connection_candidates(wiki_dir: Path, results: list, limit: int = 5) -> list:
-    """Bridge candidates via kuzu graph (falls back to O(n^2) if kuzu unavailable)."""
+def connection_candidates(wiki_dir: Path, limit: int = 5) -> list:
+    """Bridge candidates via the kuzu graph.
+
+    Returns [] if the graph file is missing (rebuild hasn't been run yet)
+    or kuzu isn't importable. The orchestrator is expected to rebuild the
+    graph before calling epoch_summary.
+    """
+    graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
+    if not graph_path.exists():
+        return []
     try:
-        graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
-        if not graph_path.exists():
-            return _connection_candidates_fallback(wiki_dir, limit)
         import kuzu
+    except ImportError:
+        return []
+    try:
         db = kuzu.Database(str(graph_path))
         conn = kuzu.Connection(db)
+        limit = max(1, min(int(limit), 100))
         result = conn.execute(
             "MATCH (a:WikiPage)-[:Cites]->(v:VaultSource)<-[:Cites]-(b:WikiPage) "
             "WHERE a.path < b.path "
@@ -231,33 +235,7 @@ def connection_candidates(wiki_dir: Path, results: list, limit: int = 5) -> list
             candidates.append({"page_a": r[0], "page_b": r[1], "shared_sources": r[2]})
         return candidates
     except Exception:
-        return _connection_candidates_fallback(wiki_dir, limit)
-
-
-def _connection_candidates_fallback(wiki_dir: Path, limit: int) -> list:
-    """O(n^2) fallback when kuzu graph is not available."""
-    pages = [p for p in wiki_pages_in(wiki_dir)
-             if not str(p.relative_to(wiki_dir)).startswith("sources/")]
-    page_sources = {}
-    page_links = {}
-    wikilink_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-    for p in pages:
-        text = p.read_text()
-        stem = p.stem.lower()
-        page_sources[stem] = set(re.findall(r"\(vault:([^)]+)\)", text.lower()))
-        links = set()
-        for m in wikilink_re.finditer(text):
-            links.add(m.group(1).strip().lower().replace(" ", "-"))
-        page_links[stem] = links
-    candidates = []
-    stems = list(page_sources.keys())
-    for i, a in enumerate(stems):
-        for b in stems[i+1:]:
-            shared = page_sources[a] & page_sources[b]
-            if shared and b not in page_links.get(a, set()) and a not in page_links.get(b, set()):
-                candidates.append({"page_a": a, "page_b": b, "shared_sources": len(shared)})
-    candidates.sort(key=lambda x: x["shared_sources"], reverse=True)
-    return candidates[:limit]
+        return []
 
 
 def main():
@@ -267,13 +245,18 @@ def main():
     args = ap.parse_args()
 
     wiki_dir = Path(args.wiki).resolve()
+
+    # Single pass over wiki pages: read each file exactly once and share
+    # the dict across cluster_analysis / vault_frontier / page_type_counts.
+    pages_text = {p: p.read_text() for p in wiki_pages_in(wiki_dir)}
+
     results = compute_all(wiki_dir)
 
     non_source = [r for r in results if not r["page"].startswith("sources/")]
     composites = [r["scores"]["composite"] for r in non_source]
 
     summary = {
-        "page_counts": page_type_counts(wiki_dir),
+        "page_counts": page_type_counts(pages_text, wiki_dir),
         "non_source_pages": len(non_source),
         "avg_composite": round(sum(composites) / max(len(composites), 1), 4),
         "worst_5": [
@@ -286,9 +269,9 @@ def main():
         ],
         "dimension_distribution": dimension_distribution(non_source),
         "worst_dimension_counts": worst_dimension_per_page(results),
-        "cluster_analysis": cluster_analysis(wiki_dir, results),
-        "vault_frontier": _format_frontier(vault_frontier(wiki_dir, results)),
-        "connection_candidates": connection_candidates(wiki_dir, results),
+        "cluster_analysis": cluster_analysis(wiki_dir, pages_text),
+        "vault_frontier": _format_frontier(vault_frontier(wiki_dir, pages_text)),
+        "connection_candidates": connection_candidates(wiki_dir),
         "saturation": saturation_check(wiki_dir),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
     }
