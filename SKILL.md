@@ -209,7 +209,13 @@ Worker + reviewer prompt templates live in `.curator/prompts.md` — read them v
 
 **Phase 2 — Execute (worker model + fresh-context reviewer).**
 
-For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in. Workers have no tool access — the orchestrator must pre-read all vault material and include full relevant passages in the brief. Use `python3 <skill_path>/scripts/vault_search.py "<topic>" --text` for full extracted bodies, or Read the `.extracted.md` file directly. Never send workers a 40-token snippet and expect them to cite from it.
+For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in.
+
+**Brief composition (orchestrator responsibility).** Workers have no tool access — the orchestrator controls what vault context they see. Do NOT blindly dump full vault texts (these can be 40 KB each and would overwhelm worker context). Instead:
+
+1. **Identify relevant sources:** `vault_search.py "<page topic>"` → ranked snippets showing which sources matter.
+2. **Extract the relevant passage:** for each source, run a focused query scoped to the claim: `vault_search.py "<specific claim keywords>" --limit 3`. The FTS5 snippet (~40 tokens around the best match) is often sufficient for a targeted edit. For broader tasks, Read the `.extracted.md` and extract the relevant section yourself — include only the passage, not the whole file.
+3. **Adapt based on feedback:** at plan time, read the previous epoch's `suspect_citations` count from `.curator/log.md`. If suspect rate was high, include more context in this epoch's briefs. If zero, current strategy is working. This is the self-improvement loop — no config to edit, the log drives it.
 
 **Worker protocol:** workers must return exactly
 ```
@@ -261,6 +267,8 @@ curiosity_metrics:
   cross_cluster_ratio: X.XXX
   questions_generated: N
   source_wishlist: [topic1, topic2]
+suspect_citations: N (citations rejected by FTS5 relevance check)
+brief_strategy: <"snippet" | "passage" | "full-section"> + notes on adjustments
 sweep_change: <none | "added rule X" | "reverted (rate degraded)">
 notes: <what worked, what didn't>
 ```
