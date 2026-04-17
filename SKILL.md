@@ -147,8 +147,9 @@ INGEST stays lean. Evidence and fact pages emerge later, via CURATE reads.
 7. Backfill source stubs: `uv run python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`. This calls `naming.py` internally so stubs get `[src]`-prefixed titles and citation-style stems (`attention-vaswani-2017`, `deep-learning-wikipedia-2026`).
 8. Refresh the index: `uv run python3 <skill_path>/scripts/sweep.py fix-index wiki` (writes `.curator/index.md`).
 9. Rebuild the knowledge graph: `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
-10. Append to `.curator/log.md` with timestamp.
-11. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
+10. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
+11. Append an ingest-summary entry to `.curator/log.md` with timestamp.
+12. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -196,9 +197,9 @@ Fast dedicated pass that proposes and applies many `[[wikilinks]]` across the wh
 
 Three stages. Two reviewer-model calls plus mechanical application.
 
-1. **Gather page summaries.** For every wiki page (skip `sources/`), collect `{path, title, first_paragraph}` — title from frontmatter, first_paragraph = the first non-empty prose paragraph after frontmatter. Build a single JSON document for the proposer.
+1. **Gather page summaries.** For every wiki page, collect `{path, title, first_paragraph}` — title from frontmatter, first_paragraph = the first non-empty prose paragraph after frontmatter. Include `sources/` pages: they are valid link *targets* (the natural first-mention anchor for a paper or blog) even though they should rarely be link *sources*. Build a single JSON document for the proposer.
 
-2. **Propose (one reviewer call).** Fresh Agent with `reviewer_model` and the `link_proposer` template in `.curator/prompts.md`. The proposer sees the full page-summary document and returns up to ~150 candidates as `{"proposals": [{"source": "<path>", "target": "<path>", "anchor": "<verbatim substring of source's first_paragraph>", "justification": "<one line>"}, ...]}`. Favor cross-subdirectory links (concepts↔entities, analyses↔concepts) over intra-directory keyword matches.
+2. **Propose (one reviewer call).** Fresh Agent with `reviewer_model` and the `link_proposer` template in `.curator/prompts.md`. The proposer sees the full page-summary document and returns up to ~150 candidates as `{"proposals": [{"source": "<path>", "target": "<path>", "anchor": "<verbatim substring of source's first_paragraph>", "justification": "<one line>"}, ...]}`. Favor cross-subdirectory links (concepts↔entities, analyses↔concepts, concepts→sources) over intra-directory keyword matches. Source stubs carry high orphan debt after bulk ingest; wiring concept/entity pages to their underlying `sources/*.md` is a primary goal.
 
 3. **Classify (one fresh-context reviewer call).** Separate Agent with `reviewer_model` and the `link_classifier` template in `.curator/prompts.md`. Receives the proposal list augmented with `{target_title, target_first_paragraph}` for each candidate. Returns `{"classifications": [{"n": <index>, "verdict": "valid"|"invalid"|"unsure", "reason": "..."}, ...]}`. The classifier must NOT be the same agent as the proposer.
 
@@ -246,9 +247,10 @@ Worker + reviewer prompt templates live in `.curator/prompts.md` — read them v
    
    Produce `.curator/.epoch_plan.md` with:
    - **Editorial targets** (worst lint pages, max ~10 normally, max ~2 if saturated) — skip `sources/`.
-   - **Frontier targets** (max 3): uncited vault sources → which wiki page should incorporate them.
+   - **Frontier targets** (adaptive cap: `min(10, ceil(orphan_source_count / 20))`, min 3): orphan source stubs + uncited vault sources → which concept/entity page should incorporate them via citation AND `[[source-stem]]` wikilink. After a bulk ingest the cap opens to ~5; on a mature wiki it stays at 3.
    - **Connection proposals** (max 3): page pairs sharing sources but not linking — substantive intellectual connections only.
    - **Question proposals** (max 3): gaps → new `analyses/` pages. Depth over breadth.
+   - **Atomic extractions** (max 3): concrete single-source observations → new `evidence/<stem>.md` (an observable finding tied to exactly one source) or atomic testable claims → new `facts/<stem>.md` (one sentence, one citation). Pick from vault material the epoch will read anyway. Creates the missing "atomic" layer — without this bucket, facts/ and evidence/ stay empty forever because editorial targets can't originate new pages.
 
 **Phase 2 — Execute (worker model + fresh-context reviewer).**
 
@@ -337,19 +339,15 @@ CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`
 
 ### Caveman integration
 
-If the caveman skill is installed (setup.sh prompts for this), `.curator/config.json`'s `caveman` block controls compression at two points:
+Workers are tool-less subagents — they can't invoke the caveman Skill themselves. Compression happens two ways: a read-time invocation by the orchestrator before each brief, and a write-time inline spec baked into the worker prompt with concrete examples. The `.curator/config.json` `caveman` block controls both levels.
 
-**Read-time (level: `read`, default ultra).** Before including any wiki page or vault passage in a worker brief or reading it for plan/evaluate, compress it through caveman at the configured level. The worker never sees the uncompressed text — it writes from compressed input. This is the main context-budget win: ~30-40% fewer input tokens per page read.
+**Read-time (level: `read`, default ultra).** Before including any wiki page or vault passage in a worker brief or a plan/evaluate read, the orchestrator invokes the caveman Skill at the configured `read` level and uses the compressed output in place of the raw text. This is the main context-budget win: ~30-40% fewer input tokens per page read, plus the worker sees dense signal only.
 
-**Write-time (level: `write_analysis` or `write_other`).** Workers write pages at the configured level:
-- `analyses/` pages → `write_analysis` level (default lite). Lite strips only filler adverbs and transition words. Prose stays human-comfortable in Obsidian.
-- All other page types (`entities/`, `concepts/`, `sources/`, `evidence/`, `facts/`) → `write_other` level (default ultra). Dense, telegraphic text. LLMs reconstruct grammar natively; humans wanting expanded prose can request an analysis page.
+**Write-time (levels: `write_analysis` for `analyses/`, `write_other` for everything else).** The worker prompt (`.curator/prompts.md`) embeds the caveman ultra/lite spec inline with before/after examples so workers write at the configured level directly. Relying on instruction compliance is necessary because workers have no tool access — they cannot invoke the caveman Skill mid-write.
 
-Write-time compression compounds: every future read of a compressed page is cheaper. A 1000-page wiki at ultra write saves ~30-40% on every full scan (lint, epoch_summary, query).
+Verification: if concept/entity prose still reads as standard English after an epoch (full articles, copulas, filler transitions), the worker is ignoring the embedded spec. Strengthen the spec with more examples rather than adding an orchestrator post-process step — post-processing after `score_diff` risks recomputing metrics and violating the gate.
 
-Include the write-level instruction in the worker brief: "Write at caveman `<level>` level."
-
-**No-caveman fallback.** If caveman is not installed, the `caveman` block is ignored. CURATE works verbatim — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices (frontmatter + substantive prose) rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
+**No-caveman fallback.** If caveman is not installed, the `caveman` block is ignored and the inline spec in the worker prompt still applies (it's self-contained). CURATE works verbatim — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices (frontmatter + substantive prose) rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
 
 ## Writing rules
 

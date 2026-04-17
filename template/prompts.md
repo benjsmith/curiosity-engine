@@ -22,11 +22,51 @@ this file; don't duplicate prompts there.
 >
 > Task: <SPECIFIC_TASK>  (e.g. "add a cross-reference to [[free-energy-principle]]
 > explaining the connection to precision-weighted prediction error", or
-> "reduce unsourced density by adding vault citations to the uncited claims")
+> "reduce unsourced density by adding vault citations to the uncited claims",
+> or "create wiki/facts/chinchilla-scaling-ratio.md: single atomic claim that
+> model params and training tokens should scale equally, cited to
+> (vault:chinchilla-compute-optimal.extracted.md)")
 >
 > Write level: <CAVEMAN_LEVEL or "verbatim">
-> (ultra = strip articles, copula, filler, pronouns, transitions, prepositions;
->  lite = strip only filler adverbs + transition words; verbatim = no compression)
+>
+> Caveman spec (follow exactly — this is not optional):
+> - **verbatim**: full standard prose.
+> - **lite**: drop filler adverbs (`just`, `really`, `basically`, `actually`,
+>   `simply`), hedging (`somewhat`, `perhaps`), and transition words
+>   (`however`, `furthermore`, `moreover`). Keep articles and full sentences.
+> - **ultra**: drop articles (a/an/the), copulas where obvious (`is`, `are`,
+>   `was`, `were`), pronouns where the referent is clear, filler adverbs,
+>   transitions, and prepositions that don't change meaning. Fragments
+>   encouraged. Technical terms, numbers, names, citations, wikilinks
+>   remain exact. Use arrows for causality (→). Abbreviate long compounds
+>   where unambiguous (DB, fn, impl).
+>
+> Ultra examples (before → after):
+> - "The transformer architecture uses self-attention across all layers."
+>   → "Transformer uses self-attention across all layers."
+> - "In order to achieve better performance, we scale the number of parameters."
+>   → "Better performance → scale parameter count."
+> - "Bahdanau et al. (2014) compute alignment scores via a learned
+>   feed-forward network over the encoder hidden states."
+>   → "Bahdanau et al. (2014) compute alignment scores via learned
+>   feed-forward net over encoder hidden states."
+> - "This mechanism allows the model to dynamically focus on relevant parts
+>   of the input when it is producing output."
+>   → "Mechanism lets model dynamically focus on relevant input parts when
+>   producing output."
+>
+> If the edited page reads like standard English paragraphs when your level
+> is `ultra`, you are not following the spec.
+>
+> Page-type conventions (when the task is "create a new page"):
+> - **evidence/<stem>.md**: ONE source-backed observation. A specific
+>   finding, number, or outcome tied to exactly one vault source. ~50-150
+>   words. Title: `[evi] <claim-or-observation>`. One `(vault:...)` citation.
+> - **facts/<stem>.md**: ONE atomic testable claim. A single sentence or
+>   short paragraph making a discrete assertion. ~30-100 words. Title:
+>   `[fact] <claim>`. One or two `(vault:...)` citations.
+> - **analyses/<stem>.md**: multi-source synthesis answering a question or
+>   exploring a connection. Longer. Written at `lite` level, not `ultra`.
 >
 > Hard constraints:
 > - Preserve every existing `(vault:...)` citation. Never drop a citation.
@@ -138,9 +178,16 @@ clean context; does NOT see prior CURATE or LINK history.
 > - **justification**: one line explaining why the connection is substantive.
 >
 > Prefer connections that CROSS subdirectories: concepts↔entities,
-> analyses↔concepts, evidence→concepts. Avoid trivial same-subdirectory
-> keyword links that don't add intellectual reach. Skip source pages
-> under `sources/` entirely.
+> analyses↔concepts, evidence→concepts, concepts→sources. Avoid trivial
+> same-subdirectory keyword links that don't add intellectual reach.
+>
+> Source stubs (`sources/<paper-or-blog>.md`) are valid link TARGETS — in
+> fact they are usually the right first-mention target for a paper, blog,
+> or dataset referenced in concept/entity prose (e.g. wrap the string
+> "Adam optimizer" in `concepts/adam.md` with
+> `[[adam-kingma-2014|Adam optimizer]]`). Source stubs carry high orphan
+> debt after bulk ingest — wiring them in is a priority. Do NOT propose
+> `sources/` pages as link SOURCES (no outbound links from stubs).
 >
 > Return exactly one JSON object:
 > ```

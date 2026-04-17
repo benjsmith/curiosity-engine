@@ -30,6 +30,12 @@ Subcommands
         emit it (LaTeX escape habit) which silently eats page prose.
         Idempotent. Prints JSON summary of pages touched.
 
+    sweep.py scan-references [wiki_dir]
+        Scan vault extractions for arXiv/DOI references and append any not
+        already represented in the vault to a `## source-requests` block in
+        `.curator/log.md`. Dedups across runs via `.curator/.requested-refs`
+        (append-only). Prints JSON summary of refs found / logged / skipped.
+
 Design notes
 ------------
 - sweep.py is workspace-agent-editable. It lives at `.curator/sweep.py` in
@@ -359,10 +365,131 @@ def cmd_fix_percent_escapes(wiki_dir: Path):
     }, indent=2))
 
 
+# Reference patterns. Deliberately narrow — only unambiguous forms —
+# to avoid flooding the log with false positives from version numbers,
+# phone numbers, or page refs.
+_ARXIV_RE = re.compile(r"\barXiv:\s*(\d{4}\.\d{4,5})(?:v\d+)?\b", re.IGNORECASE)
+_DOI_RE = re.compile(r"\b(10\.\d{4,9}/[-._;()/:A-Z0-9]{2,80})\b", re.IGNORECASE)
+
+
+def _extract_refs(text: str) -> set:
+    """Return a set of `arxiv:ID` / `doi:ID` strings found in text."""
+    refs = set()
+    for m in _ARXIV_RE.finditer(text):
+        refs.add(f"arxiv:{m.group(1).lower()}")
+    for m in _DOI_RE.finditer(text):
+        refs.add(f"doi:{m.group(1).lower()}")
+    return refs
+
+
+_SOURCE_URL_RE = re.compile(r"(?mi)^\s*source_url:\s*(\S+)\s*$")
+
+
+def _vault_primary_refs(vault_files: list) -> set:
+    """Refs represented BY vault files (not just mentioned IN them).
+
+    A vault extraction's inner frontmatter carries `source_url` pointing at
+    the paper/blog the extraction represents. We extract arXiv IDs / DOIs
+    from those URLs only — a citation inside the body is a mention, not a
+    presence.
+    """
+    primary = set()
+    for f in vault_files:
+        try:
+            text = f.read_text()
+        except OSError:
+            continue
+        for m in _SOURCE_URL_RE.finditer(text):
+            url = m.group(1)
+            primary |= _extract_refs(url)
+            # arXiv URLs like arxiv.org/abs/1706.03762 don't match the
+            # "arXiv:" prefix pattern; capture the bare ID directly.
+            am = re.search(r"arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5})",
+                           url, re.IGNORECASE)
+            if am:
+                primary.add(f"arxiv:{am.group(1).lower()}")
+    return primary
+
+
+def cmd_scan_references(wiki_dir: Path):
+    """Log external references (arXiv / DOI) not yet in the vault.
+
+    Walks `vault/*.extracted.md`, extracts reference patterns, drops any
+    already represented in the vault or previously logged, and appends
+    survivors under `## source-requests` in `.curator/log.md`.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    cur = curator_dir(wiki_dir)
+    cur.mkdir(parents=True, exist_ok=True)
+    requested_path = cur / ".requested-refs"
+    log_path = cur / "log.md"
+
+    if not vault_dir.exists():
+        print(json.dumps({"found": 0, "logged": 0, "skipped_in_vault": 0,
+                          "skipped_already_requested": 0,
+                          "note": "no vault/ directory"}))
+        return
+
+    vault_files = sorted(vault_dir.glob("*.extracted.md"))
+    primary = _vault_primary_refs(vault_files)
+    all_refs = set()
+    per_ref_sources = defaultdict(list)
+    for f in vault_files:
+        try:
+            text = f.read_text()
+        except OSError:
+            continue
+        refs = _extract_refs(text)
+        for ref in refs:
+            all_refs.add(ref)
+            per_ref_sources[ref].append(f.name)
+
+    already_requested = set()
+    if requested_path.exists():
+        already_requested = {
+            line.strip() for line in requested_path.read_text().splitlines()
+            if line.strip()
+        }
+
+    new_refs = []
+    skipped_in_vault = 0
+    skipped_already = 0
+    for ref in sorted(all_refs):
+        if ref in already_requested:
+            skipped_already += 1
+            continue
+        if ref in primary:
+            skipped_in_vault += 1
+            continue
+        new_refs.append(ref)
+
+    if new_refs:
+        import datetime as _dt
+        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        lines = [f"\n## source-requests {ts}\n"]
+        for ref in new_refs:
+            srcs = ", ".join(sorted(set(per_ref_sources[ref]))[:3])
+            lines.append(f"- `{ref}` — referenced by: {srcs}\n")
+        with log_path.open("a") as fh:
+            fh.writelines(lines)
+        with requested_path.open("a") as fh:
+            for ref in new_refs:
+                fh.write(ref + "\n")
+
+    print(json.dumps({
+        "found": len(all_refs),
+        "logged": len(new_refs),
+        "skipped_in_vault": skipped_in_vault,
+        "skipped_already_requested": skipped_already,
+        "new_refs": new_refs,
+    }, indent=2))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
+        "scan-references",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     args = ap.parse_args()
@@ -380,6 +507,8 @@ def main():
         cmd_fix_index(wiki_dir)
     elif args.command == "fix-percent-escapes":
         cmd_fix_percent_escapes(wiki_dir)
+    elif args.command == "scan-references":
+        cmd_scan_references(wiki_dir)
 
 
 if __name__ == "__main__":
