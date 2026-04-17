@@ -197,6 +197,7 @@ def parse_source_meta(vault_path: Path) -> dict:
         if not line.startswith("#"):
             continue
         header = line.lstrip("#").strip()
+        header = re.sub(r"^title\s*[:\u2014\-]\s*", "", header, flags=re.IGNORECASE)
         m = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", header)
         if m:
             title_part = m.group(1).strip()
