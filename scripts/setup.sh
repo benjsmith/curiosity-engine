@@ -61,24 +61,70 @@ for d in sources entities concepts analyses evidence facts; do
 done
 mkdir -p .curator
 
-# Copy human-edited templates into .curator/ if not already present
-for f in schema.md prompts.md config.json; do
-    if [ ! -f ".curator/$f" ]; then
-        cp "$TEMPLATE_DIR/$f" ".curator/$f"
-        echo "  Created .curator/$f"
+# Refresh markdown templates that drift as the skill evolves. The skill
+# periodically adds new operations, prompt spec updates, or allowlist-
+# breaking command changes; workspaces that don't pick those up show up
+# as agent-side approval prompts and stale instructions. On every run:
+#   * absent      → install fresh (initial setup case)
+#   * identical   → leave alone
+#   * different   → back up with timestamp, install fresh, optionally
+#                    union-merge the backup back in so workspace additions
+#                    are preserved
+#
+# config.json is handled separately (copy-if-missing) because its values
+# are user-tuned (worker_model, parallel_workers, epoch_seconds) and a
+# refresh would blow those away.
+refresh_template_md() {
+    local src="$1"
+    local dst="$2"
+    if [ ! -f "$dst" ]; then
+        cp "$src" "$dst"
+        echo "  Created $dst"
+        return
     fi
-done
+    if cmp -s "$src" "$dst"; then
+        return
+    fi
+    local ts backup
+    ts=$(date +%Y%m%d-%H%M%S)
+    backup="${dst}.bak.${ts}"
+    cp "$dst" "$backup"
+    echo ""
+    echo "  $dst differs from the skill template."
+    echo "  Backed up to: $backup"
+    local reply_merge="n"
+    if [ -t 0 ] && [ -t 1 ]; then
+        printf "  Auto-merge workspace edits with the refreshed template (union merge via git merge-file)? [y/N] "
+        read -r reply_merge || reply_merge="n"
+    fi
+    cp "$src" "$dst"
+    case "$reply_merge" in
+        y|Y|yes|YES)
+            if git merge-file --union "$dst" /dev/null "$backup" >/dev/null 2>&1; then
+                echo "  Union-merged. Review $dst for duplicated sections from overlapping edits."
+            else
+                echo "  Union merge failed; left fresh template in place. Manually diff against $backup if needed."
+            fi
+            ;;
+        *)
+            echo "  Fresh template installed. Manually merge from $backup if you had local edits."
+            ;;
+    esac
+}
 
-# Warn if workspace prompts.md predates LINK. We don't auto-edit the
-# human-edited copy, but the user needs to know the LINK operation
-# requires the new `link_proposer`/`link_classifier` templates.
-if [ -f .curator/prompts.md ] && ! grep -q '^## link_proposer' .curator/prompts.md 2>/dev/null; then
+refresh_template_md "$TEMPLATE_DIR/schema.md" ".curator/schema.md"
+refresh_template_md "$TEMPLATE_DIR/prompts.md" ".curator/prompts.md"
+
+# config.json: copy if missing; leave user-tuned values alone otherwise.
+# Schema additions (new config keys) print a warning rather than overwriting.
+if [ ! -f ".curator/config.json" ]; then
+    cp "$TEMPLATE_DIR/config.json" ".curator/config.json"
+    echo "  Created .curator/config.json"
+elif ! cmp -s "$TEMPLATE_DIR/config.json" ".curator/config.json"; then
     echo ""
-    echo "NOTE: .curator/prompts.md predates the LINK operation."
-    echo "  To enable LINK, merge these sections from the skill template:"
-    echo "    $TEMPLATE_DIR/prompts.md"
-    echo "  (sections: 'link_proposer' and 'link_classifier')"
-    echo ""
+    echo "  NOTE: .curator/config.json differs from the skill template."
+    echo "  Not auto-refreshing (preserves your worker_model/epoch_seconds/etc."
+    echo "  tuning). Diff against $TEMPLATE_DIR/config.json to pick up any new keys."
 fi
 
 # Initialize auto-generated curator state
@@ -115,10 +161,7 @@ elif ! grep -q '.skill_path' .curator/sweep.py; then
     echo "  Refreshed stale .curator/sweep.py (backed up to sweep.py.bak)"
 fi
 
-if [ ! -f CLAUDE.md ]; then
-    cp "$TEMPLATE_DIR/CLAUDE.md" CLAUDE.md
-    echo "  Created CLAUDE.md"
-fi
+refresh_template_md "$TEMPLATE_DIR/CLAUDE.md" "CLAUDE.md"
 
 # Generate Claude Code settings inline. Auto-allows:
 #   - git commands scoped via `git -C wiki <cmd>` AND `git -C */wiki <cmd>`
