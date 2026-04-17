@@ -17,8 +17,8 @@ TEMPLATE_DIR="$SKILL_ROOT/template"
 #   .curator/              curator state, NOT tracked by wiki's git
 #   CLAUDE.md              workspace instructions (mirrors SKILL.md)
 #   .claude/settings.json  auto-allow permissions
-mkdir -p vault wiki/{sources,entities,concepts,analyses,evidence,facts}
-touch vault/.gitkeep
+mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts}
+touch vault/.gitkeep vault/raw/.gitkeep
 for d in sources entities concepts analyses evidence facts; do
     touch "wiki/$d/.gitkeep"
 done
@@ -124,17 +124,24 @@ fi
 # input tokens) and write-time (ultra for most pages, lite for analyses).
 if [ -t 0 ] && [ -t 1 ]; then
     echo ""
-    echo "Install caveman compression? Saves ~30-40% tokens on reads,"
-    echo "~10-15% on analysis writes, ~30-40% on other page writes."
-    printf "Install? [y/N] "
-    read -r reply || reply="n"
+    printf "Install caveman skill to save tokens by using terse telegraphic language for reads and writes? [Y/i/n] "
+    read -r reply || reply="y"
     case "$reply" in
-        y|Y|yes|YES)
+        ""|y|Y|yes|YES)
             if command -v npx >/dev/null 2>&1; then
-                echo "  Installing JuliusBrussee/caveman via npx skills ..."
-                npx skills add JuliusBrussee/caveman || echo "  (install failed — re-run: npx skills add JuliusBrussee/caveman)"
+                echo "  Installing JuliusBrussee/caveman via npx skills (global, symlinks) ..."
+                npx skills add -g -y JuliusBrussee/caveman || echo "  (install failed — re-run: npx skills add -g -y JuliusBrussee/caveman)"
                 echo "  Levels configured in .curator/config.json:"
                 echo "    read=ultra, write_analysis=lite, write_other=ultra"
+            else
+                echo "  npx not found. Install later: npx skills add -g -y JuliusBrussee/caveman"
+            fi
+            ;;
+        i|I)
+            if command -v npx >/dev/null 2>&1; then
+                echo "  Running interactive install: npx skills add JuliusBrussee/caveman"
+                echo "  (all CLI options will be shown to you)"
+                npx skills add JuliusBrussee/caveman </dev/tty || echo "  (install failed — re-run: npx skills add JuliusBrussee/caveman)"
             else
                 echo "  npx not found. Install later: npx skills add JuliusBrussee/caveman"
             fi
