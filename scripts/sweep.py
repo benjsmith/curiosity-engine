@@ -24,6 +24,12 @@ Subcommands
         Preserves any top-of-file prose (before the first list item).
         Prints JSON summary of drift resolved.
 
+    sweep.py fix-percent-escapes [wiki_dir]
+        Collapse `%%` → `%` in wiki page bodies outside fenced code blocks.
+        Obsidian renders `%%…%%` as a hidden comment; LLMs occasionally
+        emit it (LaTeX escape habit) which silently eats page prose.
+        Idempotent. Prints JSON summary of pages touched.
+
 Design notes
 ------------
 - sweep.py is workspace-agent-editable. It lives at `.curator/sweep.py` in
@@ -313,9 +319,51 @@ def cmd_fix_index(wiki_dir: Path):
     }, indent=2))
 
 
+_FENCED_CODE_RE = re.compile(r"(?ms)^```.*?^```")
+_DOUBLE_PERCENT_RE = re.compile(r"%%+")
+
+
+def _collapse_double_percent(text: str) -> str:
+    """Replace `%%` with `%` outside fenced code blocks. Skips frontmatter."""
+    fm_end = 0
+    if text.startswith("---\n"):
+        m = re.search(r"\n---\n", text[4:])
+        if m:
+            fm_end = 4 + m.end()
+    head, body = text[:fm_end], text[fm_end:]
+
+    spans = [(m.start(), m.end()) for m in _FENCED_CODE_RE.finditer(body)]
+    out = []
+    cursor = 0
+    for start, end in spans:
+        out.append(_DOUBLE_PERCENT_RE.sub("%", body[cursor:start]))
+        out.append(body[start:end])
+        cursor = end
+    out.append(_DOUBLE_PERCENT_RE.sub("%", body[cursor:]))
+    return head + "".join(out)
+
+
+def cmd_fix_percent_escapes(wiki_dir: Path):
+    """Strip `%%` hidden-comment sequences from wiki page bodies."""
+    pages = wiki_pages(wiki_dir)
+    touched = []
+    for p in pages:
+        old = p.read_text()
+        new = _collapse_double_percent(old)
+        if new != old:
+            p.write_text(new)
+            touched.append(str(p.relative_to(wiki_dir)))
+    print(json.dumps({
+        "touched": len(touched),
+        "pages": touched,
+    }, indent=2))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["scan", "fix-source-stubs", "fix-index"])
+    ap.add_argument("command", choices=[
+        "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
+    ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     args = ap.parse_args()
 
@@ -330,6 +378,8 @@ def main():
         cmd_fix_source_stubs(wiki_dir)
     elif args.command == "fix-index":
         cmd_fix_index(wiki_dir)
+    elif args.command == "fix-percent-escapes":
+        cmd_fix_percent_escapes(wiki_dir)
 
 
 if __name__ == "__main__":

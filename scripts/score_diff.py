@@ -37,6 +37,54 @@ from naming import WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
 
 CITATION_RAW_RE = re.compile(r"\(vault:[^)]+\)")
 
+# FTS5 reserved tokens. If a claim word matches one of these (case-insensitive),
+# the raw query would be parsed as an operator and blow up with a syntax error.
+# Kept in sync with vault_search._sanitize_fts.
+_FTS5_RESERVED = {"AND", "OR", "NOT", "NEAR"}
+
+# Obsidian hides `%%…%%` as a comment block. LLMs occasionally emit `%%`
+# while trying to escape `%` (LaTeX habit), which silently eats page prose
+# between two such occurrences. We collapse to single `%` in body text,
+# outside fenced code blocks.
+_FENCED_CODE_RE = re.compile(r"(?ms)^```.*?^```")
+_DOUBLE_PERCENT_RE = re.compile(r"%%+")
+
+
+def _sanitize_fts(query: str) -> str:
+    """Quote hyphenated tokens and FTS5 operators so raw syntax can't leak.
+
+    Duplicated from vault_search so score_diff stays self-contained.
+    """
+    out = []
+    for tok in re.findall(r'"[^"]*"|\S+', query):
+        if tok.startswith('"'):
+            out.append(tok)
+        elif "-" in tok or tok.upper() in _FTS5_RESERVED or re.fullmatch(r"\w+:", tok):
+            out.append('"' + tok.replace('"', "") + '"')
+        else:
+            out.append(tok)
+    return " ".join(out)
+
+
+def _collapse_double_percent(text: str) -> str:
+    """Replace `%%` with `%` in body text outside fenced code blocks."""
+    fm_end = 0
+    if text.startswith("---\n"):
+        m = re.search(r"\n---\n", text[4:])
+        if m:
+            fm_end = 4 + m.end()
+    head, body = text[:fm_end], text[fm_end:]
+
+    spans = [(m.start(), m.end()) for m in _FENCED_CODE_RE.finditer(body)]
+    out = []
+    cursor = 0
+    for start, end in spans:
+        out.append(_DOUBLE_PERCENT_RE.sub("%", body[cursor:start]))
+        out.append(body[start:end])
+        cursor = end
+    out.append(_DOUBLE_PERCENT_RE.sub("%", body[cursor:]))
+    return head + "".join(out)
+
 
 def body_tokens(text: str) -> int:
     """Whitespace-split token count on body only (frontmatter excluded)."""
@@ -105,17 +153,21 @@ def verify_new_citations(old_text: str, new_text: str,
         words = _claim_words(line)
         if not words:
             continue
+        sanitized = _sanitize_fts(words)
         try:
             row = conn.execute(
                 "SELECT count(*) FROM sources WHERE path = ? AND sources MATCH ?",
-                (vp, words)
+                (vp, sanitized)
             ).fetchone()
         except sqlite3.Error as e:
-            # FTS5 syntax / lock errors -> fail closed on this citation.
-            suspects.append({"citation": vp, "claim_words": words, "error": str(e)})
+            # FTS5 error reaching here means our sanitizer missed something.
+            # Don't reject the citation (the edit may be fine) — surface the
+            # bug to stderr and treat this citation as unverified.
+            print(f"score_diff: FTS5 error verifying {vp}: {e} "
+                  f"(words={sanitized!r})", file=sys.stderr)
             continue
         if row[0] == 0:
-            suspects.append({"citation": vp, "claim_words": words})
+            suspects.append({"citation": vp, "claim_words": sanitized})
     conn.close()
     return suspects
 
@@ -176,6 +228,11 @@ def main():
     else:
         print(json.dumps({"error": "need --new-file or --new-text-stdin", "applied": False}))
         return
+
+    # Silently collapse `%%` → `%` in body prose. Obsidian renders `%%…%%`
+    # as a hidden comment; LLMs sometimes emit it while trying to escape a
+    # percent sign. This is always wrong in wiki prose.
+    new_text = _collapse_double_percent(new_text)
 
     if args.new_page:
         accept, reason = new_page_verdict(new_text)

@@ -10,6 +10,43 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE_DIR="$SKILL_ROOT/template"
 
+# Ensure `uv` is available. The skill's canonical Python invocation is
+# `uv run python3 ...`, which auto-discovers the workspace `.venv`. Without
+# uv the allowlist won't match and every python command triggers approval.
+if ! command -v uv >/dev/null 2>&1; then
+    if [ -t 0 ] && [ -t 1 ]; then
+        printf "uv not found. Install uv from astral.sh? [Y/n] "
+        read -r reply_uv || reply_uv="y"
+    else
+        reply_uv="y"
+    fi
+    case "$reply_uv" in
+        ""|y|Y|yes|YES)
+            echo "  Installing uv ..."
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            # shellcheck disable=SC1091
+            [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+            export PATH="$HOME/.local/bin:$PATH"
+            ;;
+        *)
+            echo "  Cannot proceed without uv. Install manually: curl -LsSf https://astral.sh/uv/install.sh | sh"
+            exit 1
+            ;;
+    esac
+fi
+
+# Create workspace venv + install kuzu. `uv run` from the workspace root
+# auto-discovers `./.venv` — no activation needed. kuzu backs graph.py,
+# lint_scores.py, and epoch_summary.py.
+if [ ! -d .venv ]; then
+    echo "  Creating workspace .venv via uv ..."
+    uv venv
+fi
+if ! uv run --no-project python3 -c "import kuzu" >/dev/null 2>&1; then
+    echo "  Installing kuzu into .venv ..."
+    uv pip install kuzu
+fi
+
 # Working directory layout:
 #   vault/                 raw sources
 #   wiki/                  content-only, git-tracked
@@ -58,14 +95,15 @@ fi
 
 # Generate Claude Code settings inline. Auto-allows:
 #   - git commands scoped via `git -C wiki <cmd>` AND `git -C */wiki <cmd>`
-#   - python3 invocations of skill scripts at this exact absolute path
-#   - python3 .curator/sweep.py (the workspace sweep copy)
+#   - `uv run python3` invocations of skill scripts at this exact absolute path
+#   - `uv run python3 .curator/sweep.py` (the workspace sweep copy)
 #   - bash evolve_guard.sh
 #   - date
+# The `uv run` prefix picks up the workspace `.venv` so kuzu etc. resolve.
 regenerate_settings=0
 if [ ! -s .claude/settings.json ]; then
     regenerate_settings=1
-elif ! python3 -c "import json, sys; json.load(open('.claude/settings.json'))" >/dev/null 2>&1; then
+elif ! uv run --no-project python3 -c "import json, sys; json.load(open('.claude/settings.json'))" >/dev/null 2>&1; then
     regenerate_settings=1
 fi
 
@@ -93,23 +131,23 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(git -C */wiki checkout:*)",
       "Bash(git -C */wiki rev-parse:*)",
       "Bash(git -C */wiki show:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/lint_scores.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/vault_search.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/vault_index.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/local_ingest.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/scrub_check.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/score_diff.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/sweep.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/epoch_summary.py:*)",
-      "Bash(python3 $SKILL_ROOT/scripts/graph.py:*)",
-      "Bash(python3 .curator/sweep.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/lint_scores.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/vault_search.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/vault_index.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/local_ingest.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/scrub_check.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/score_diff.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/sweep.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/epoch_summary.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/graph.py:*)",
+      "Bash(uv run python3 .curator/sweep.py:*)",
       "Bash(bash $SKILL_ROOT/scripts/evolve_guard.sh:*)",
       "Bash(date:*)"
     ]
   }
 }
 EOF
-    echo "  Created .claude/settings.json (auto-allow git -C wiki + skill scripts + .curator/sweep.py)"
+    echo "  Created .claude/settings.json (auto-allow git -C wiki + uv run python3 skill scripts)"
 fi
 
 # Initialize wiki as its own git repo (content-only; .curator/ is outside)
@@ -153,7 +191,7 @@ if [ -t 0 ] && [ -t 1 ]; then
 fi
 
 # Initialize vault FTS5 index
-python3 "$SCRIPT_DIR/vault_index.py" --init
+uv run python3 "$SCRIPT_DIR/vault_index.py" --init
 
 echo ""
 echo "Ready. Open Claude Code here and try:"

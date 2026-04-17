@@ -52,7 +52,7 @@ def _check_stale(wiki_dir: Path) -> bool:
     kuzu_mtime = kuzu_path.stat().st_mtime
     wiki_mtime = max((f.stat().st_mtime for f in wiki_dir.rglob("*.md")), default=0)
     if wiki_mtime > kuzu_mtime:
-        print(f"graph stale (wiki newer than kuzu) — run: python3 scripts/graph.py rebuild {wiki_dir.name}",
+        print(f"graph stale (wiki newer than kuzu) — run: uv run python3 scripts/graph.py rebuild {wiki_dir.name}",
               file=sys.stderr)
         print("[]")
         return True
@@ -61,7 +61,7 @@ def _check_stale(wiki_dir: Path) -> bool:
 
 def _connect(wiki_dir: Path):
     if kuzu is None:
-        print(json.dumps({"error": "kuzu not installed (pip install kuzu)"}))
+        print(json.dumps({"error": "kuzu not installed (uv pip install kuzu, or rerun setup.sh)"}))
         sys.exit(1)
     path = _graph_path(wiki_dir)
     Path(path).parent.mkdir(parents=True, exist_ok=True)

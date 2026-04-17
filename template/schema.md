@@ -19,14 +19,14 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
 
 ## Stores
 - **Vault** (`vault/`): raw source files, append-only, never modify.
-  Search: `python3 <skill_path>/scripts/vault_search.py "query"`
+  Search: `uv run python3 <skill_path>/scripts/vault_search.py "query"`
   Read files directly — you see PDFs, images, docs natively.
   Drop folder: `vault/raw/` — user drops files here for bulk ingest.
 - **Wiki** (`wiki/`): git-tracked markdown content. Pages only.
   Subdirs: `sources/`, `entities/`, `concepts/`, `analyses/`, `evidence/`, `facts/`.
 - **Graph** (`.curator/graph.kuzu`): kuzu property graph tracking WikiPage
   and VaultSource nodes, WikiLink and Cites edges. Rebuild after any
-  structural wiki change via `python3 <skill_path>/scripts/graph.py rebuild wiki`.
+  structural wiki change via `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
 - **Curator state** (`.curator/`): not git-tracked. Operating protocol,
   prompts, config, log, auto-generated index, sweep copy, guard snapshot,
   epoch plan, graph.
@@ -61,7 +61,7 @@ Accept a change if BOTH:
 1. `sourced_claims(after) >= sourced_claims(before)`  (no citation loss)
 2. `body_tokens(after) <= body_tokens(before) * 1.5`   (no bloat; frontmatter excluded)
 
-Measure: `python3 <skill_path>/scripts/score_diff.py wiki/<page>.md --new-text-stdin`
+Measure: `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page>.md --new-text-stdin`
 (pipe candidate text on stdin).
 
 Quality beyond the floors is judged by the fresh-context opus reviewer,

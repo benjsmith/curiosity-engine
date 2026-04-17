@@ -122,7 +122,8 @@ If you skip caveman, CURATE works verbatim. The `caveman` block in `config.json`
 ## Dependencies
 
 - **Python 3** — most scripts use stdlib only (`sqlite3`, `json`, `re`, `pathlib`).
-- **[kuzu](https://kuzudb.com/)** (required) — embedded property-graph database behind `graph.py`. Stores `WikiPage`/`VaultSource` nodes and `WikiLink`/`Cites` edges; used for neighbors, shortest-path, shared-source, and bridge-candidate queries during plan/evaluate. Install with `pip install kuzu`.
+- **[uv](https://github.com/astral-sh/uv)** (required) — workspace venv + script runner. `setup.sh` installs uv if missing, creates `./.venv`, and installs kuzu into it. The skill's canonical command is `uv run python3 <skill_path>/scripts/<name>.py ...`; the `uv run` prefix auto-discovers `./.venv` so imports resolve without activation.
+- **[kuzu](https://kuzudb.com/)** (required) — embedded property-graph database behind `graph.py`. Stores `WikiPage`/`VaultSource` nodes and `WikiLink`/`Cites` edges; used for neighbors, shortest-path, shared-source, and bridge-candidate queries during plan/evaluate. Installed automatically into the workspace `.venv` by `setup.sh`.
 - **[JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)** (optional) — read/write token compression. See [Caveman mode](#caveman-mode-optional). Setup offers to install it via `npx skills add JuliusBrussee/caveman`.
 - **git** — the wiki is a git repo; every accepted edit commits.
 - **Claude Code** — this is a skill, not a standalone CLI. There is no separate API client; Claude Code is the agent.

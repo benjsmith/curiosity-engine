@@ -45,11 +45,12 @@ bash commands allowed:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never flags
    before `-C`
-2. `python3 <skill_path>/scripts/<named_script>.py ...` — never
-   `python3 -c "..."`
-3. `python3 .curator/sweep.py ...` — the workspace sweep copy
-4. `python3 <skill_path>/scripts/graph.py <subcommand> wiki ...` — kuzu
-   knowledge graph: `rebuild`, `shared-sources`, `path`, `neighbors`,
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare
+   `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the
+   workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve.
+3. `uv run python3 .curator/sweep.py ...` — the workspace sweep copy
+4. `uv run python3 <skill_path>/scripts/graph.py <subcommand> wiki ...` —
+   kuzu knowledge graph: `rebuild`, `shared-sources`, `path`, `neighbors`,
    `bridge-candidates`. Rebuild after any structural wiki change.
 5. `bash <skill_path>/scripts/evolve_guard.sh ...`
 6. `date ...`
