@@ -27,7 +27,9 @@ Read `.curator/schema.md` before any operation.
 - "Add <file> to the vault" — ingest a source
 - "What do I know about X?" — query the wiki
 - "Lint" — check wiki health
-- "Curate" / "run" / "improve" / "iterate" / "evolve" — autonomous CURATE loop
+- "Sweep" / "clean up" — mechanical hygiene pass
+- "Link" / "wire up" / "connect pages" — fast propose→classify→apply wikilink pass
+- "Curate" / "run" / "improve" / "iterate" — autonomous CURATE loop
 
 ## Naming (naming.py)
 

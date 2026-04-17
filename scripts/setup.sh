@@ -69,6 +69,18 @@ for f in schema.md prompts.md config.json; do
     fi
 done
 
+# Warn if workspace prompts.md predates LINK. We don't auto-edit the
+# human-edited copy, but the user needs to know the LINK operation
+# requires the new `link_proposer`/`link_classifier` templates.
+if [ -f .curator/prompts.md ] && ! grep -q '^## link_proposer' .curator/prompts.md 2>/dev/null; then
+    echo ""
+    echo "NOTE: .curator/prompts.md predates the LINK operation."
+    echo "  To enable LINK, merge these sections from the skill template:"
+    echo "    $TEMPLATE_DIR/prompts.md"
+    echo "  (sections: 'link_proposer' and 'link_classifier')"
+    echo ""
+fi
+
 # Initialize auto-generated curator state
 if [ ! -f .curator/log.md ]; then
     printf '# Log\n' > .curator/log.md

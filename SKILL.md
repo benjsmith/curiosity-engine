@@ -190,6 +190,44 @@ Mechanical whole-wiki hygiene. Distinct from CURATE's semantic ratchet: SWEEP ru
 
 Run SWEEP at the start of each CURATE epoch so the semantic ratchet isn't fighting phantom pages or dead references.
 
+### LINK — "link", "wire up", "connect pages"
+
+Fast dedicated pass that proposes and applies many `[[wikilinks]]` across the whole wiki in one sweep. Complements CURATE (slow, per-page, citation-preserving) by handling the cheap connective tissue separately so CURATE epochs don't burn budget on mechanical wiring. A full LINK pass is single-digit minutes on a ~hundred-page wiki; CURATE epochs stay focused on prose, citations, and synthesis.
+
+Three stages. Two reviewer-model calls plus mechanical application.
+
+1. **Gather page summaries.** For every wiki page (skip `sources/`), collect `{path, title, first_paragraph}` — title from frontmatter, first_paragraph = the first non-empty prose paragraph after frontmatter. Build a single JSON document for the proposer.
+
+2. **Propose (one reviewer call).** Fresh Agent with `reviewer_model` and the `link_proposer` template in `.curator/prompts.md`. The proposer sees the full page-summary document and returns up to ~150 candidates as `{"proposals": [{"source": "<path>", "target": "<path>", "anchor": "<verbatim substring of source's first_paragraph>", "justification": "<one line>"}, ...]}`. Favor cross-subdirectory links (concepts↔entities, analyses↔concepts) over intra-directory keyword matches.
+
+3. **Classify (one fresh-context reviewer call).** Separate Agent with `reviewer_model` and the `link_classifier` template in `.curator/prompts.md`. Receives the proposal list augmented with `{target_title, target_first_paragraph}` for each candidate. Returns `{"classifications": [{"n": <index>, "verdict": "valid"|"invalid"|"unsure", "reason": "..."}, ...]}`. The classifier must NOT be the same agent as the proposer.
+
+4. **Apply (mechanical, orchestrator).** For each `valid` proposal:
+   - Read the source page.
+   - Verify the anchor appears exactly once in the body (outside existing `[[...]]`, `(vault:...)`, and fenced code). If 0 or >1 occurrences, skip and log to `## link-ambiguous` in `.curator/log.md`.
+   - Edit the source page: `old_string = anchor`, `new_string = [[target_stem|anchor]]` where `target_stem` is `Path(target).stem`.
+   - Track applied vs. skipped counts.
+
+5. **Commit and rebuild graph.**
+   ```
+   git -C wiki add -A
+   git -C wiki commit -m "link: A applied, R rejected, U unsure, S skipped (ambiguous)"
+   uv run python3 <skill_path>/scripts/graph.py rebuild wiki
+   ```
+
+6. **Log.** Append to `.curator/log.md`:
+   ```
+   ## link-pass <ISO timestamp>
+   proposed: N
+   valid: V (applied: A, skipped_ambiguous: S)
+   invalid: I
+   unsure: U
+   elapsed_minutes: X.X
+   ```
+   Unsure candidates drop on the floor — the next LINK pass will surface them again if they're still valid.
+
+**When to run.** Between CURATE epochs, on demand ("link"), or as a one-shot after a batch INGEST. Cheap enough to run often. Does NOT loop autonomously — one pass, one commit, done.
+
 ### CURATE — "curate", "run", "improve", "iterate"
 
 Single autonomous loop: **plan → execute → evaluate → stop check → loop**. Replaces the old ITERATE + EVOLVE split — there is one loop, not two nested ones. You are the orchestrator: you pick targets, compose briefs, dispatch workers, review results, and decide whether to continue.

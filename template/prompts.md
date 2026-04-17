@@ -109,3 +109,80 @@ to get the cross-linked neighborhood of each page touched in the epoch.
 > ```
 > {"contradictions": [{"pages": [a, b], "claim": "...", "resolution": "auto-correct"|"human-review", "correction": "..." or null}]}
 > ```
+
+---
+
+## link_proposer (opus)
+
+Used by LINK. Single reviewer-model call that scans compact page summaries
+for the whole wiki and proposes cross-page `[[wikilinks]]`. Fresh Agent with
+clean context; does NOT see prior CURATE or LINK history.
+
+> You are proposing `[[wikilink]]` insertions for a knowledge wiki. You see
+> a compact summary of every page (path, title, first paragraph). Your job
+> is to surface connections worth wiring up.
+>
+> Pages:
+> ```
+> <PAGE_SUMMARIES_JSON>
+> ```
+>
+> Propose up to 150 wikilink insertions. Each proposal:
+> - **source**: path of the page that gets the new link (e.g. `concepts/transformer.md`).
+> - **target**: path of the linked-to page.
+> - **anchor**: a VERBATIM substring of the source's first_paragraph above
+>   that should be wrapped with `[[target_stem|anchor]]`. Case-exact, no
+>   invented text. Must not already be inside `[[...]]`, `(vault:...)`, or
+>   inline code. Prefer multi-word anchors (e.g. "attention mechanism" over
+>   "attention") — they're easier to disambiguate and less noisy.
+> - **justification**: one line explaining why the connection is substantive.
+>
+> Prefer connections that CROSS subdirectories: concepts↔entities,
+> analyses↔concepts, evidence→concepts. Avoid trivial same-subdirectory
+> keyword links that don't add intellectual reach. Skip source pages
+> under `sources/` entirely.
+>
+> Return exactly one JSON object:
+> ```
+> {"proposals": [{"source": "<path>", "target": "<path>", "anchor": "<verbatim substring>", "justification": "<one line>"}]}
+> ```
+
+---
+
+## link_classifier (opus, fresh context)
+
+Used by LINK. A DIFFERENT Agent from the proposer — must have no memory of
+the proposal call. Receives the proposal list and judges each candidate.
+
+> You are reviewing proposed `[[wikilink]]` insertions for a knowledge
+> wiki. You did NOT create these proposals — review with fresh eyes.
+> Reject superficial keyword matches and spurious connections; accept
+> substantive cross-references.
+>
+> Proposals (each with source/target context):
+> ```
+> <CLASSIFICATION_INPUT_JSON>
+> ```
+>
+> Each proposal has:
+> - `n`: sequence number
+> - `source`, `target`: page paths
+> - `anchor`: the substring to be wrapped in the source
+> - `target_title`, `target_first_paragraph`: what the anchor would link to
+> - `justification`: proposer's one-liner
+>
+> Criteria for each proposal:
+> 1. Does the target page actually cover the concept the anchor refers to?
+>    Reject if the anchor is a homonym or the target is unrelated.
+> 2. Is the link substantive, or just a keyword coincidence? Reject if
+>    trivial — an encyclopedic wiki shouldn't link every mention of
+>    "learning" to `[[machine-learning]]`.
+> 3. Would a reader benefit from following this link? Reject if the target
+>    adds nothing beyond what's already in context.
+>
+> Use `unsure` only when the target's first paragraph is too thin to judge.
+>
+> Return exactly one JSON object:
+> ```
+> {"classifications": [{"n": <int>, "verdict": "valid"|"invalid"|"unsure", "reason": "<one line>"}]}
+> ```
