@@ -95,9 +95,24 @@ fi
 # reference at $SKILL_ROOT/scripts/sweep.py. The skill's reference copy is
 # what the guard treats as the baseline; the workspace copy may be edited
 # by CURATE.
+#
+# The workspace copy needs to resolve `from naming import ...` against the
+# skill's scripts/ dir, which isn't next to .curator/. We write the skill
+# scripts path to `.curator/.skill_path` so sweep.py's import-fallback can
+# find naming.py. This file is always refreshed (cheap, idempotent).
+printf '%s\n' "$SKILL_ROOT/scripts" > .curator/.skill_path
+
 if [ ! -f .curator/sweep.py ]; then
     cp "$SKILL_ROOT/scripts/sweep.py" .curator/sweep.py
     echo "  Created .curator/sweep.py (agent-editable workspace copy)"
+elif ! grep -q '.skill_path' .curator/sweep.py; then
+    # Existing workspace copy predates the skill-path fallback and will
+    # fail on `from naming import ...`. Refresh from the skill reference.
+    # Backs up the agent-editable version so any CURATE optimizations
+    # that landed are not lost.
+    cp .curator/sweep.py .curator/sweep.py.bak
+    cp "$SKILL_ROOT/scripts/sweep.py" .curator/sweep.py
+    echo "  Refreshed stale .curator/sweep.py (backed up to sweep.py.bak)"
 fi
 
 if [ ! -f CLAUDE.md ]; then

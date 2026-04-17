@@ -36,6 +36,13 @@ Subcommands
         `.curator/log.md`. Dedups across runs via `.curator/.requested-refs`
         (append-only). Prints JSON summary of refs found / logged / skipped.
 
+    sweep.py clean-tmp [wiki_dir]
+        Delete transient `.curator/.tmp_*.md` staging files. The orchestrator
+        writes candidate page text to these as an intermediate step before
+        piping to score_diff; bash discipline forbids `rm`, and git clean
+        can't reach outside the wiki repo — without a dedicated cleanup
+        path, they accumulate. Prints JSON summary of files removed.
+
 Design notes
 ------------
 - sweep.py is workspace-agent-editable. It lives at `.curator/sweep.py` in
@@ -55,7 +62,18 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))
+
+# When running as the workspace copy at `.curator/sweep.py`, naming.py is
+# not next to us — it lives in the skill's scripts/ directory. setup.sh
+# writes `.curator/.skill_path` with the absolute path of that directory
+# so the workspace copy can still import it.
+if not (_HERE / "naming.py").exists():
+    _skill_path_marker = _HERE / ".skill_path"
+    if _skill_path_marker.exists():
+        sys.path.insert(0, _skill_path_marker.read_text().strip())
+
 from naming import (  # noqa: E402
     FRONTMATTER_TYPES,
     SKIP_FILES,
@@ -229,6 +247,15 @@ def cmd_fix_source_stubs(wiki_dir: Path):
     used_stems = {p.stem.lower() for p in sources_dir.glob("*.md")}
     created = []
     skipped = 0
+    skipped_unnamed = []
+    # Guard against producing garbage stubs when naming fails. Topics
+    # matching a generic section heading (abstract, overview, ...) indicate
+    # parse_source_meta couldn't find a real title and fell through to
+    # `## Abstract` etc. — better to skip than manufacture `abstract-2.md`.
+    _GENERIC_TOPICS = {
+        "abstract", "introduction", "overview", "summary", "conclusion",
+        "references", "contents", "background", "discussion", "results",
+    }
     for extracted in sorted(vault_dir.glob("*.extracted.md")):
         sha = hashlib.sha256(extracted.read_bytes()).hexdigest()
         if extracted.name.lower() in covered_paths or sha.lower() in covered_hashes:
@@ -236,6 +263,9 @@ def cmd_fix_source_stubs(wiki_dir: Path):
             continue
 
         meta = parse_source_meta(extracted)
+        if meta["topic"].lower() in _GENERIC_TOPICS:
+            skipped_unnamed.append(extracted.name)
+            continue
         clean_stem = citation_stem(meta).lower() or extracted.stem.replace(".extracted", "")
 
         if clean_stem in used_stems:
@@ -276,6 +306,7 @@ def cmd_fix_source_stubs(wiki_dir: Path):
         stub_path.write_text(stub)
         created.append(str(stub_path))
     print(json.dumps({"created": len(created), "skipped": skipped,
+                      "skipped_unnamed": skipped_unnamed,
                       "created_paths": created}, indent=2))
 
 
@@ -411,6 +442,28 @@ def _vault_primary_refs(vault_files: list) -> set:
     return primary
 
 
+def cmd_clean_tmp(wiki_dir: Path):
+    """Remove transient `.curator/.tmp_*.md` staging files.
+
+    Scoped narrowly: only files under `<workspace>/.curator/` whose names
+    start with `.tmp_` and end with `.md`. Never touches anything in
+    `wiki/` or `vault/`.
+    """
+    cur = curator_dir(wiki_dir)
+    if not cur.exists():
+        print(json.dumps({"removed": 0, "files": []}))
+        return
+    removed = []
+    for p in sorted(cur.glob(".tmp_*.md")):
+        try:
+            p.unlink()
+            removed.append(p.name)
+        except OSError as e:
+            print(f"sweep clean-tmp: failed to remove {p}: {e}",
+                  file=sys.stderr)
+    print(json.dumps({"removed": len(removed), "files": removed}, indent=2))
+
+
 def cmd_scan_references(wiki_dir: Path):
     """Log external references (arXiv / DOI) not yet in the vault.
 
@@ -489,7 +542,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
-        "scan-references",
+        "scan-references", "clean-tmp",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     args = ap.parse_args()
@@ -509,6 +562,8 @@ def main():
         cmd_fix_percent_escapes(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
+    elif args.command == "clean-tmp":
+        cmd_clean_tmp(wiki_dir)
 
 
 if __name__ == "__main__":

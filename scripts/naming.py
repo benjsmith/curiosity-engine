@@ -129,7 +129,7 @@ def extract_topic(stem: str) -> str:
         else:
             parts = stem.split("-")
             for i, p in enumerate(parts):
-                if not p.isdigit() and p not in ("en", "wikipedia", "org", "wiki", "www", "http", "https"):
+                if not p.isdigit() and p not in ("en", "wikipedia", "org", "wiki", "www", "http", "https", "local"):
                     topic = "-".join(parts[i:])
                     break
             else:
@@ -141,10 +141,58 @@ def extract_topic(stem: str) -> str:
 
 _TITLE_STOP = {"a", "an", "the", "of", "in", "for", "and", "is", "are", "on", "to", "with"}
 
+# Section headings we refuse to derive a topic from. If the body's first
+# non-empty heading matches one of these, we keep scanning for a more
+# specific heading rather than producing a generic stem like `abstract-1`.
+_GENERIC_HEADINGS = {
+    "abstract", "introduction", "overview", "summary", "conclusion",
+    "references", "contents", "background", "discussion", "methodology",
+    "results", "experiment", "experiments", "bibliography", "related work",
+    "acknowledgements", "appendix", "notes",
+}
+
 
 def _topic_from_title(title: str) -> str:
     words = [w for w in title.split() if w.lower() not in _TITLE_STOP]
     return "-".join(w.lower() for w in words[:3])
+
+
+def _inner_fm_from_fetched(body: str) -> dict:
+    """Parse the inner frontmatter wrapped inside a FETCHED CONTENT block.
+
+    `local_ingest.py` writes each source as::
+
+        ---
+        source_path: ...
+        ingested_at: ...
+        ---
+
+        <!-- BEGIN FETCHED CONTENT -->
+        ---
+        title: ...
+        source_url: ...
+        date: ...
+        ---
+
+        # body
+
+    The outer frontmatter is provenance metadata from the ingester; the
+    inner frontmatter is the source's own metadata. parse_source_meta
+    needs the inner block to recover title / source_url / date. Returns
+    {} if no marker or no inner fm is found.
+    """
+    i = body.find("<!-- BEGIN FETCHED CONTENT")
+    if i == -1:
+        return {}
+    fm_start = body.find("---\n", i)
+    if fm_start == -1:
+        return {}
+    fm_end = body.find("\n---", fm_start + 4)
+    if fm_end == -1:
+        return {}
+    inner_text = "---\n" + body[fm_start + 4:fm_end] + "\n---\n"
+    fm, _ = read_frontmatter(inner_text)
+    return fm
 
 
 def parse_source_meta(vault_path: Path) -> dict:
@@ -161,18 +209,34 @@ def parse_source_meta(vault_path: Path) -> dict:
       5. Filename stem → last resort.
     """
     text = vault_path.read_text()
-    fm, body = read_frontmatter(text)
+    outer_fm, body = read_frontmatter(text)
+    # local_ingest wraps the source's own frontmatter inside a FETCHED
+    # CONTENT block. Merge it in so title/source_url/date surface — inner
+    # values override the outer provenance frontmatter where both exist.
+    inner_fm = _inner_fm_from_fetched(body)
+    fm = {**outer_fm, **inner_fm}
     meta = {"topic": "", "origin": "", "year": "", "author": "", "full_title": ""}
+
+    # Prefer the original filename (recorded in outer fm `source_path`) for
+    # topic derivation — it's cleaner than the timestamped vault stem.
+    source_path_fm = outer_fm.get("source_path", "")
+    if source_path_fm:
+        raw_stem = Path(source_path_fm).stem
+    else:
+        raw_stem = vault_path.stem.replace(".extracted", "")
 
     source_url = fm.get("source_url", "")
     if source_url:
         meta["origin"] = url_to_origin(source_url)
-        raw_stem = vault_path.stem.replace(".extracted", "")
         meta["topic"] = extract_topic(raw_stem)
-        fetched = fm.get("fetched_at", "")
-        if fetched:
-            meta["year"] = fetched[:4]
-        meta["full_title"] = meta["topic"].replace("-", " ").title()
+        fetched = fm.get("fetched_at", "") or fm.get("date", "")
+        ym = re.search(r"\b(19|20)\d{2}\b", str(fetched))
+        if ym:
+            meta["year"] = ym.group(0)
+        inner_title = fm.get("title", "")
+        if isinstance(inner_title, list):
+            inner_title = inner_title[0] if inner_title else ""
+        meta["full_title"] = inner_title or meta["topic"].replace("-", " ").title()
         return meta
 
     fm_title = fm.get("title", "")
@@ -198,6 +262,10 @@ def parse_source_meta(vault_path: Path) -> dict:
             continue
         header = line.lstrip("#").strip()
         header = re.sub(r"^title\s*[:\u2014\-]\s*", "", header, flags=re.IGNORECASE)
+        # Generic section headings (abstract, introduction, references, ...)
+        # don't describe the document — keep scanning for a real title.
+        if header.lower() in _GENERIC_HEADINGS:
+            continue
         m = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", header)
         if m:
             title_part = m.group(1).strip()
@@ -217,7 +285,10 @@ def parse_source_meta(vault_path: Path) -> dict:
         break
 
     if not meta["topic"]:
-        meta["topic"] = vault_path.stem.replace(".extracted", "")
+        # Last resort: use the original filename stem (preferred) or vault
+        # stem. Drop common extensions.
+        fallback_stem = source_path_fm or vault_path.stem.replace(".extracted", "")
+        meta["topic"] = Path(fallback_stem).stem if "/" in fallback_stem else fallback_stem
 
     return meta
 
