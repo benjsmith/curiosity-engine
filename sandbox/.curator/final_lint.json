@@ -1,0 +1,482 @@
+[
+  {
+    "page": "sources/language-models-few-shot.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.86,
+      "composite": 0.715
+    }
+  },
+  {
+    "page": "sources/training-language-models-ouyang-2022.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.67,
+      "composite": 0.667
+    }
+  },
+  {
+    "page": "sources/title:-direct-preference.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-flashattention:-fast.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-constitutional-ai:.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-llama:-open.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-efficient-estimation.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-mixtral-experts.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-reformer:-efficient.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-deep-residual.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-exploring-limits.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/bert:-pre-training-deep.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/dropout:-simple-way-srivastava-2014.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-scaling-laws.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-lora:-low-rank.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-learning-transferable-clip.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-training-compute-optimal.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/chain-of-thought-prompting-elicits-wei-2022.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/attention-all-you.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.83,
+      "composite": 0.458
+    }
+  },
+  {
+    "page": "analyses/efficient-transformer-variants.md",
+    "scores": {
+      "crossref_sparsity": 0.2,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.44,
+      "vault_coverage_gap": 0.5,
+      "composite": 0.285
+    }
+  },
+  {
+    "page": "concepts/adam-optimizer.md",
+    "scores": {
+      "crossref_sparsity": 0.14,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.33,
+      "vault_coverage_gap": 0.57,
+      "composite": 0.26
+    }
+  },
+  {
+    "page": "sources/title:-adam:-method.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "concepts/pre-training.md",
+    "scores": {
+      "crossref_sparsity": 0.17,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.29,
+      "vault_coverage_gap": 0.43,
+      "composite": 0.222
+    }
+  },
+  {
+    "page": "entities/mixtral.md",
+    "scores": {
+      "crossref_sparsity": 0.25,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.12,
+      "vault_coverage_gap": 0.5,
+      "composite": 0.217
+    }
+  },
+  {
+    "page": "entities/dpo.md",
+    "scores": {
+      "crossref_sparsity": 0.2,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.17,
+      "vault_coverage_gap": 0.5,
+      "composite": 0.217
+    }
+  },
+  {
+    "page": "concepts/chain-of-thought.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.17,
+      "vault_coverage_gap": 0.67,
+      "composite": 0.21
+    }
+  },
+  {
+    "page": "concepts/fine-tuning.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.33,
+      "vault_coverage_gap": 0.5,
+      "composite": 0.208
+    }
+  },
+  {
+    "page": "entities/clip.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.8,
+      "composite": 0.2
+    }
+  },
+  {
+    "page": "concepts/transformer.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.33,
+      "vault_coverage_gap": 0.4,
+      "composite": 0.182
+    }
+  },
+  {
+    "page": "entities/bert.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.29,
+      "vault_coverage_gap": 0.4,
+      "composite": 0.172
+    }
+  },
+  {
+    "page": "concepts/dropout.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.44,
+      "vault_coverage_gap": 0.2,
+      "composite": 0.16
+    }
+  },
+  {
+    "page": "entities/flashattention.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.12,
+      "vault_coverage_gap": 0.5,
+      "composite": 0.155
+    }
+  },
+  {
+    "page": "concepts/mixture-of-experts.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.6,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.15
+    }
+  },
+  {
+    "page": "analyses/scaling-laws-kaplan-vs-chinchilla.md",
+    "scores": {
+      "crossref_sparsity": 0.17,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.143
+    }
+  },
+  {
+    "page": "concepts/self-attention.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.57,
+      "composite": 0.142
+    }
+  },
+  {
+    "page": "entities/t5.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.1
+    }
+  },
+  {
+    "page": "entities/constitutional-ai.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.1
+    }
+  },
+  {
+    "page": "concepts/rlhf.md",
+    "scores": {
+      "crossref_sparsity": 0.17,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.14,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.078
+    }
+  },
+  {
+    "page": "concepts/lora.md",
+    "scores": {
+      "crossref_sparsity": 0.2,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.11,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.077
+    }
+  },
+  {
+    "page": "analyses/alignment-methods-rlhf-cai-dpo.md",
+    "scores": {
+      "crossref_sparsity": 0.17,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.1,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.068
+    }
+  },
+  {
+    "page": "entities/chinchilla.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.25,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.062
+    }
+  },
+  {
+    "page": "entities/word2vec.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.25,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.062
+    }
+  },
+  {
+    "page": "entities/reformer.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.25,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.062
+    }
+  },
+  {
+    "page": "entities/gpt3.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.2,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.05
+    }
+  },
+  {
+    "page": "concepts/scaling-laws.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.17,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.043
+    }
+  },
+  {
+    "page": "entities/llama.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.14,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.035
+    }
+  },
+  {
+    "page": "entities/resnet.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.0
+    }
+  },
+  {
+    "page": "entities/instructgpt.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.0
+    }
+  }
+]

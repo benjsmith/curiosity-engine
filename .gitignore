@@ -3,3 +3,17 @@
 Thumbs.db
 *~
 scripts/__pycache__/
+
+# Nested git repo inside the sandbox wiki — don't track as submodule
+sandbox/wiki/.git/
+
+# Kuzu binary graph DB — rebuilt from wiki pages, don't version control
+sandbox/.curator/graph.kuzu
+
+# FTS5 SQLite binary — rebuilt from extractions
+sandbox/vault/vault.db
+sandbox/vault/vault.db-shm
+sandbox/vault/vault.db-wal
+
+# Agent-editable workspace copy — the reference is scripts/sweep.py
+sandbox/.curator/sweep.py

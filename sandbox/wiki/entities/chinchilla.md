@@ -1,0 +1,17 @@
+---
+title: "[ent] Chinchilla"
+type: entity
+created: 2026-04-17
+updated: 2026-04-17
+sources: [20260416-234959-local-chinchilla-hoffmann-2022.md.extracted.md, 20260416-234959-local-scaling-laws-kaplan-2020.md.extracted.md]
+---
+
+# Chinchilla
+
+Chinchilla is a 70B-parameter decoder-only transformer language model from DeepMind (Hoffmann et al. 2022) that operationalized a revised, compute-optimal prescription for training large language models. Its central empirical claim is that for a fixed compute budget, model parameters N and training tokens D should be scaled in roughly equal proportion, yielding the rule-of-thumb D ≈ 20 × N. Concretely, Chinchilla was trained on 1.4 trillion tokens of a cleaned MassiveText corpus using the same total FLOPs budget as the 280B-parameter Gopher — 4× more data at one quarter the parameter count (vault:20260416-234959-local-chinchilla-hoffmann-2022.md.extracted.md).
+
+This directly corrected the earlier [[scaling-laws]] of Kaplan et al. 2020, which had prescribed N ∝ C^0.73 and D ∝ C^0.27, implying that almost all additional compute should go to parameters rather than data (vault:20260416-234959-local-scaling-laws-kaplan-2020.md.extracted.md). Hoffmann et al. attributed the discrepancy to a methodological flaw: Kaplan's cosine learning-rate schedules were not tuned per training duration, inflating loss estimates on small-data runs and biasing the fitted exponents. Three independent fitting approaches (IsoFLOP profiles, training-curve envelopes, and a parametric L(N, D) fit) all converged on N ∝ C^0.5 and D ∝ C^0.5. Under this revised view, contemporary models like [[gpt3]] (175B parameters on ~300B tokens) were severely undertrained (vault:20260416-234959-local-gpt3-brown-2020.md.extracted.md). The [[scaling-laws-kaplan-vs-chinchilla]] disagreement is thus primarily a story about learning-rate schedule hygiene, not about a different underlying regime.
+
+Empirically, Chinchilla uniformly outperformed Gopher, GPT-3, Jurassic-1 (178B) and MT-NLG (530B) across downstream evaluation. Its headline result was 67.5% 5-shot average accuracy on MMLU — more than 7 points above Gopher's 60.0% and ~23 points above GPT-3's 43.9%. It also won 57 of 62 BIG-bench tasks versus Gopher and achieved lower bits-per-byte on 16 of 22 Pile subsets with only a quarter the parameters. The architecture is a standard [[transformer]] with 80 layers, d_model=8192, 64 heads, RMSNorm pre-normalization, relative positional encodings, and a 32k SentencePiece tokenizer, trained with AdamW.
+
+The Chinchilla rule reframed the economics of LLM scaling around inference cost: a smaller model trained longer is cheaper to serve, and since deployment dominates total cost of ownership, the compute-optimal prescription is often superseded in practice by training well past the D ≈ 20N point. [[llama]] (Touvron et al. 2023) made this explicit, training 7B–65B models on 1.0–1.4T tokens — the 65B variant matching Chinchilla's token count despite the paper's stated goal of optimizing inference rather than training compute (vault:20260416-234959-local-llama-touvron-2023.md.extracted.md). LLaMA-65B reached 63.4% on MMLU versus Chinchilla-70B's 67.6%, with the gap attributed to less academic and book data in LLaMA's public corpus. LLaMA-13B surpassing GPT-3 on most benchmarks while being ~13× smaller is perhaps the clearest field-scale validation of the Chinchilla thesis.

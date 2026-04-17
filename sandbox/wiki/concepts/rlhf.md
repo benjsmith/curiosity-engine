@@ -1,0 +1,24 @@
+---
+title: "[con] RLHF"
+type: concept
+created: 2026-04-16
+updated: 2026-04-16
+sources:
+  - vault/20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md
+  - vault/20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md
+  - vault/20260416-234959-local-dpo-rafailov-2023.md.extracted.md
+---
+
+RLHF = reinforcement learning from human feedback. Post-train align LM to human preference (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Popularized [[instructgpt]] (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Base LM misaligned: next-token objective != follow-user-intent (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md).
+
+Three-stage pipe (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md): (1) SFT on labeler demos, 13k prompts (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). (2) RM trained on pairwise comparisons, Bradley-Terry loss; 33k prompts, K=4 to K=9 responses ranked (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Strip final embed, scalar head (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). (3) PPO optimize policy vs RM, KL penalty to SFT anchor prevents collapse (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). PPO-ptx mix pretrain gradient cuts benchmark regressions (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md).
+
+Wins: follows instructions, cuts toxicity ~25% vs [[gpt3]] on RealToxicityPrompts (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). TruthfulQA ~2x more truthful (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Small InstructGPT 1.3B beat GPT-3 175B on prefs despite 100x fewer params (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). 175B InstructGPT preferred 85% vs 175B GPT-3 few-shot (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Foundation for ChatGPT assistant (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Applied atop [[transformer]] bases like [[llama]].
+
+Variants. [[constitutional-ai]] (vault:20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md) replace human harm labels with AI critique via written principles, yields RLAIF. CAI pipe: SL stage self-critique + revise up to 4 rounds different principles, then RL stage AI feedback model picks winner under constitutional principle (vault:20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md). CAI motivation: RLHF expensive, exposes annotators to disturbing content, may not scale past human (vault:20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md). RL-CAI 52B Pareto-dominates helpful+harmless RLHF, drops evasive refusal ~43% -> ~4-5% (vault:20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md). Chain-of-thought in feedback lifts PM accuracy 68% -> 77% (vault:20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md). [[dpo]] skip RM, direct preference opt via closed-form reward-policy correspondence (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). DPO loss = binary cross-entropy on log-ratio differences vs frozen reference (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). No reward model trained, no policy sampling, no RL loop (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). Matches or beats PPO on sentiment, TL;DR summarization 61% vs 57% win rate, Anthropic HH dialogue (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). PPO on HH unstable at matched compute (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). DPO 3-5x faster wall-clock than PPO on 7B (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). Default for Zephyr, Tulu 2, Mixtral-Instruct (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md).
+
+Costs. Label pipeline expensive, encodes annotator bias (vault:20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md). Reward hacking, catastrophic policy collapse common (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). Practitioners tune KL coef, RM clipping, advantage norm, rollout lengths (vault:20260416-234959-local-dpo-rafailov-2023.md.extracted.md). InstructGPT still follows false premises, hedges, fails multi-step (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Helpful+harmless RLHF often evasive, refuses benign queries (vault:20260416-234959-local-constitutional-ai-bai-2022.md.extracted.md). Active research: process rewards, iterative DPO, online feedback. See [[chain-of-thought]] for reasoning traces often tuned via RLHF-style methods.
+
+[[instructgpt]] first production RLHF deployment (vault:20260416-234959-local-instructgpt-ouyang-2022.md.extracted.md). Part of broader [[fine-tuning]] umbrella.
+
+See analysis: [[alignment-methods-rlhf-cai-dpo]] compare RLHF + Constitutional AI + DPO.

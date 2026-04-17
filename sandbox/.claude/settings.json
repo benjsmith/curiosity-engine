@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C wiki add:*)",
+      "Bash(git -C wiki commit:*)",
+      "Bash(git -C wiki status:*)",
+      "Bash(git -C wiki log:*)",
+      "Bash(git -C wiki diff:*)",
+      "Bash(git -C wiki revert:*)",
+      "Bash(git -C wiki checkout:*)",
+      "Bash(git -C wiki rev-parse:*)",
+      "Bash(git -C wiki show:*)",
+      "Bash(git -C */wiki add:*)",
+      "Bash(git -C */wiki commit:*)",
+      "Bash(git -C */wiki status:*)",
+      "Bash(git -C */wiki log:*)",
+      "Bash(git -C */wiki diff:*)",
+      "Bash(git -C */wiki revert:*)",
+      "Bash(git -C */wiki checkout:*)",
+      "Bash(git -C */wiki rev-parse:*)",
+      "Bash(git -C */wiki show:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/lint_scores.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/vault_search.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/vault_index.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/local_ingest.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/scrub_check.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/score_diff.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/sweep.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/epoch_summary.py:*)",
+      "Bash(python3 /home/user/curiosity-engine/scripts/graph.py:*)",
+      "Bash(python3 .curator/sweep.py:*)",
+      "Bash(bash /home/user/curiosity-engine/scripts/evolve_guard.sh:*)",
+      "Bash(date:*)"
+    ]
+  }
+}

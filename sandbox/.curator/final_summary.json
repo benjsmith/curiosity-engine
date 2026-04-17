@@ -1,0 +1,134 @@
+{
+  "page_counts": {
+    "concepts": 11,
+    "analyses": 3,
+    "entities": 14,
+    "sources": 20
+  },
+  "non_source_pages": 28,
+  "avg_composite": 0.1307,
+  "worst_5": [
+    {
+      "page": "analyses/efficient-transformer-variants.md",
+      "composite": 0.285,
+      "worst_dim": "vault_coverage_gap"
+    },
+    {
+      "page": "concepts/adam-optimizer.md",
+      "composite": 0.26,
+      "worst_dim": "vault_coverage_gap"
+    },
+    {
+      "page": "concepts/pre-training.md",
+      "composite": 0.222,
+      "worst_dim": "vault_coverage_gap"
+    },
+    {
+      "page": "entities/mixtral.md",
+      "composite": 0.217,
+      "worst_dim": "vault_coverage_gap"
+    },
+    {
+      "page": "entities/dpo.md",
+      "composite": 0.217,
+      "worst_dim": "vault_coverage_gap"
+    }
+  ],
+  "dimension_distribution": {
+    "crossref_sparsity": {
+      "mean": 0.06,
+      "high_count": 0,
+      "zero_count": 19
+    },
+    "orphan_rate": {
+      "mean": 0.0,
+      "high_count": 0,
+      "zero_count": 28
+    },
+    "unsourced_density": {
+      "mean": 0.23,
+      "high_count": 1,
+      "zero_count": 4
+    },
+    "vault_coverage_gap": {
+      "mean": 0.234,
+      "high_count": 4,
+      "zero_count": 15
+    }
+  },
+  "worst_dimension_counts": {
+    "vault_coverage_gap": 12,
+    "unsourced_density": 11,
+    "crossref_sparsity": 5
+  },
+  "cluster_analysis": {
+    "intra_cluster_edges": 80,
+    "cross_cluster_edges": 130,
+    "cross_cluster_ratio": 0.619,
+    "sample_cross_edges": [
+      "concepts/scaling-laws -> entities/gpt3",
+      "concepts/scaling-laws -> entities/gpt3",
+      "concepts/scaling-laws -> entities/llama",
+      "concepts/scaling-laws -> entities/chinchilla",
+      "concepts/scaling-laws -> analyses/scaling-laws-kaplan-vs-chinchilla",
+      "concepts/transformer -> entities/bert",
+      "concepts/transformer -> entities/gpt3",
+      "concepts/transformer -> entities/t5",
+      "concepts/transformer -> entities/llama",
+      "concepts/transformer -> entities/clip"
+    ]
+  },
+  "vault_frontier": {
+    "uncited_sources": [],
+    "total_vault_entries": 20,
+    "uncited_count": 0,
+    "utilization": 1.0
+  },
+  "connection_candidates": [
+    {
+      "page_a": "concepts/adam-optimizer.md",
+      "page_b": "entities/t5.md",
+      "shared_sources": 2
+    },
+    {
+      "page_a": "entities/chinchilla.md",
+      "page_b": "entities/mixtral.md",
+      "shared_sources": 2
+    },
+    {
+      "page_a": "entities/bert.md",
+      "page_b": "entities/llama.md",
+      "shared_sources": 2
+    },
+    {
+      "page_a": "concepts/adam-optimizer.md",
+      "page_b": "entities/clip.md",
+      "shared_sources": 2
+    },
+    {
+      "page_a": "analyses/alignment-methods-rlhf-cai-dpo.md",
+      "page_b": "concepts/fine-tuning.md",
+      "shared_sources": 2
+    }
+  ],
+  "saturation": {
+    "saturated": false,
+    "epochs_checked": 4,
+    "consecutive_low": 0,
+    "threshold": 0.001,
+    "required_consecutive": 3,
+    "recent_rates": [
+      0.00322,
+      0.0028,
+      0.00542
+    ],
+    "action": "continue_editorial"
+  },
+  "recent_log": [
+    "ingest 2026-04-16T23:50Z",
+    "curate-epoch 1 2026-04-16T23:55Z",
+    "curate-epoch 2 2026-04-16T23:58Z",
+    "curate-epoch 3 2026-04-17T00:01Z",
+    "curate-epoch 4 2026-04-17T00:04Z"
+  ]
+}

@@ -1,0 +1,144 @@
+{
+  "page_counts": {
+    "concepts": 6,
+    "entities": 6,
+    "sources": 20
+  },
+  "non_source_pages": 12,
+  "avg_composite": 0.2607,
+  "worst_5": [
+    {
+      "page": "entities/clip.md",
+      "composite": 0.483,
+      "worst_dim": "unsourced_density"
+    },
+    {
+      "page": "entities/mixtral.md",
+      "composite": 0.39,
+      "worst_dim": "orphan_rate"
+    },
+    {
+      "page": "concepts/chain-of-thought.md",
+      "composite": 0.35,
+      "worst_dim": "vault_coverage_gap"
+    },
+    {
+      "page": "concepts/self-attention.md",
+      "composite": 0.292,
+      "worst_dim": "unsourced_density"
+    },
+    {
+      "page": "concepts/transformer.md",
+      "composite": 0.25,
+      "worst_dim": "vault_coverage_gap"
+    }
+  ],
+  "dimension_distribution": {
+    "crossref_sparsity": {
+      "mean": 0.028,
+      "high_count": 0,
+      "zero_count": 11
+    },
+    "orphan_rate": {
+      "mean": 0.138,
+      "high_count": 1,
+      "zero_count": 8
+    },
+    "unsourced_density": {
+      "mean": 0.492,
+      "high_count": 4,
+      "zero_count": 0
+    },
+    "vault_coverage_gap": {
+      "mean": 0.387,
+      "high_count": 5,
+      "zero_count": 4
+    }
+  },
+  "worst_dimension_counts": {
+    "unsourced_density": 7,
+    "orphan_rate": 1,
+    "vault_coverage_gap": 4
+  },
+  "cluster_analysis": {
+    "intra_cluster_edges": 31,
+    "cross_cluster_edges": 29,
+    "cross_cluster_ratio": 0.483,
+    "sample_cross_edges": [
+      "concepts/scaling-laws -> entities/gpt3",
+      "concepts/scaling-laws -> entities/gpt3",
+      "concepts/scaling-laws -> entities/llama",
+      "concepts/transformer -> entities/bert",
+      "concepts/transformer -> entities/gpt3",
+      "concepts/transformer -> entities/t5",
+      "concepts/transformer -> entities/llama",
+      "concepts/transformer -> entities/clip",
+      "concepts/self-attention -> entities/gpt3",
+      "concepts/self-attention -> entities/bert"
+    ]
+  },
+  "vault_frontier": {
+    "uncited_sources": [
+      {
+        "path": "20260416-234959-local-dpo-rafailov-2023.md.extracted.md",
+        "title": "20260416-234959-local-dpo-rafailov-2023.md"
+      },
+      {
+        "path": "20260416-234959-local-dropout-srivastava-2014.md.extracted.md",
+        "title": "20260416-234959-local-dropout-srivastava-2014.md"
+      },
+      {
+        "path": "20260416-234959-local-lora-hu-2021.md.extracted.md",
+        "title": "20260416-234959-local-lora-hu-2021.md"
+      },
+      {
+        "path": "20260416-234959-local-reformer-kitaev-2020.md.extracted.md",
+        "title": "20260416-234959-local-reformer-kitaev-2020.md"
+      },
+      {
+        "path": "20260416-234959-local-resnet-he-2015.md.extracted.md",
+        "title": "20260416-234959-local-resnet-he-2015.md"
+      },
+      {
+        "path": "20260416-234959-local-word2vec-mikolov-2013.md.extracted.md",
+        "title": "20260416-234959-local-word2vec-mikolov-2013.md"
+      }
+    ],
+    "total_vault_entries": 20,
+    "uncited_count": 6,
+    "utilization": 0.7
+  },
+  "connection_candidates": [
+    {
+      "page_a": "concepts/chain-of-thought.md",
+      "page_b": "entities/bert.md",
+      "shared_sources": 1
+    },
+    {
+      "page_a": "entities/bert.md",
+      "page_b": "entities/llama.md",
+      "shared_sources": 1
+    },
+    {
+      "page_a": "entities/bert.md",
+      "page_b": "entities/mixtral.md",
+      "shared_sources": 1
+    },
+    {
+      "page_a": "concepts/chain-of-thought.md",
+      "page_b": "entities/llama.md",
+      "shared_sources": 1
+    },
+    {
+      "page_a": "concepts/chain-of-thought.md",
+      "page_b": "entities/mixtral.md",
+      "shared_sources": 1
+    }
+  ],
+  "saturation": {
+    "saturated": false,
+    "epochs_checked": 0,
+    "rates": []
+  },
+  "recent_log": []
+}

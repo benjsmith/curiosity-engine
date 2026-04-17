@@ -1,0 +1,322 @@
+[
+  {
+    "page": "sources/language-models-few-shot.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.86,
+      "composite": 0.715
+    }
+  },
+  {
+    "page": "sources/title:-direct-preference.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-llama:-open.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-mixtral-experts.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-reformer:-efficient.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-exploring-limits.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/bert:-pre-training-deep.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-scaling-laws.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-learning-transferable-clip.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/title:-training-compute-optimal.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "sources/chain-of-thought-prompting-elicits-wei-2022.md",
+    "scores": {
+      "crossref_sparsity": 1.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.5
+    }
+  },
+  {
+    "page": "entities/clip.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.33,
+      "unsourced_density": 0.8,
+      "vault_coverage_gap": 0.8,
+      "composite": 0.483
+    }
+  },
+  {
+    "page": "sources/attention-all-you.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.83,
+      "composite": 0.458
+    }
+  },
+  {
+    "page": "sources/training-language-models-ouyang-2022.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.67,
+      "composite": 0.417
+    }
+  },
+  {
+    "page": "entities/mixtral.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.66,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.5,
+      "composite": 0.39
+    }
+  },
+  {
+    "page": "concepts/chain-of-thought.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.33,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.67,
+      "composite": 0.35
+    }
+  },
+  {
+    "page": "concepts/self-attention.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.6,
+      "vault_coverage_gap": 0.57,
+      "composite": 0.292
+    }
+  },
+  {
+    "page": "concepts/transformer.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.6,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "entities/bert.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.6,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "sources/title:-flashattention:-fast.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "sources/title:-constitutional-ai:.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "sources/title:-efficient-estimation.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "sources/title:-deep-residual.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "sources/dropout:-simple-way-srivastava-2014.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "sources/title:-lora:-low-rank.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "sources/title:-adam:-method.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 1.0,
+      "unsourced_density": 0.0,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.25
+    }
+  },
+  {
+    "page": "concepts/mixture-of-experts.md",
+    "scores": {
+      "crossref_sparsity": 0.33,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.6,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.232
+    }
+  },
+  {
+    "page": "concepts/scaling-laws.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.5,
+      "vault_coverage_gap": 0.4,
+      "composite": 0.225
+    }
+  },
+  {
+    "page": "entities/llama.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.5,
+      "composite": 0.225
+    }
+  },
+  {
+    "page": "entities/t5.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.33,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.182
+    }
+  },
+  {
+    "page": "concepts/rlhf.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.6,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.15
+    }
+  },
+  {
+    "page": "entities/gpt3.md",
+    "scores": {
+      "crossref_sparsity": 0.0,
+      "orphan_rate": 0.0,
+      "unsourced_density": 0.4,
+      "vault_coverage_gap": 0.0,
+      "composite": 0.1
+    }
+  }
+]
