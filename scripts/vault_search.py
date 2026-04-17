@@ -10,11 +10,27 @@ Usage:
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
 
 DB = Path("vault/vault.db")
+
+_FTS5_RESERVED = {"AND", "OR", "NOT", "NEAR"}
+
+
+def _sanitize_fts(query: str) -> str:
+    """Quote hyphenated tokens and FTS5 operators so raw syntax can't leak."""
+    out = []
+    for tok in re.findall(r'"[^"]*"|\S+', query):
+        if tok.startswith('"'):
+            out.append(tok)
+        elif "-" in tok or tok.upper() in _FTS5_RESERVED or re.fullmatch(r"\w+:", tok):
+            out.append('"' + tok.replace('"', "") + '"')
+        else:
+            out.append(tok)
+    return " ".join(out)
 
 
 def search(query: str, limit: int, include_text: bool):
@@ -24,6 +40,7 @@ def search(query: str, limit: int, include_text: bool):
 
     conn = sqlite3.connect(str(DB))
     conn.execute("PRAGMA journal_mode=WAL")
+    query = _sanitize_fts(query)
 
     if include_text:
         rows = conn.execute(

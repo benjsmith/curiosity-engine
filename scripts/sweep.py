@@ -282,9 +282,14 @@ def cmd_fix_index(wiki_dir: Path):
     header = "# Index\n\n"
     if index_path.exists():
         old = index_path.read_text()
-        first_list = re.search(r"^[-*] ", old, re.MULTILINE)
-        if first_list:
-            header = old[:first_list.start()].rstrip() + "\n\n"
+        # Preserve everything up to & including the first blank line after a
+        # prose paragraph (non-heading, non-list). Generated `## subdir\n\n- [[..]]`
+        # blocks start with `#` or `-`, so they never re-capture on later runs.
+        m = re.search(r"(?m)^[^#\-*\s].*$", old)
+        if m:
+            blank = re.search(r"\n\s*\n", old[m.start():])
+            end = m.start() + blank.end() if blank else len(old)
+            header = old[:end].rstrip() + "\n\n"
 
     by_dir = defaultdict(list)
     for p in pages:

@@ -44,6 +44,21 @@ def _graph_path(wiki_dir: Path) -> str:
     return str(wiki_dir.parent / ".curator" / "graph.kuzu")
 
 
+def _check_stale(wiki_dir: Path) -> bool:
+    """Warn on stderr + print empty JSON if wiki is newer than the kuzu db."""
+    kuzu_path = Path(_graph_path(wiki_dir))
+    if not kuzu_path.exists():
+        return False
+    kuzu_mtime = kuzu_path.stat().st_mtime
+    wiki_mtime = max((f.stat().st_mtime for f in wiki_dir.rglob("*.md")), default=0)
+    if wiki_mtime > kuzu_mtime:
+        print(f"graph stale (wiki newer than kuzu) — run: python3 scripts/graph.py rebuild {wiki_dir.name}",
+              file=sys.stderr)
+        print("[]")
+        return True
+    return False
+
+
 def _connect(wiki_dir: Path):
     if kuzu is None:
         print(json.dumps({"error": "kuzu not installed (pip install kuzu)"}))
@@ -241,6 +256,9 @@ def main():
         sys.exit(1)
 
     wiki_dir = Path(args.wiki).resolve()
+
+    if args.command != "rebuild" and _check_stale(wiki_dir):
+        return
 
     if args.command == "rebuild":
         rebuild(wiki_dir)
