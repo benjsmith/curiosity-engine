@@ -117,6 +117,28 @@ if [ ! -s .claude/settings.json ]; then
     regenerate_settings=1
 elif ! uv run --no-project python3 -c "import json, sys; json.load(open('.claude/settings.json'))" >/dev/null 2>&1; then
     regenerate_settings=1
+elif ! grep -q 'uv run python3' .claude/settings.json; then
+    # Pre-uv settings file: allowlist still has `python3 ...` prefixes, but
+    # the skill now invokes `uv run python3 ...`. Without regen, every
+    # script call prompts for approval and breaks autonomous loops.
+    echo "  Existing .claude/settings.json predates the uv-run switch."
+    if [ -t 0 ] && [ -t 1 ]; then
+        printf "  Regenerate it now? (backs up old file to .claude/settings.json.bak) [Y/n] "
+        read -r reply_regen || reply_regen="y"
+    else
+        reply_regen="y"
+    fi
+    case "$reply_regen" in
+        ""|y|Y|yes|YES)
+            cp .claude/settings.json .claude/settings.json.bak
+            echo "  Backed up to .claude/settings.json.bak"
+            regenerate_settings=1
+            ;;
+        *)
+            echo "  Leaving settings.json alone. Expect approval prompts until the"
+            echo "  allowlist is updated to use 'uv run python3' prefixes."
+            ;;
+    esac
 fi
 
 if [ "$regenerate_settings" = "1" ]; then
