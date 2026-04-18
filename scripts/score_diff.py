@@ -5,7 +5,10 @@ Hard floors only — the opus judge handles nuanced quality review.
 These gates catch catastrophic regressions that no edit should cause:
   1. No citation loss: citations(after) >= citations(before)
   2. No extreme raw-token bloat: body_tokens(after) <= body_tokens(before) * 1.5
-  3. New pages: >=2 citations, >=2 wikilinks, >=100 body words
+  3. New pages: floor depends on directory —
+       facts/*:     >=1 citation, >=1 wikilink, >=30 words
+       evidence/*:  >=1 citation, >=1 wikilink, >=50 words
+       default:     >=2 citations, >=2 wikilinks, >=100 words
   4. Citation relevance (optional): new citations must match their source
      in FTS5. Catches spurious citations without a full reviewer pass.
 
@@ -194,15 +197,34 @@ def verdict(before: dict, after: dict) -> tuple:
     return True, "pass"
 
 
-def new_page_verdict(text: str) -> tuple:
+def _floors_for(page: Path) -> dict:
+    """Minimum thresholds for a new page, tightened or relaxed by directory.
+
+    `facts/` and `evidence/` pages are deliberately atomic: a single
+    parameter or observation tied to one source. The default floors
+    (>=2 citations, >=2 wikilinks, >=100 words) would kill a faithful
+    fact like "Kaplan α_N ≈ 0.076 (Kaplan et al. 2020)" before it
+    reached the reviewer. Relaxed floors per directory let those pages
+    land while keeping the ratchet for denser analyses/concepts.
+    """
+    parts = set(page.parts)
+    if "facts" in parts:
+        return {"citations": 1, "wikilinks": 1, "words": 30}
+    if "evidence" in parts:
+        return {"citations": 1, "wikilinks": 1, "words": 50}
+    return {"citations": 2, "wikilinks": 2, "words": 100}
+
+
+def new_page_verdict(text: str, page: Path = None) -> tuple:
     m = metrics(text)
     words = body_tokens(text)
-    if m["citations"] < 2:
-        return False, f"too few citations ({m['citations']}; need >=2)"
-    if m["wikilinks"] < 2:
-        return False, f"too few wikilinks ({m['wikilinks']}; need >=2)"
-    if words < 100:
-        return False, f"too short ({words} words; need >=100)"
+    floors = _floors_for(page) if page else {"citations": 2, "wikilinks": 2, "words": 100}
+    if m["citations"] < floors["citations"]:
+        return False, f"too few citations ({m['citations']}; need >={floors['citations']})"
+    if m["wikilinks"] < floors["wikilinks"]:
+        return False, f"too few wikilinks ({m['wikilinks']}; need >={floors['wikilinks']})"
+    if words < floors["words"]:
+        return False, f"too short ({words} words; need >={floors['words']})"
     return True, f"citations={m['citations']}, wikilinks={m['wikilinks']}, words={words}"
 
 
@@ -235,7 +257,7 @@ def main():
     new_text = _collapse_double_percent(new_text)
 
     if args.new_page:
-        accept, reason = new_page_verdict(new_text)
+        accept, reason = new_page_verdict(new_text, page)
         result = {
             "page": str(page), "accept": accept, "reason": reason,
             "after": metrics(new_text), "applied": False, "new_page": True,

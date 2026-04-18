@@ -35,12 +35,28 @@ this file; don't duplicate prompts there.
 > invoke any other skills or tools.
 >
 > Page-type conventions (when the task is "create a new page"):
-> - **evidence/<stem>.md**: ONE source-backed observation. A specific
->   finding, number, or outcome tied to exactly one vault source. ~50-150
->   words. Title: `[evi] <claim-or-observation>`. One `(vault:...)` citation.
-> - **facts/<stem>.md**: ONE atomic testable claim. A single sentence or
->   short paragraph making a discrete assertion. ~30-100 words. Title:
->   `[fact] <claim>`. One or two `(vault:...)` citations.
+> - **evidence/<stem>.md**: ONE source-backed observation with enough
+>   context to interpret it. ~50-150 words. Title: `[evi] <observation>`.
+>   ≥1 wikilink, ≥1 `(vault:...)` citation. Example:
+>   `[evi] Chinchilla compute-optimal scaling` describing the 70B/1.4T
+>   Chinchilla-vs-Gopher result AND why it revised Kaplan.
+> - **facts/<stem>.md**: ONE atomic parameter, value, or assertion, lifted
+>   verbatim or near-verbatim from a single source. ~30-100 words; often
+>   just a one-sentence claim with numerical backing. Title:
+>   `[fact] <claim>`. ≥1 wikilink, ≥1 `(vault:...)` citation. Do NOT pad
+>   to meet a word count — if the fact is 40 words, leave it at 40 words
+>   (the gate accepts ≥30 for `facts/`). Concrete examples:
+>     - `facts/kaplan-scaling-exponents.md`: "Kaplan et al. (2020) report
+>       neural language-model test loss scaling as L ∝ C^(-0.050), with
+>       N-exponent α_N ≈ 0.076 and D-exponent α_D ≈ 0.103 (vault:...)."
+>     - `facts/chinchilla-doubling-rule.md`: "Compute-optimal training
+>       doubles training tokens whenever model parameters double
+>       (Hoffmann et al. 2022) (vault:...)."
+>     - `facts/bert-base-config.md`: "BERT-base: 12 transformer layers,
+>       12 attention heads, hidden size 768, 110M parameters (vault:...)."
+>   Facts are the "raw extracted values" layer; evidence contextualizes
+>   them. Both beat embedding a number inside a concept page because they
+>   become explicit citation targets for future wikilinks.
 > - **analyses/<stem>.md**: multi-source synthesis answering a question or
 >   exploring a connection. Longer. Written at `lite` level, not `ultra`.
 >
