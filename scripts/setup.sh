@@ -175,28 +175,49 @@ if [ ! -s .claude/settings.json ]; then
     regenerate_settings=1
 elif ! uv run --no-project python3 -c "import json, sys; json.load(open('.claude/settings.json'))" >/dev/null 2>&1; then
     regenerate_settings=1
-elif ! grep -q 'uv run python3' .claude/settings.json; then
-    # Pre-uv settings file: allowlist still has `python3 ...` prefixes, but
-    # the skill now invokes `uv run python3 ...`. Without regen, every
-    # script call prompts for approval and breaks autonomous loops.
-    echo "  Existing .claude/settings.json predates the uv-run switch."
-    if [ -t 0 ] && [ -t 1 ]; then
-        printf "  Regenerate it now? (backs up old file to .claude/settings.json.bak) [Y/n] "
-        read -r reply_regen || reply_regen="y"
-    else
-        reply_regen="y"
+else
+    # Canary-based drift detection: each skill update that adds new
+    # canonical allowlist entries (new scripts, new Edit/Write scopes,
+    # etc.) lists one recent entry in CANARY_ENTRIES. If any are missing
+    # from the existing settings.json, the file is stale — offer to
+    # regenerate (with backup). The last canary always covers the most
+    # recent addition, so a single missing check catches workspaces
+    # multiple versions behind.
+    CANARY_ENTRIES=(
+        "uv run python3"                                   # pre-uv switch
+        "scripts/claims.py"                                # parallel-sessions coordination
+        "scripts/spawn.py"                                 # parallel launcher
+        "Edit(./wiki/"                                     # scoped Edit/Write for headless sessions
+        "Write(./.curator/"
+    )
+    missing_canary=""
+    for c in "${CANARY_ENTRIES[@]}"; do
+        if ! grep -qF "$c" .claude/settings.json; then
+            missing_canary="$c"
+            break
+        fi
+    done
+    if [ -n "$missing_canary" ]; then
+        echo "  Existing .claude/settings.json is missing canonical allowlist"
+        echo "  entry matching: $missing_canary"
+        if [ -t 0 ] && [ -t 1 ]; then
+            printf "  Regenerate it now? (backs up old file to .claude/settings.json.bak) [Y/n] "
+            read -r reply_regen || reply_regen="y"
+        else
+            reply_regen="y"
+        fi
+        case "$reply_regen" in
+            ""|y|Y|yes|YES)
+                cp .claude/settings.json .claude/settings.json.bak
+                echo "  Backed up to .claude/settings.json.bak"
+                regenerate_settings=1
+                ;;
+            *)
+                echo "  Leaving settings.json alone. Expect approval prompts for any"
+                echo "  commands or tools that have been added since install."
+                ;;
+        esac
     fi
-    case "$reply_regen" in
-        ""|y|Y|yes|YES)
-            cp .claude/settings.json .claude/settings.json.bak
-            echo "  Backed up to .claude/settings.json.bak"
-            regenerate_settings=1
-            ;;
-        *)
-            echo "  Leaving settings.json alone. Expect approval prompts until the"
-            echo "  allowlist is updated to use 'uv run python3' prefixes."
-            ;;
-    esac
 fi
 
 if [ "$regenerate_settings" = "1" ]; then
@@ -236,12 +257,16 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(uv run python3 $SKILL_ROOT/scripts/spawn.py:*)",
       "Bash(uv run python3 .curator/sweep.py:*)",
       "Bash(bash $SKILL_ROOT/scripts/evolve_guard.sh:*)",
+      "Edit(./wiki/**)",
+      "Write(./wiki/**)",
+      "Edit(./.curator/**)",
+      "Write(./.curator/**)",
       "Bash(date:*)"
     ]
   }
 }
 EOF
-    echo "  Created .claude/settings.json (auto-allow git -C wiki + uv run python3 skill scripts)"
+    echo "  Created .claude/settings.json (auto-allow git -C wiki + uv run python3 skill scripts + scoped Edit/Write)"
 fi
 
 # Workspace slash commands. `/curate` gives interactive users a
