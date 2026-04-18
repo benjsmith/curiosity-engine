@@ -234,7 +234,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wiki", nargs="?", default="wiki",
                     help="wiki directory (default: wiki)")
-    ap.add_argument("--top", type=int, default=None,
+    # Accept --limit as an alias. Other scripts in the skill (vault_search,
+    # graph bridge-candidates) use --limit, so LLM callers reaching for a
+    # conventional flag name can hit either and not fail the call.
+    ap.add_argument("--top", "--limit", dest="top", type=int, default=None,
                     help="only emit top N worst pages")
     ap.add_argument("--minimal", action="store_true",
                     help="emit {page, composite} only")
