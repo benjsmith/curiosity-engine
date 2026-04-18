@@ -244,9 +244,12 @@ Worker + reviewer prompt templates live in `.curator/prompts.md` — read them v
 
 1. **Snapshot guarded scripts.** `bash <skill_path>/scripts/evolve_guard.sh snapshot .curator/.guard.snapshot`.
 2. **Gather.** `uv run python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON with aggregate scores, dimension distributions, vault frontier, cluster analysis, connection candidates, saturation signal, recent log.
-3. **Plan.** Check `summary.saturation.action`:
+3. **Check sibling sessions' claims.** `uv run python3 <skill_path>/scripts/claims.py --wiki wiki list` → JSON of pages currently in flight in parallel CURATE sessions (see the "Parallel sessions" section below). **Exclude every claimed page from your candidate pools** for editorial, frontier, connection, and atomic-extraction targets. If your session ID isn't already set, pick one now: `sess-<ISO-timestamp>-<4-hex>`. Remember it for the rest of the epoch.
+4. **Plan.** Check `summary.saturation.action`:
    - `"continue_editorial"` → normal plan with editorial targets.
    - `"pivot_to_exploration"` → editorial rate has saturated. Shift the plan: drop editorial targets to at most 2 background items, prioritize frontier targets, connection proposals, and question proposals. This is a code-driven pivot, not a judgment call.
+   
+   **Additional pivot trigger: all editorial candidates claimed by siblings.** If step 3 left fewer than 3 editorial pages unclaimed in the top-20 worst list, treat that as a `pivot_to_exploration` case and shift to atomic extractions + questions + frontier. Don't sit idle — `facts/`, `evidence/`, and `analyses/` pages are net-new page creations that don't contend with other sessions editing existing pages, so there's almost always unclaimed work when the editorial pool is saturated by siblings.
    
    Produce `.curator/.epoch_plan.md` with:
    - **Editorial targets** (worst lint pages, max ~10 normally, max ~2 if saturated) — skip `sources/`.
@@ -257,6 +260,14 @@ Worker + reviewer prompt templates live in `.curator/prompts.md` — read them v
    - **Atomic facts** (max 3): pure parameter/value/assertion extracted verbatim from one source → new `facts/<stem>.md`. A fact is narrower than evidence — one number, one claim, one line. Examples: "Kaplan et al. (2020): loss ∝ C^(-0.050), α_N ≈ 0.076, α_D ≈ 0.103", "Chinchilla scaling rule: params × 2 ⇒ tokens × 2", "BERT-base: 12 layers, 12 heads, 768 hidden dim, 110M params", "GPT-3 trained on 300B tokens". Use for empirical constants, architectural hyperparameters, benchmark scores — anything you'd want to pull up as a standalone citation-backed assertion. These two buckets are separate because evidence naturally wins when conflated, leaving `facts/` empty forever.
 
 **Phase 2 — Execute (worker model + fresh-context reviewer).**
+
+**0. Claim target pages.** Before dispatching workers, claim every page the wave is about to touch:
+```
+uv run python3 <skill_path>/scripts/claims.py --wiki wiki claim <session_id> <operation> <page1> <page2> ...
+```
+Exit 1 means one of those pages was snatched by a sibling session between your plan and your claim. Drop the conflicting pages from the wave and either reach further down the candidate list (next-worst page, next frontier source, etc.) or proceed with just the pages you successfully claimed. For `operation`, use one of `editorial`, `frontier`, `connection`, `question`, `evidence`, `facts`.
+
+Staging files for this wave must use a session-scoped prefix: `.curator/.tmp_<session>_<slug>.md`. `clean-tmp` matches `.tmp_*.md` so session-prefixed names are still cleaned, but the prefix prevents two sessions from clobbering each other's staging mid-flight.
 
 For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in.
 
@@ -282,7 +293,9 @@ Batched commit after each wave:
 ```
 git -C wiki add -A
 git -C wiki commit -m "curate: <A accepted, R rejected, F flagged>"
+uv run python3 <skill_path>/scripts/claims.py --wiki wiki release <session_id> <page1> <page2> ...
 ```
+Release the claims for pages in this wave immediately after the commit so sibling sessions can pick them up for further improvement in later epochs. Pages that were rejected should also be released (don't hold on to them just because your worker didn't produce a valid edit).
 
 Append per-accept lines to `.curator/log.md` with page name and what changed.
 
@@ -324,12 +337,28 @@ notes: <what worked, what didn't>
 
 **Phase 4 — Stop check.** Loop back to Phase 1 unless:
 
-- **User interrupt.** `^C` or `/stop`.
-- **Wallclock.** Total elapsed ≥ `wallclock_max_hours` (default 24).
-- **Guard drift.** Hash-guarded script changed mid-epoch → abort and revert.
+- **User interrupt.** `^C` or `/stop`. Release all this session's claims before exiting: `uv run python3 <skill_path>/scripts/claims.py --wiki wiki release <session_id>` (no page list = release everything owned by this session).
+- **Wallclock.** Total elapsed ≥ `wallclock_max_hours` (default 24). Same release step.
+- **Guard drift.** Hash-guarded script changed mid-epoch → abort, revert, release claims.
 - **Saturation.** Detected by `epoch_summary.py`'s `saturation` field (code-driven, not a judgment call). When `saturation.action == "pivot_to_exploration"`, **do not stop**: Phase 1 automatically shifts the plan to analyses + questions + source-wishlist with minimal editorial background. The loop only truly stops on user interrupt, wallclock, or guard drift.
 
 **Process-level restart.** For long runs, each epoch can be a fresh process invocation with clean context. All state lives in `.curator/log.md`, `.curator/.epoch_plan.md`, and `.curator/.guard.snapshot` — no cross-epoch memory needed.
+
+### Parallel sessions
+
+Multiple CURATE sessions can run against one workspace concurrently, coordinated by `claims.py`. Each session picks a unique `session_id` (format `sess-<timestamp>-<4-hex>`) at startup, claims pages before editing, and releases after commit. Stale claims time out after 1 hour, so a crashed session doesn't permanently block its pages.
+
+**Spawn helper.** To launch N sessions with a resource safety check:
+```
+uv run python3 <skill_path>/scripts/spawn.py <N>           # measure + warn + spawn
+uv run python3 <skill_path>/scripts/spawn.py <N> --force   # skip the safety gate
+uv run python3 <skill_path>/scripts/spawn.py --measure-only  # print numbers, exit
+```
+`spawn.py` measures a trivial `claude -p` invocation's peak RSS and compares against 70% of available memory. If the requested N would overcommit, it prints a safe number and exits non-zero. Each spawned session backgrounds a `claude -p /curate` with `CURIOSITY_SESSION=<id>` set so the orchestrator inside can pass the ID to claim/release without re-inventing it.
+
+**Rate limits.** The other ceiling is the user's Claude Code account tier (tokens/min, requests/min). `spawn.py` can't measure that locally — if spawned sessions stall or get 429s, reduce N.
+
+**Saturation at scale.** When many sessions are running, editorial candidates in the top-20 worst list can all be claimed. The Phase 1 pivot trigger detects this and shifts the plan to `facts/`, `evidence/`, `analyses/`, `questions/` — all net-new-page creations that don't contend. Sibling sessions thus gracefully transition from editing to creating as the editorial pool thins out.
 
 ### Optimization surface
 

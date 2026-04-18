@@ -232,6 +232,8 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(uv run python3 $SKILL_ROOT/scripts/sweep.py:*)",
       "Bash(uv run python3 $SKILL_ROOT/scripts/epoch_summary.py:*)",
       "Bash(uv run python3 $SKILL_ROOT/scripts/graph.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/claims.py:*)",
+      "Bash(uv run python3 $SKILL_ROOT/scripts/spawn.py:*)",
       "Bash(uv run python3 .curator/sweep.py:*)",
       "Bash(bash $SKILL_ROOT/scripts/evolve_guard.sh:*)",
       "Bash(date:*)"
