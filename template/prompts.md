@@ -27,36 +27,12 @@ this file; don't duplicate prompts there.
 > model params and training tokens should scale equally, cited to
 > (vault:chinchilla-compute-optimal.extracted.md)")
 >
-> Write level: <CAVEMAN_LEVEL or "verbatim">
->
-> Caveman spec (follow exactly — this is not optional):
-> - **verbatim**: full standard prose.
-> - **lite**: drop filler adverbs (`just`, `really`, `basically`, `actually`,
->   `simply`), hedging (`somewhat`, `perhaps`), and transition words
->   (`however`, `furthermore`, `moreover`). Keep articles and full sentences.
-> - **ultra**: drop articles (a/an/the), copulas where obvious (`is`, `are`,
->   `was`, `were`), pronouns where the referent is clear, filler adverbs,
->   transitions, and prepositions that don't change meaning. Fragments
->   encouraged. Technical terms, numbers, names, citations, wikilinks
->   remain exact. Use arrows for causality (→). Abbreviate long compounds
->   where unambiguous (DB, fn, impl).
->
-> Ultra examples (before → after):
-> - "The transformer architecture uses self-attention across all layers."
->   → "Transformer uses self-attention across all layers."
-> - "In order to achieve better performance, we scale the number of parameters."
->   → "Better performance → scale parameter count."
-> - "Bahdanau et al. (2014) compute alignment scores via a learned
->   feed-forward network over the encoder hidden states."
->   → "Bahdanau et al. (2014) compute alignment scores via learned
->   feed-forward net over encoder hidden states."
-> - "This mechanism allows the model to dynamically focus on relevant parts
->   of the input when it is producing output."
->   → "Mechanism lets model dynamically focus on relevant input parts when
->   producing output."
->
-> If the edited page reads like standard English paragraphs when your level
-> is `ultra`, you are not following the spec.
+> Caveman compression: your FIRST action must be to invoke the `caveman`
+> skill with level `<CAVEMAN_LEVEL>` (e.g. `Skill(skill: "caveman",
+> args: "<CAVEMAN_LEVEL>")`). The skill puts you in compression mode so
+> your `new_text` is compressed automatically. If `<CAVEMAN_LEVEL>` is
+> `verbatim`, skip the skill invocation and write full prose. Do not
+> invoke any other skills or tools.
 >
 > Page-type conventions (when the task is "create a new page"):
 > - **evidence/<stem>.md**: ONE source-backed observation. A specific
@@ -78,7 +54,8 @@ this file; don't duplicate prompts there.
 > - Write `%` for percentages. Never write `%%` in prose — Obsidian renders
 >   `%%…%%` as a hidden comment and silently eats everything between.
 > - Prefer the smallest edit that accomplishes the task. This is not a rewrite.
-> - Do not call any tools. Reply with only one JSON object.
+> - Only tool you may invoke is the `caveman` skill (per above). Reply with
+>   exactly one JSON object and nothing else.
 >
 > Return exactly:
 > ```

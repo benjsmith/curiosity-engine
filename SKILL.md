@@ -258,7 +258,7 @@ Worker + reviewer prompt templates live in `.curator/prompts.md` — read them v
 
 For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in.
 
-**Brief composition (orchestrator responsibility).** Workers have no tool access — the orchestrator controls what vault context they see. Do NOT blindly dump full vault texts (these can be 40 KB each and would overwhelm worker context). Instead:
+**Brief composition (orchestrator responsibility).** Workers only invoke the `caveman` skill (for compression) — no other tools. The orchestrator controls what vault context they see. Do NOT blindly dump full vault texts (these can be 40 KB each and would overwhelm worker context). Instead:
 
 1. **Identify relevant sources:** `vault_search.py "<page topic>"` → ranked snippets showing which sources matter.
 2. **Extract the relevant passage:** for each source, run a focused query scoped to the claim: `vault_search.py "<specific claim keywords>" --limit 3`. The FTS5 snippet (~40 tokens around the best match) is often sufficient for a targeted edit. For broader tasks, Read the `.extracted.md` and extract the relevant section yourself — include only the passage, not the whole file.
@@ -341,15 +341,13 @@ CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`
 
 ### Caveman integration
 
-Workers are tool-less subagents — they can't invoke the caveman Skill themselves. Compression happens two ways: a read-time invocation by the orchestrator before each brief, and a write-time inline spec baked into the worker prompt with concrete examples. The `.curator/config.json` `caveman` block controls both levels.
+Workers invoke the `caveman` skill themselves at the start of each reply; that puts them in compression mode so the `new_text` they return is compressed by caveman's own rules rather than by an ad-hoc spec the orchestrator has to maintain. The `.curator/config.json` `caveman` block picks the level.
 
-**Read-time (level: `read`, default ultra).** Before including any wiki page or vault passage in a worker brief or a plan/evaluate read, the orchestrator invokes the caveman Skill at the configured `read` level and uses the compressed output in place of the raw text. This is the main context-budget win: ~30-40% fewer input tokens per page read, plus the worker sees dense signal only.
+**Write-time (the load-bearing case).** The orchestrator picks `write_analysis` level (default `lite`) for `analyses/` pages and `write_other` level (default `ultra`) for every other page type, substitutes that into the `<CAVEMAN_LEVEL>` placeholder in the worker prompt, and dispatches. The worker's first action is `Skill(skill: "caveman", args: "<level>")`; the skill's own instructions then govern the worker's output — no inline spec to drift.
 
-**Write-time (levels: `write_analysis` for `analyses/`, `write_other` for everything else).** The worker prompt (`.curator/prompts.md`) embeds the caveman ultra/lite spec inline with before/after examples so workers write at the configured level directly. Relying on instruction compliance is necessary because workers have no tool access — they cannot invoke the caveman Skill mid-write.
+**Read-time (nice-to-have).** The orchestrator may also invoke caveman on large vault passages before pasting them into a brief, to cut input tokens. This is optional and can be skipped if the orchestrator is tight on its own context budget; the write-time win compounds across every future read anyway because pages stay compressed on disk.
 
-Verification: if concept/entity prose still reads as standard English after an epoch (full articles, copulas, filler transitions), the worker is ignoring the embedded spec. Strengthen the spec with more examples rather than adding an orchestrator post-process step — post-processing after `score_diff` risks recomputing metrics and violating the gate.
-
-**No-caveman fallback.** If caveman is not installed, the `caveman` block is ignored and the inline spec in the worker prompt still applies (it's self-contained). CURATE works verbatim — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices (frontmatter + substantive prose) rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
+**No-caveman fallback.** If the caveman skill isn't installed, the orchestrator substitutes `verbatim` for `<CAVEMAN_LEVEL>`. Workers skip the skill invocation and write full prose. CURATE still works — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices (frontmatter + substantive prose) rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
 
 ## Writing rules
 
