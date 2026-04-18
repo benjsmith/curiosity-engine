@@ -150,8 +150,22 @@ def _spawn_one(workspace: Path, session_id: str) -> int:
     # descriptive; the orchestrator learns about it from SKILL.md.
     env = os.environ.copy()
     env["CURIOSITY_SESSION"] = session_id
+    # Use a natural-language prompt rather than "/curate". The skill
+    # activates via description matchers on words like "curate",
+    # "iterate", "improve" — it is NOT a registered slash command, so
+    # `claude -p /curate` would exit with "Unknown command: /curate" and
+    # run zero work. Setup also writes `.claude/commands/curate.md` for
+    # interactive /curate convenience, but spawn.py stays on natural
+    # language so it works even in workspaces that haven't been
+    # re-setup to install the slash command.
+    prompt = (
+        "Run the curiosity-engine CURATE loop in this workspace until "
+        f"interrupted. Use session ID {session_id} for the claims "
+        "coordination in `.curator/.claims` (see the Parallel sessions "
+        "section of the skill's SKILL.md). Do not stop after one epoch."
+    )
     proc = subprocess.Popen(
-        ["claude", "-p", "/curate"],
+        ["claude", "-p", prompt],
         cwd=str(workspace),
         stdin=subprocess.DEVNULL,
         stdout=open(log_path, "w"),
@@ -209,7 +223,10 @@ def main() -> None:
               "for manual launch.", file=sys.stderr)
         for i in range(args.n):
             sid = f"sess-{int(time.time())}-{i:03d}"
-            print(f"  (cd {workspace} && CURIOSITY_SESSION={sid} claude -p /curate) &")
+            prompt = (f"Run the curiosity-engine CURATE loop in this "
+                      f"workspace until interrupted. Session ID {sid}.")
+            print(f"  (cd {workspace} && CURIOSITY_SESSION={sid} "
+                  f"claude -p {prompt!r}) &")
         return
 
     if args.dry_run:

@@ -244,6 +244,16 @@ EOF
     echo "  Created .claude/settings.json (auto-allow git -C wiki + uv run python3 skill scripts)"
 fi
 
+# Workspace slash commands. `/curate` gives interactive users a
+# short-hand for starting the CURATE loop, matching the way `spawn.py`
+# launches background sessions. Regenerated on every run so skill
+# updates to the prompt text land in existing workspaces too.
+mkdir -p .claude/commands
+cat > .claude/commands/curate.md <<'EOF'
+Run the curiosity-engine CURATE loop in this workspace until interrupted. Follow the plan → execute → evaluate → stop-check cycle documented in the skill's SKILL.md. Pick a session ID (`sess-<timestamp>-<4-hex>`) at the start, claim pages via `claims.py` before workers touch them, release after commit. Do not stop after one epoch.
+EOF
+echo "  Wrote .claude/commands/curate.md (interactive /curate slash command)"
+
 # Initialize wiki as its own git repo (content-only; .curator/ is outside)
 if [ ! -d wiki/.git ]; then
     (cd wiki && git init -q && git add -A && git commit -q -m "init: curiosity engine wiki")
