@@ -1,6 +1,6 @@
 ---
 name: curiosity-engine
-description: "Self-improving knowledge wiki with a vault of raw sources. Use when the user mentions 'curiosity engine', 'wiki', 'vault', 'knowledge base', 'ingest', 'iterate', 'refine', 'improve', 'evolve', 'curator', 'lint', or wants to add sources, query accumulated knowledge, check wiki health, or run autonomous improvement. Also triggers on 'add to vault', 'what do I know about', 'improve wiki', 'set up knowledge base', 'new knowledge base', 'run curator'. Use even without explicit naming — if the user wants to file something for later or asks about accumulated knowledge, this is the skill."
+description: "Self-improving knowledge wiki with a vault of raw sources. Use when the user mentions 'curiosity engine', 'wiki', 'vault', 'knowledge base', 'ingest', 'iterate', 'refine', 'improve', 'evolve', 'curator', 'lint', or wants to add sources, query accumulated knowledge, check wiki health, or run autonomous improvement. Also triggers on 'add to vault', 'what do I know about', 'improve wiki', 'set up knowledge base', 'new knowledge base', 'run curator'. 'Spawn N curators', 'N parallel curators', 'launch N CURATE sessions', 'run curate in parallel' → launch independent background sessions via `spawn.py`, NOT Agent subagent workers (workers are an in-session fan-out concept; sessions are separate claude processes coordinated via claims.py). Use even without explicit naming — if the user wants to file something for later or asks about accumulated knowledge, this is the skill."
 ---
 
 # Curiosity Engine
@@ -271,6 +271,8 @@ Staging files for this wave must use a session-scoped prefix: `.curator/.tmp_<se
 
 For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in.
 
+Note: "workers" here = in-session Agent subagents, not separate CURATE processes. If the user asks for "parallel curators / parallel sessions", they mean the latter — see the **Parallel sessions** section below and use `spawn.py`, not Agent fan-out.
+
 **Brief composition (orchestrator responsibility).** Workers only invoke the `caveman` skill (for compression) — no other tools. The orchestrator controls what vault context they see. Do NOT blindly dump full vault texts (these can be 40 KB each and would overwhelm worker context). Instead:
 
 1. **Identify relevant sources:** `vault_search.py "<page topic>"` → ranked snippets showing which sources matter.
@@ -345,6 +347,13 @@ notes: <what worked, what didn't>
 **Process-level restart.** For long runs, each epoch can be a fresh process invocation with clean context. All state lives in `.curator/log.md`, `.curator/.epoch_plan.md`, and `.curator/.guard.snapshot` — no cross-epoch memory needed.
 
 ### Parallel sessions
+
+**Vocabulary — don't confuse workers with sessions.** Two different things share the word "parallel"; they do different things:
+
+- **Worker** = a tool-less Agent subagent dispatched *inside one CURATE session's Phase 2* to edit ONE page. Count is `parallel_workers` in `.curator/config.json` (default 10). Workers live only until their JSON return. They're how one session fans out across targets in an epoch.
+- **Session** = an independent `claude` process running its own CURATE loop against the workspace. Long-lived. Sessions coordinate via `claims.py` so they pick disjoint pages.
+
+When the user says **"spawn N curators"**, **"N parallel curators"**, **"run CURATE in parallel"**, **"launch N curate sessions"**, or **"N parallel runs"** — they mean **sessions**. Use `spawn.py N`. A "curator" is the whole agent running the CURATE loop, not an in-session worker. If the user says **"workers"** or **"worker subagents"** or is configuring `parallel_workers`, that's in-session fan-out. If ambiguous (e.g. a bare "run 5 in parallel"), ask explicitly: "Do you mean (a) 5 independent background CURATE sessions via `spawn.py`, or (b) raising `parallel_workers` to 5 for this session's next Phase 2 wave?"
 
 Multiple CURATE sessions can run against one workspace concurrently, coordinated by `claims.py`. Each session picks a unique `session_id` (format `sess-<timestamp>-<4-hex>`) at startup, claims pages before editing, and releases after commit. Stale claims time out after 1 hour, so a crashed session doesn't permanently block its pages.
 
