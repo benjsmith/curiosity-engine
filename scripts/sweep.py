@@ -43,6 +43,18 @@ Subcommands
         can't reach outside the wiki repo — without a dedicated cleanup
         path, they accumulate. Prints JSON summary of files removed.
 
+    sweep.py resync-stems [wiki_dir]
+        Re-derive every `wiki/sources/*.md` filename from current naming.py,
+        rename divergent files, and rewrite inbound wikilinks across the
+        whole wiki. Idempotent: emits renames=0 when already in sync. Used
+        when a skill update changes the citation-stem convention (e.g.
+        `topic-author-year` → `author-year-topic`) so existing workspaces
+        pick up the new scheme without losing content or cross-references.
+        Does NOT touch `.curator/log.md` (append-only history), the vault
+        FTS5 index (indexes vault, not wiki), or frontmatter `sources:`
+        lists (those point at vault extraction filenames, not stems).
+        Prints JSON summary of renames and pages whose wikilinks changed.
+
 Design notes
 ------------
 - sweep.py is workspace-agent-editable. It lives at `.curator/sweep.py` in
@@ -442,6 +454,101 @@ def _vault_primary_refs(vault_files: list) -> set:
     return primary
 
 
+def cmd_resync_stems(wiki_dir: Path):
+    """Rename source stubs + wikilinks to match the current citation_stem.
+
+    For each file under `wiki/sources/`:
+      1. Read its frontmatter to locate the underlying vault extraction.
+      2. Compute the correct stem via `naming.citation_stem(parse_source_meta(...))`.
+      3. If the current filename stem differs, rename the file (with
+         collision-safe numeric suffixes matching fix-source-stubs).
+    Then walk every wiki page and substitute `[[old_stem]]` /
+    `[[old_stem|label]]` with the new stem.
+    """
+    from naming import CITATION_RE, citation_stem, parse_source_meta
+
+    vault_dir = wiki_dir.parent / "vault"
+    sources_dir = wiki_dir / "sources"
+    if not sources_dir.exists():
+        print(json.dumps({"renames": 0, "pages_touched": 0, "note": "no sources/ dir"}))
+        return
+
+    current_stems = {p.stem.lower() for p in sources_dir.glob("*.md")}
+    renames = []  # list of (old_stem, new_stem)
+    skipped_no_vault = []
+
+    for stub in sorted(sources_dir.glob("*.md")):
+        text = stub.read_text()
+        fm, body = read_frontmatter(text)
+        srcs = fm.get("sources", [])
+        if isinstance(srcs, str):
+            # read_frontmatter doesn't parse multi-line YAML lists — the
+            # value for `sources:` becomes an empty string and the actual
+            # items sit in lines that don't match `key: value`. Recover by
+            # regex across the whole text for *.extracted.md paths.
+            srcs = re.findall(r"[\w./-]+\.extracted\.md", text)
+        srcs = [s for s in srcs if s]
+        if not srcs:
+            # Last-resort fallback: scan body for `(vault:X.extracted.md)`
+            # citations, which source stubs always carry at least once.
+            srcs = [m.group(1) for m in CITATION_RE.finditer(body)]
+        if not srcs:
+            skipped_no_vault.append(stub.name)
+            continue
+        vault_file = vault_dir / srcs[0]
+        if not vault_file.exists() or not vault_file.is_file():
+            skipped_no_vault.append(stub.name)
+            continue
+
+        meta = parse_source_meta(vault_file)
+        correct = citation_stem(meta).lower()
+        if not correct or correct == stub.stem.lower():
+            continue
+
+        # Collision-safe target: if `correct` is already taken by some OTHER
+        # stub, append -2, -3, ... until unique.
+        new_stem = correct
+        if new_stem in current_stems - {stub.stem.lower()}:
+            n = 2
+            while f"{new_stem}-{n}" in current_stems:
+                n += 1
+            new_stem = f"{new_stem}-{n}"
+
+        new_path = sources_dir / f"{new_stem}.md"
+        stub.rename(new_path)
+        current_stems.discard(stub.stem.lower())
+        current_stems.add(new_stem)
+        renames.append((stub.stem, new_stem))
+
+    pages_touched = []
+    if renames:
+        rename_map = {old: new for old, new in renames}
+        # Match `[[<stem>]]` or `[[<stem>|label]]`. Anchor on exact stem
+        # match so we don't rewrite a longer stem that contains an old
+        # stem as a substring.
+        pattern = re.compile(
+            r"\[\[(" + "|".join(re.escape(o) for o in rename_map) + r")(\|[^\]]*)?\]\]"
+        )
+
+        def _sub(m):
+            return f"[[{rename_map[m.group(1)]}{m.group(2) or ''}]]"
+
+        for page in wiki_pages(wiki_dir):
+            text = page.read_text()
+            new_text = pattern.sub(_sub, text)
+            if new_text != text:
+                page.write_text(new_text)
+                pages_touched.append(str(page.relative_to(wiki_dir)))
+
+    print(json.dumps({
+        "renames": len(renames),
+        "rename_pairs": [{"old": o, "new": n} for o, n in renames],
+        "pages_touched": len(pages_touched),
+        "pages_touched_paths": pages_touched,
+        "skipped_no_vault": skipped_no_vault,
+    }, indent=2))
+
+
 def cmd_clean_tmp(wiki_dir: Path):
     """Remove transient `.curator/.tmp_*.md` staging files.
 
@@ -542,7 +649,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
-        "scan-references", "clean-tmp",
+        "scan-references", "clean-tmp", "resync-stems",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     args = ap.parse_args()
@@ -564,6 +671,8 @@ def main():
         cmd_scan_references(wiki_dir)
     elif args.command == "clean-tmp":
         cmd_clean_tmp(wiki_dir)
+    elif args.command == "resync-stems":
+        cmd_resync_stems(wiki_dir)
 
 
 if __name__ == "__main__":

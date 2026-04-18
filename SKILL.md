@@ -187,6 +187,7 @@ Mechanical whole-wiki hygiene. Distinct from CURATE's semantic ratchet: SWEEP ru
    - `uv run python3 .curator/sweep.py fix-index wiki` (rewrites `.curator/index.md`)
    - `uv run python3 .curator/sweep.py fix-percent-escapes wiki` (collapses Obsidian hidden-comment `%%`)
    - `uv run python3 .curator/sweep.py clean-tmp wiki` (removes `.curator/.tmp_*.md` staging files — bash discipline forbids `rm` and `git clean` can't reach outside the wiki repo, so this is the only allowed cleanup path)
+   - `uv run python3 .curator/sweep.py resync-stems wiki` (renames `sources/` stubs + rewrites inbound wikilinks when naming.py's citation-stem convention has changed since the wiki was built; idempotent — emits `renames: 0` when in sync. `setup.sh` runs this automatically after template refresh, guarded by a clean-git check.)
 3. **LLM-decided fixes** — duplicate slugs (merge), dead wikilinks (create/retarget/remove), frontmatter issues. Workers creating or renaming pages must use `naming.py` for stems and display titles.
 4. **Rebuild graph:** `uv run python3 <skill_path>/scripts/graph.py rebuild wiki` (keeps kuzu in sync with wiki link structure).
 5. Commit: `git -C wiki add -A && git -C wiki commit -m "sweep: <summary>"`.

@@ -285,6 +285,36 @@ fi
 # Initialize vault FTS5 index
 uv run python3 "$SCRIPT_DIR/vault_index.py" --init
 
+# Behavioral-migration pass. Each sweep resync-* subcommand is idempotent:
+# it re-derives the correct state from the canonical source (naming.py,
+# prompts.md, etc.) and only writes when it finds drift. After a skill
+# update that changes such a source, this pass propagates the change
+# across the existing workspace — renaming stubs, rewriting wikilinks,
+# etc. No-op when everything is already in sync.
+#
+# Guarded by a clean-git check on the wiki repo: if the user has
+# uncommitted changes we refuse to touch the wiki, print a note, and
+# let them decide. Rationale: a migration may rename 100+ files and
+# rewrite wikilinks across every page — the user wants that as a single
+# reviewable commit, not tangled with in-progress edits.
+if [ -d wiki/.git ]; then
+    if [ -n "$(git -C wiki status --porcelain)" ]; then
+        echo ""
+        echo "  Wiki has uncommitted changes; skipping behavioral-migration pass."
+        echo "  Commit or stash your wiki edits and rerun setup.sh to apply."
+    else
+        echo ""
+        echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
+        uv run python3 "$SCRIPT_DIR/sweep.py" resync-stems wiki >/dev/null \
+            && uv run python3 "$SCRIPT_DIR/sweep.py" fix-index wiki >/dev/null \
+            && uv run python3 "$SCRIPT_DIR/graph.py" rebuild wiki >/dev/null \
+            && echo "  Migration pass complete. Review with: git -C wiki diff --stat"
+        # If resync renamed anything, there are now unstaged changes — we
+        # intentionally leave them unstaged so the user inspects + commits
+        # with a message of their choosing.
+    fi
+fi
+
 echo ""
 echo "Ready. Open Claude Code here and try:"
 echo '  > add ~/some-paper.pdf to the vault'

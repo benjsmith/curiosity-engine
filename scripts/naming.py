@@ -45,8 +45,10 @@ ALLOWED_FM_KEYS = frozenset({
     "source_path", "source_url", "source_type", "ingested_at", "fetched_at",
     "sha256", "vault_sha256", "bytes", "kept_as", "extraction",
     "max_extract_bytes", "untrusted",
-    # Author/metadata (used by parse_source_meta)
-    "author", "from", "date", "subject",
+    # Author/metadata (used by parse_source_meta). `authors` (plural) is
+    # the standard arXiv/paper form; `author` (singular) is used by blog/
+    # email-style sources. Both are allowed.
+    "author", "authors", "from", "date", "subject",
 })
 
 TYPE_PREFIX = {
@@ -63,8 +65,9 @@ def read_frontmatter(text: str) -> tuple:
     """Parse leading ``---\\n...\\n---\\n`` frontmatter. Returns (dict, body).
 
     Handles: quoted values (``title: "Some: Title"``), bracket lists
-    (``sources: [a.md, b.md]`` → Python list), bare scalars. Keys outside
-    ``ALLOWED_FM_KEYS`` are silently dropped.
+    (``sources: [a.md, b.md]`` → list), multi-line YAML lists
+    (``authors:\\n  - Alice\\n  - Bob`` → list), and bare scalars. Keys
+    outside ``ALLOWED_FM_KEYS`` are silently dropped.
     """
     if not text.startswith("---"):
         return {}, text
@@ -74,15 +77,38 @@ def read_frontmatter(text: str) -> tuple:
     fm_block = text[3:end].strip()
     body = text[end + 4:]
     fm = {}
-    for line in fm_block.split("\n"):
-        line = line.strip()
+    lines = fm_block.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
         if not line or ":" not in line:
+            i += 1
             continue
         k, _, v = line.partition(":")
         key = k.strip()
-        if key not in ALLOWED_FM_KEYS:
-            continue
         v = v.strip()
+        if key not in ALLOWED_FM_KEYS:
+            i += 1
+            continue
+        if not v:
+            # Multi-line YAML list: `key:` with empty value, followed by
+            # indented `- item` lines. Collect contiguous item lines.
+            items = []
+            j = i + 1
+            while j < len(lines):
+                raw = lines[j]
+                if not raw or not (raw.startswith(" ") or raw.startswith("\t")):
+                    break
+                stripped = raw.strip()
+                if stripped.startswith("-"):
+                    items.append(stripped[1:].strip())
+                    j += 1
+                    continue
+                break
+            if items:
+                fm[key] = items
+                i = j
+                continue
         if v.startswith("[") and v.endswith("]"):
             fm[key] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
         elif (v.startswith('"') and v.endswith('"')) or \
@@ -90,6 +116,7 @@ def read_frontmatter(text: str) -> tuple:
             fm[key] = v[1:-1]
         else:
             fm[key] = v
+        i += 1
     return fm, body
 
 
@@ -134,7 +161,11 @@ def extract_topic(stem: str) -> str:
                     break
             else:
                 return stem
-    topic = re.sub(r"(?:-[0-9a-f]{2})+", "-", topic)
+    # Strip sequences of UTF-8 hex-byte noise like `-e2-80-93`. Require at
+    # least 2 consecutive `-XX` chunks so we don't shred valid words that
+    # happen to start with hex-looking pairs (`-ad-versarial`, `-ac-ting`,
+    # `-ef-ficient`).
+    topic = re.sub(r"(?:-[0-9a-f]{2}){2,}", "-", topic)
     topic = re.sub(r"-{2,}", "-", topic).strip("-")
     return topic
 
@@ -155,6 +186,33 @@ _GENERIC_HEADINGS = {
 def _topic_from_title(title: str) -> str:
     words = [w for w in title.split() if w.lower() not in _TITLE_STOP]
     return "-".join(w.lower() for w in words[:3])
+
+
+_SURNAME_STRIP = "().,;:[]<>\"'"
+
+
+def _surname(name: str) -> str:
+    """Extract surname from a full-name string for citation stems.
+
+    Handles:
+      - `Last, First [Title]` — surname is the token ending in a comma
+        (works for `Kingma, Diederik P.` and `Alice Smith, PhD`).
+      - `First Last` — surname is the last token.
+      - Parenthesized qualifiers like `NVIDIA (130+ researchers)` — parens
+        and their contents are stripped first, leaving `NVIDIA`.
+    Returns empty string for empty input.
+    """
+    name = (name or "").strip()
+    if not name:
+        return ""
+    name = re.sub(r"\s*\([^)]*\)", "", name).strip()
+    if not name:
+        return ""
+    parts = name.split()
+    for p in parts:
+        if p.endswith(","):
+            return p.rstrip(",").strip(_SURNAME_STRIP)
+    return parts[-1].strip(_SURNAME_STRIP)
 
 
 def _inner_fm_from_fetched(body: str) -> dict:
@@ -233,6 +291,12 @@ def parse_source_meta(vault_path: Path) -> dict:
         ym = re.search(r"\b(19|20)\d{2}\b", str(fetched))
         if ym:
             meta["year"] = ym.group(0)
+        # First author from either singular `author` or plural `authors` list.
+        authors = fm.get("authors") or []
+        if isinstance(authors, str):
+            authors = [authors]
+        first = fm.get("author") or (authors[0] if authors else "")
+        meta["author"] = _surname(first if isinstance(first, str) else "")
         inner_title = fm.get("title", "")
         if isinstance(inner_title, list):
             inner_title = inner_title[0] if inner_title else ""
@@ -242,7 +306,10 @@ def parse_source_meta(vault_path: Path) -> dict:
     fm_title = fm.get("title", "")
     if isinstance(fm_title, list):
         fm_title = fm_title[0] if fm_title else ""
-    fm_author = fm.get("author") or fm.get("from", "")
+    authors = fm.get("authors") or []
+    if isinstance(authors, str):
+        authors = [authors]
+    fm_author = fm.get("author") or fm.get("from", "") or (authors[0] if authors else "")
     fm_date = fm.get("date") or fm.get("created", "")
     fm_subject = fm.get("subject", "")
 
@@ -250,7 +317,7 @@ def parse_source_meta(vault_path: Path) -> dict:
         meta["full_title"] = fm_title or fm_subject
         meta["topic"] = _topic_from_title(meta["full_title"]) or vault_path.stem.replace(".extracted", "")
         if fm_author:
-            meta["author"] = fm_author.split()[0] if isinstance(fm_author, str) else str(fm_author)
+            meta["author"] = _surname(fm_author if isinstance(fm_author, str) else str(fm_author))
         ym = re.search(r"\b(19|20)\d{2}\b", str(fm_date))
         if ym:
             meta["year"] = ym.group(0)
@@ -296,16 +363,24 @@ def parse_source_meta(vault_path: Path) -> dict:
 def citation_stem(meta: dict) -> str:
     """Build a citation-style filename stem from parsed metadata.
 
-    Papers with author: attention-vaswani-2017
-    Wikipedia (no author): deep-learning-wikipedia-2026
+    Papers with author:      vaswani-2017-attention
+    Wikipedia (no author):   wikipedia-2026-deep-learning
+    arXiv without author:    arxiv-2017-attention-is-all-you-need
+
+    Author-year-topic ordering matches reference-list conventions: readers
+    scan by author, then year, then disambiguate by topic. This also
+    groups a single author's stubs alphabetically on disk, which is
+    useful when the same author has many papers in the vault.
     """
-    parts = [meta["topic"]]
+    parts = []
     if meta.get("author"):
         parts.append(meta["author"].lower())
+    elif meta.get("origin"):
+        parts.append(meta["origin"].lower())
     if meta.get("year"):
         parts.append(meta["year"])
-    if not meta.get("author") and meta.get("origin"):
-        parts.append(meta["origin"].lower())
+    if meta.get("topic"):
+        parts.append(meta["topic"])
     return "-".join(parts)
 
 
