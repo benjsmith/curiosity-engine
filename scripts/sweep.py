@@ -36,13 +36,6 @@ Subcommands
         `.curator/log.md`. Dedups across runs via `.curator/.requested-refs`
         (append-only). Prints JSON summary of refs found / logged / skipped.
 
-    sweep.py clean-tmp [wiki_dir]
-        Delete transient `.curator/.tmp_*.md` staging files. The orchestrator
-        writes candidate page text to these as an intermediate step before
-        piping to score_diff; bash discipline forbids `rm`, and git clean
-        can't reach outside the wiki repo — without a dedicated cleanup
-        path, they accumulate. Prints JSON summary of files removed.
-
     sweep.py resync-stems [wiki_dir]
         Re-derive every `wiki/sources/*.md` filename from current naming.py,
         rename divergent files, and rewrite inbound wikilinks across the
@@ -593,28 +586,6 @@ def cmd_concept_candidates(wiki_dir: Path, min_inbound: int = 3,
     print(json.dumps({"candidates": candidates[:limit]}, indent=2))
 
 
-def cmd_clean_tmp(wiki_dir: Path):
-    """Remove transient `.curator/.tmp_*.md` staging files.
-
-    Scoped narrowly: only files under `<workspace>/.curator/` whose names
-    start with `.tmp_` and end with `.md`. Never touches anything in
-    `wiki/` or `vault/`.
-    """
-    cur = curator_dir(wiki_dir)
-    if not cur.exists():
-        print(json.dumps({"removed": 0, "files": []}))
-        return
-    removed = []
-    for p in sorted(cur.glob(".tmp_*.md")):
-        try:
-            p.unlink()
-            removed.append(p.name)
-        except OSError as e:
-            print(f"sweep clean-tmp: failed to remove {p}: {e}",
-                  file=sys.stderr)
-    print(json.dumps({"removed": len(removed), "files": removed}, indent=2))
-
-
 def cmd_scan_references(wiki_dir: Path):
     """Log external references (arXiv / DOI) not yet in the vault.
 
@@ -693,8 +664,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
-        "scan-references", "clean-tmp", "resync-stems",
-        "concept-candidates",
+        "scan-references", "resync-stems", "concept-candidates",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     ap.add_argument("--min-inbound", type=int, default=3,
@@ -721,8 +691,6 @@ def main():
         cmd_fix_percent_escapes(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
-    elif args.command == "clean-tmp":
-        cmd_clean_tmp(wiki_dir)
     elif args.command == "resync-stems":
         cmd_resync_stems(wiki_dir)
     elif args.command == "concept-candidates":

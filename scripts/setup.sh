@@ -72,8 +72,8 @@ mkdir -p .curator
 #                    are preserved
 #
 # config.json is handled separately (copy-if-missing) because its values
-# are user-tuned (worker_model, parallel_workers, epoch_seconds) and a
-# refresh would blow those away.
+# are user-tuned (worker_model, parallel_workers, saturation thresholds)
+# and a refresh would blow those away.
 refresh_template_md() {
     local src="$1"
     local dst="$2"
@@ -123,8 +123,9 @@ if [ ! -f ".curator/config.json" ]; then
 elif ! cmp -s "$TEMPLATE_DIR/config.json" ".curator/config.json"; then
     echo ""
     echo "  NOTE: .curator/config.json differs from the skill template."
-    echo "  Not auto-refreshing (preserves your worker_model/epoch_seconds/etc."
-    echo "  tuning). Diff against $TEMPLATE_DIR/config.json to pick up any new keys."
+    echo "  Not auto-refreshing (preserves your worker_model/parallel_workers/"
+    echo "  saturation-threshold tuning). Diff against $TEMPLATE_DIR/config.json"
+    echo "  to pick up any new keys."
 fi
 
 # Initialize auto-generated curator state
@@ -184,11 +185,8 @@ else
     # recent addition, so a single missing check catches workspaces
     # multiple versions behind.
     CANARY_ENTRIES=(
-        "uv run python3"                                   # pre-uv switch
-        "scripts/claims.py"                                # parallel-sessions coordination
-        "scripts/spawn.py"                                 # parallel launcher
-        "Edit(./wiki/"                                     # scoped Edit/Write for headless sessions
-        "Write(./.curator/"
+        "uv run python3"       # pre-uv switch
+        "Edit(./wiki/"         # path-scoped Edit/Write for in-process workers
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -253,8 +251,6 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(uv run python3 $SKILL_ROOT/scripts/sweep.py:*)",
       "Bash(uv run python3 $SKILL_ROOT/scripts/epoch_summary.py:*)",
       "Bash(uv run python3 $SKILL_ROOT/scripts/graph.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/claims.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/spawn.py:*)",
       "Bash(uv run python3 .curator/sweep.py:*)",
       "Bash(bash $SKILL_ROOT/scripts/evolve_guard.sh:*)",
       "Edit(./wiki/**)",
@@ -269,15 +265,21 @@ EOF
     echo "  Created .claude/settings.json (auto-allow git -C wiki + uv run python3 skill scripts + scoped Edit/Write)"
 fi
 
-# Workspace slash commands. `/curate` gives interactive users a
-# short-hand for starting the CURATE loop, matching the way `spawn.py`
-# launches background sessions. Regenerated on every run so skill
-# updates to the prompt text land in existing workspaces too.
-mkdir -p .claude/commands
-cat > .claude/commands/curate.md <<'EOF'
-Run the curiosity-engine CURATE loop in this workspace until interrupted. Follow the plan → execute → evaluate → stop-check cycle documented in the skill's SKILL.md. Pick a session ID (`sess-<timestamp>-<4-hex>`) at the start, claim pages via `claims.py` before workers touch them, release after commit. Do not stop after one epoch.
-EOF
-echo "  Wrote .claude/commands/curate.md (interactive /curate slash command)"
+# Clean up leftover parallel-session state from an earlier skill version.
+# If the workspace was set up when spawn.py / claims.py existed, these
+# paths may still be present and will otherwise look like active state to
+# a human inspecting `.curator/`. Harmless to remove — no recovery value.
+for stale in .curator/.spawned .curator/.claims .curator/.claims.lock \
+             .curator/.current-batch; do
+    [ -e "$stale" ] && rm -f "$stale" && echo "  Removed stale $stale"
+done
+if [ -d .curator/sessions ]; then
+    rm -rf .curator/sessions && echo "  Removed stale .curator/sessions/"
+fi
+# And the slash command registered by the parallel-sessions era.
+if [ -f .claude/commands/curate.md ]; then
+    rm -f .claude/commands/curate.md && echo "  Removed stale .claude/commands/curate.md"
+fi
 
 # Initialize wiki as its own git repo (content-only; .curator/ is outside)
 if [ ! -d wiki/.git ]; then
