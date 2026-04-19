@@ -353,10 +353,12 @@ def main() -> None:
                     help="after spawning, detach silently instead of "
                          "entering the dashboard. Sessions run in the "
                          "background; monitor later via `spawn.py --watch`.")
-    ap.add_argument("--watch", action="store_true",
+    ap.add_argument("--watch", "--dashboard", action="store_true",
+                    dest="watch",
                     help="monitor existing sessions (no spawning). With "
                          "spawn, watch is already the default; this flag "
-                         "is redundant but accepted.")
+                         "is redundant but accepted. `--dashboard` is an "
+                         "alias.")
     ap.add_argument("--status", action="store_true",
                     help="print status block once and exit")
     ap.add_argument("--interval", type=float, default=2.0,
