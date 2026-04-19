@@ -6,8 +6,15 @@ echo "=== Curiosity Engine Setup ==="
 # Resolve paths. SCRIPT_DIR is the installed skill's scripts/ directory;
 # TEMPLATE_DIR is its sibling template/ — the single source of truth for
 # the wiki and curator skeleton copied into each new workspace.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+#
+# `pwd -P` is critical: the skill is typically installed at
+# ~/.claude/skills/<name> which is a symlink to ~/.agents/skills/<name>
+# (or wherever npx-skills dropped the real tree). Claude Code canonicalizes
+# symlinks when invoking Bash commands, so the allowlist we emit must use
+# the same physical path or every script invocation trips an approval
+# prompt.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 TEMPLATE_DIR="$SKILL_ROOT/template"
 
 # Ensure `uv` is available. The skill's canonical Python invocation is
@@ -185,8 +192,9 @@ else
     # recent addition, so a single missing check catches workspaces
     # multiple versions behind.
     CANARY_ENTRIES=(
-        "uv run python3"       # pre-uv switch
-        "Edit(./wiki/"         # path-scoped Edit/Write for in-process workers
+        "uv run python3"          # pre-uv switch
+        "Edit(./wiki/"            # path-scoped Edit/Write for in-process workers
+        "$SKILL_ROOT/scripts/"    # physical skill path; detects pre-pwd-P settings
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
