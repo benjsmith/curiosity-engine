@@ -157,14 +157,62 @@ def _alive_pids(spawned_path: Path) -> list:
     return out
 
 
+def _exit_reason(log_path: Path) -> str:
+    """Categorize an exited session's log tail into one signal.
+
+    Mirrors the few patterns actually seen in practice: rate-limit
+    messages from claude -p, clean `Ran N CURATE epochs` completion
+    summaries from the orchestrator, permission denials, and empty
+    logs (silent early-exit). Keeps signatures wide so we don't miss
+    a crash.
+    """
+    try:
+        text = log_path.read_text()[-4000:]
+    except OSError:
+        return "unreadable"
+    if not text.strip():
+        return "silent"
+    lower = text.lower()
+    if "hit your limit" in lower or "rate limit" in lower or "429" in lower:
+        return "rate-limited"
+    if "approval" in lower and ("denied" in lower or "not in allow" in lower
+                                 or "permission" in lower):
+        return "permission-denied"
+    if "unknown command" in lower:
+        return "bad-command"
+    if "ran " in lower and "curate epoch" in lower:
+        return "clean-exit"
+    if "stopped" in lower or "stop-check" in lower or "saturation" in lower:
+        return "clean-exit"
+    return "other"
+
+
 def _format_status(workspace: Path, watch_mode: bool = False) -> str:
     """Compose a compact status block from .spawned, .claims, and git log."""
     import datetime as _dt
     spawned = workspace / ".curator" / ".spawned"
     claims_path = workspace / ".curator" / ".claims"
+    sessions_dir = workspace / ".curator" / "sessions"
     alive = _alive_pids(spawned)
-    total_spawned = sum(1 for _ in spawned.read_text().splitlines()
-                        if _.strip()) if spawned.exists() else 0
+    alive_pids = {p for p, _ in alive}
+
+    all_entries = []
+    if spawned.exists():
+        for line in spawned.read_text().splitlines():
+            parts = line.strip().split("|")
+            if len(parts) >= 2:
+                all_entries.append((parts[0], parts[1]))
+    total_spawned = len(all_entries)
+
+    # Categorize exited sessions by log signal.
+    exit_counts = {}
+    for pid, sid in all_entries:
+        if pid in alive_pids:
+            continue
+        log = sessions_dir / f"{sid}.log"
+        reason = _exit_reason(log) if log.exists() else "no-log"
+        exit_counts[reason] = exit_counts.get(reason, 0) + 1
+    exit_str = ", ".join(f"{k}={v}" for k, v in sorted(exit_counts.items())) or "—"
 
     # Claims — group by operation
     claims = []
@@ -199,8 +247,8 @@ def _format_status(workspace: Path, watch_mode: bool = False) -> str:
     now_str = _dt.datetime.now().strftime("%H:%M:%S")
     lines = [
         f"CURATE status — {now_str}",
-        f"  sessions: {len(alive)} alive / {total_spawned} spawned"
-        f" ({total_spawned - len(alive)} exited)",
+        f"  sessions: {len(alive)} alive / {total_spawned} spawned",
+        f"  exited:   {total_spawned - len(alive)}  [{exit_str}]",
         f"  claims:   {len(claims)} pages in flight  [{ops_str}]",
         f"  recent:   {len(log_out)} commits in last 5 min",
     ]
@@ -216,21 +264,29 @@ def _format_status(workspace: Path, watch_mode: bool = False) -> str:
 
 
 def _watch(workspace: Path, interval: float = 2.0) -> None:
-    """Live status. ANSI cursor control if stdout is a TTY, else sequential."""
-    is_tty = sys.stdout.isatty()
+    """Live status. ANSI cursor control if stdout is a TTY.
+
+    Non-TTY stdout (pipes, Claude Code Bash tool, log redirection) doesn't
+    render the cursor-control escape codes — looping just scrolls the
+    same block over and over. In that case we print one snapshot and
+    point the user at the interactive invocation instead.
+    """
+    if not sys.stdout.isatty():
+        print(_format_status(workspace, watch_mode=False))
+        print()
+        print("[non-TTY: printed one snapshot instead of a live loop. "
+              "For in-place updates run `spawn.py --watch` from a terminal.]",
+              file=sys.stderr)
+        return
     try:
         first = True
         while True:
             block = _format_status(workspace, watch_mode=True)
-            if is_tty:
-                if not first:
-                    # Clear screen, move cursor home
-                    sys.stdout.write("\033[2J\033[H")
-                else:
-                    sys.stdout.write("\033[H\033[J")
-                    first = False
+            if not first:
+                sys.stdout.write("\033[2J\033[H")
             else:
-                print("---")
+                sys.stdout.write("\033[H\033[J")
+                first = False
             sys.stdout.write(block + "\n")
             sys.stdout.flush()
             time.sleep(interval)
