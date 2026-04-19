@@ -79,7 +79,31 @@ def _init_schema(conn):
         conn.execute(stmt)
 
 
-def rebuild(wiki_dir: Path):
+def _graph_is_current(wiki_dir: Path) -> bool:
+    """True iff the kuzu graph is at least as new as the latest wiki page.
+
+    Short-circuit for `rebuild` calls from parallel CURATE sessions — at
+    10 concurrent sessions each rebuilding at epoch end, most rebuilds
+    are redundant and cost 2-10s each. Checking mtime first collapses
+    them to <50ms.
+    """
+    kuzu_path = Path(_graph_path(wiki_dir))
+    if not kuzu_path.exists():
+        return False
+    kuzu_mtime = kuzu_path.stat().st_mtime
+    wiki_mtime = max(
+        (f.stat().st_mtime for f in wiki_dir.rglob("*.md")
+         if f.name not in SKIP_FILES and "_suspect" not in f.parts),
+        default=0,
+    )
+    return wiki_mtime <= kuzu_mtime
+
+
+def rebuild(wiki_dir: Path, force: bool = False):
+    if not force and _graph_is_current(wiki_dir):
+        print(json.dumps({"status": "up-to-date",
+                          "note": "kuzu graph newer than all wiki pages; skipped rebuild"}))
+        return
     path = _graph_path(wiki_dir)
     p = Path(path)
     if p.exists():
@@ -228,7 +252,10 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="command")
 
-    sub.add_parser("rebuild").add_argument("wiki", default="wiki", nargs="?")
+    rb = sub.add_parser("rebuild")
+    rb.add_argument("wiki", default="wiki", nargs="?")
+    rb.add_argument("--force", action="store_true",
+                    help="rebuild even if the graph is already current")
 
     ss = sub.add_parser("shared-sources")
     ss.add_argument("wiki")
@@ -261,7 +288,7 @@ def main():
         return
 
     if args.command == "rebuild":
-        rebuild(wiki_dir)
+        rebuild(wiki_dir, force=args.force)
     elif args.command == "shared-sources":
         cmd_shared_sources(wiki_dir, args.page_a, args.page_b)
     elif args.command == "path":

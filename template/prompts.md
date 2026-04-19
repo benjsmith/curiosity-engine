@@ -27,12 +27,10 @@ this file; don't duplicate prompts there.
 > model params and training tokens should scale equally, cited to
 > (vault:chinchilla-compute-optimal.extracted.md)")
 >
-> Caveman compression: your FIRST action must be to invoke the `caveman`
-> skill with level `<CAVEMAN_LEVEL>` (e.g. `Skill(skill: "caveman",
-> args: "<CAVEMAN_LEVEL>")`). The skill puts you in compression mode so
-> your `new_text` is compressed automatically. If `<CAVEMAN_LEVEL>` is
-> `verbatim`, skip the skill invocation and write full prose. Do not
-> invoke any other skills or tools.
+> Your `new_text` will be post-processed by a separate compression
+> subagent before it hits the gate — focus on accurate, dense content
+> and correct citations, not on grammar-stripping. Do not invoke any
+> skills or tools yourself.
 >
 > Page-type conventions (when the task is "create a new page"):
 > - **evidence/<stem>.md**: ONE source-backed observation with enough
@@ -70,8 +68,8 @@ this file; don't duplicate prompts there.
 > - Write `%` for percentages. Never write `%%` in prose — Obsidian renders
 >   `%%…%%` as a hidden comment and silently eats everything between.
 > - Prefer the smallest edit that accomplishes the task. This is not a rewrite.
-> - Only tool you may invoke is the `caveman` skill (per above). Reply with
->   exactly one JSON object and nothing else.
+> - Do not invoke any tools. Reply with exactly one JSON object and
+>   nothing else.
 >
 > Return exactly:
 > ```
@@ -141,6 +139,38 @@ to get the cross-linked neighborhood of each page touched in the epoch.
 > Return exactly:
 > ```
 > {"contradictions": [{"pages": [a, b], "claim": "...", "resolution": "auto-correct"|"human-review", "correction": "..." or null}]}
+> ```
+
+---
+
+## caveman_compressor (worker model)
+
+Used by CURATE Phase 2 when caveman is installed and the target isn't an
+`analyses/` page (which stays at `lite`) or explicit `verbatim`. A fresh
+Agent is spawned per worker result to compress `new_text` before the
+`score_diff` gate. Isolating compression in a subagent keeps the
+orchestrator's own context in normal mode and sidesteps caveman's
+"code/JSON = normal mode" Auto-Clarity rule (the subagent sees only the
+plain prose, no JSON wrapper).
+
+> Your ONLY job is to compress the text below at caveman `<LEVEL>` level.
+>
+> 1. Invoke the `caveman` skill at level `<LEVEL>` as your first action:
+>    `Skill(skill: "caveman", args: "<LEVEL>")`.
+> 2. Then output the text below rewritten at that level. Output ONLY the
+>    compressed text — no JSON wrapper, no preamble, no trailing notes.
+>
+> Constraints for the compressed output (do not change even under ultra):
+> - Every `(vault:...)` citation stays byte-for-byte identical.
+> - Every `[[wikilink]]` target (the part before `|`, if any) stays
+>   identical. The display label after `|` may be compressed.
+> - Numbers, dates, proper names, code/formula fragments stay identical.
+> - Frontmatter (between the `---` fences at the top) stays byte-for-byte
+>   identical — do not compress or reorder it.
+>
+> Text to compress:
+> ```
+> <TEXT>
 > ```
 
 ---

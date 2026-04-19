@@ -286,7 +286,9 @@ Note: "workers" here = in-session Agent subagents, not separate CURATE processes
 
 Apply each result:
 
-1. Pipe `new_text` into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db`. The gate enforces: no citation loss, no body-token bloat (>1.5×, frontmatter excluded), and citation relevance (each new `(vault:...)` citation must FTS5-match its source — catches spurious citations without a full reviewer pass). It writes the file on accept. Add `--dry-run` to get the verdict without writing (for batch review).
+0. **Compress `new_text` via caveman** (if caveman is installed and the target isn't an `analyses/` page). Spawn a fresh Agent with the `caveman_compressor` template in `.curator/prompts.md`, substituting `<LEVEL>` with `write_other` from config.json (default `ultra`) for concept/entity/source/evidence/facts pages, `write_analysis` (default `lite`) for `analyses/`. Pass `<TEXT>` as the worker's `new_text`. The subagent's return is the compressed text; that's what you pipe into `score_diff`. This sidesteps caveman's "code/JSON = normal mode" Auto-Clarity rule, which made the earlier worker-side invocation a silent no-op. If caveman isn't installed, skip this step — no-caveman fallback is still valid.
+
+1. Pipe the (compressed) `new_text` into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db`. The gate enforces: no citation loss, no body-token bloat (>1.5×, frontmatter excluded), and citation relevance (each new `(vault:...)` citation must FTS5-match its source — catches spurious citations without a full reviewer pass). It writes the file on accept. Add `--dry-run` to get the verdict without writing (for batch review).
 2. For new pages add `--new-page` (minimum floors: ≥2 citations, ≥2 wikilinks, ≥100 words).
 3. Run `uv run python3 <skill_path>/scripts/scrub_check.py --mode wiki <page>` before any commit drawn from vault content. Hit = quarantine + stop cycle.
 4. For exploration / connection / new-page edits that pass the mechanical gate, run the **fresh-context reviewer** (a separate `reviewer_model` Agent — NOT the worker, NOT you). Use the reviewer template in `.curator/prompts.md`. Accept on `accept`; revert on `reject`; log `flag_for_human` under `## human-review-queue` in `.curator/log.md`.
@@ -381,13 +383,21 @@ CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`
 
 ### Caveman integration
 
-Workers invoke the `caveman` skill themselves at the start of each reply; that puts them in compression mode so the `new_text` they return is compressed by caveman's own rules rather than by an ad-hoc spec the orchestrator has to maintain. The `.curator/config.json` `caveman` block picks the level.
+Compression happens in a dedicated subagent spawned per worker result, not in the worker itself. The worker writes normal prose; a `caveman_compressor` subagent invokes the caveman skill and rewrites the prose at the configured level before `score_diff` sees it. This was moved out of the worker because the worker's output is a JSON object and caveman's Auto-Clarity clause declines to compress code/structured output — the earlier worker-side invocation was a silent no-op (verified empirically: zero compressed pages in the test workspace across dozens of epochs).
 
-**Write-time (the load-bearing case).** The orchestrator picks `write_analysis` level (default `lite`) for `analyses/` pages and `write_other` level (default `ultra`) for every other page type, substitutes that into the `<CAVEMAN_LEVEL>` placeholder in the worker prompt, and dispatches. The worker's first action is `Skill(skill: "caveman", args: "<level>")`; the skill's own instructions then govern the worker's output — no inline spec to drift.
+The `.curator/config.json` `caveman` block picks levels:
+- `analyses/` pages → `write_analysis` (default `lite`): filler/hedging/transitions removed, articles kept.
+- all other page types (`entities/`, `concepts/`, `sources/`, `evidence/`, `facts/`) → `write_other` (default `ultra`): articles, copulas, filler, prepositions stripped; technical terms, numbers, citations, wikilink targets preserved verbatim.
 
-**Read-time (nice-to-have).** The orchestrator may also invoke caveman on large vault passages before pasting them into a brief, to cut input tokens. This is optional and can be skipped if the orchestrator is tight on its own context budget; the write-time win compounds across every future read anyway because pages stay compressed on disk.
+**Constraints preserved under compression** (encoded in the `caveman_compressor` prompt):
+- Every `(vault:...)` citation stays byte-identical.
+- Every `[[wikilink]]` target (pre-`|`) stays identical; the display label post-`|` may compress.
+- Numbers, dates, proper names, code fragments stay identical.
+- YAML frontmatter stays untouched.
 
-**No-caveman fallback.** If the caveman skill isn't installed, the orchestrator substitutes `verbatim` for `<CAVEMAN_LEVEL>`. Workers skip the skill invocation and write full prose. CURATE still works — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices (frontmatter + substantive prose) rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
+**Read-time (optional).** The orchestrator may also invoke caveman on large vault passages before pasting them into a worker brief, to cut input tokens. Compounding: every future read of a page written at ultra is already compressed on disk.
+
+**No-caveman fallback.** If the caveman skill isn't installed, skip step 0 of Apply; workers' prose goes straight to `score_diff`. CURATE still works — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
 
 ## Writing rules
 
