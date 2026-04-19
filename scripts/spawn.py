@@ -136,6 +136,109 @@ def _resource_report(verbose: bool):
     }
 
 
+def _alive_pids(spawned_path: Path) -> list:
+    """Return [(pid, session_id), ...] for processes in .spawned still alive."""
+    if not spawned_path.exists():
+        return []
+    out = []
+    for line in spawned_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("|")
+        if len(parts) < 2:
+            continue
+        pid = parts[0]
+        sid = parts[1]
+        try:
+            os.kill(int(pid), 0)
+            out.append((pid, sid))
+        except (ProcessLookupError, PermissionError, ValueError):
+            continue
+    return out
+
+
+def _format_status(workspace: Path, watch_mode: bool = False) -> str:
+    """Compose a compact status block from .spawned, .claims, and git log."""
+    import datetime as _dt
+    spawned = workspace / ".curator" / ".spawned"
+    claims_path = workspace / ".curator" / ".claims"
+    alive = _alive_pids(spawned)
+    total_spawned = sum(1 for _ in spawned.read_text().splitlines()
+                        if _.strip()) if spawned.exists() else 0
+
+    # Claims — group by operation
+    claims = []
+    if claims_path.exists():
+        now = int(time.time())
+        for line in claims_path.read_text().splitlines():
+            p = line.strip().split("|")
+            if len(p) != 4:
+                continue
+            try:
+                started = int(p[2])
+            except ValueError:
+                continue
+            if now - started > 3600:
+                continue  # stale — claims.py drops these on next write
+            claims.append({"page": p[0], "session": p[1], "op": p[3]})
+    by_op = {}
+    for c in claims:
+        by_op[c["op"]] = by_op.get(c["op"], 0) + 1
+    ops_str = ", ".join(f"{k}={v}" for k, v in sorted(by_op.items())) or "—"
+
+    # Recent commits (last 5 min)
+    try:
+        log_out = subprocess.check_output(
+            ["git", "-C", str(workspace / "wiki"), "log",
+             "--since=5 minutes ago", "--format=%cr|%s"],
+            stderr=subprocess.DEVNULL,
+        ).decode().splitlines()
+    except subprocess.CalledProcessError:
+        log_out = []
+
+    now_str = _dt.datetime.now().strftime("%H:%M:%S")
+    lines = [
+        f"CURATE status — {now_str}",
+        f"  sessions: {len(alive)} alive / {total_spawned} spawned"
+        f" ({total_spawned - len(alive)} exited)",
+        f"  claims:   {len(claims)} pages in flight  [{ops_str}]",
+        f"  recent:   {len(log_out)} commits in last 5 min",
+    ]
+    for entry in log_out[:3]:
+        if "|" in entry:
+            when, subj = entry.split("|", 1)
+            lines.append(f"            {when}  {subj[:90]}")
+    if not log_out:
+        lines.append("            (no commits yet)")
+    if watch_mode:
+        lines.append("  [Ctrl-C to stop watching; sessions continue in background]")
+    return "\n".join(lines)
+
+
+def _watch(workspace: Path, interval: float = 2.0) -> None:
+    """Live status. ANSI cursor control if stdout is a TTY, else sequential."""
+    is_tty = sys.stdout.isatty()
+    try:
+        first = True
+        while True:
+            block = _format_status(workspace, watch_mode=True)
+            if is_tty:
+                if not first:
+                    # Clear screen, move cursor home
+                    sys.stdout.write("\033[2J\033[H")
+                else:
+                    sys.stdout.write("\033[H\033[J")
+                    first = False
+            else:
+                print("---")
+            sys.stdout.write(block + "\n")
+            sys.stdout.flush()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\nWatch stopped; sessions continue in background.",
+              file=sys.stderr)
+
+
 def _spawn_one(workspace: Path, session_id: str) -> int:
     """Launch one background `claude -p /curate` inside `workspace`.
 
@@ -188,6 +291,13 @@ def main() -> None:
                     help="measure + report, print commands, do not spawn")
     ap.add_argument("--measure-only", action="store_true",
                     help="print resource numbers and exit")
+    ap.add_argument("--watch", action="store_true",
+                    help="live status dashboard (sessions, claims, recent "
+                         "commits). Ctrl-C to exit; sessions keep running.")
+    ap.add_argument("--status", action="store_true",
+                    help="print status block once and exit")
+    ap.add_argument("--interval", type=float, default=2.0,
+                    help="--watch refresh interval in seconds (default 2.0)")
     args = ap.parse_args()
 
     workspace = Path(args.workspace).resolve()
@@ -202,9 +312,21 @@ def main() -> None:
         print(json.dumps(report, indent=2))
         return
 
-    if args.n is None or args.n < 1:
-        print("error: must provide N (number of sessions) as a positive int",
-              file=sys.stderr)
+    if args.status:
+        print(_format_status(workspace))
+        return
+
+    # --watch alone (no n): enter watch mode. spawn.py N --watch spawns
+    # first then watches. No n and no watch: error.
+    if args.n is None:
+        if args.watch:
+            _watch(workspace, interval=args.interval)
+            return
+        print("error: must provide N (number of sessions), or use --watch / "
+              "--status / --measure-only", file=sys.stderr)
+        sys.exit(2)
+    if args.n < 1:
+        print("error: N must be a positive int", file=sys.stderr)
         sys.exit(2)
 
     print("Measuring system resources (~8s) ...", file=sys.stderr)
@@ -256,9 +378,16 @@ def main() -> None:
             "Claude Code rate limits (tokens/min, requests/min) are the "
             "non-local ceiling we can't measure here — if spawned sessions "
             "stall, check your account tier. Kill all: "
-            f"for p in $(cut -d'|' -f1 {pids_file}); do kill $p; done"
+            f"for p in $(cut -d'|' -f1 {pids_file}); do kill $p; done. "
+            "Monitor: `uv run python3 spawn.py --watch`."
         ),
     }, indent=2))
+
+    if args.watch:
+        print("\nEntering watch mode (Ctrl-C to exit; sessions keep running)...\n",
+              file=sys.stderr)
+        time.sleep(1)
+        _watch(workspace, interval=args.interval)
 
 
 if __name__ == "__main__":
