@@ -27,10 +27,39 @@ this file; don't duplicate prompts there.
 > model params and training tokens should scale equally, cited to
 > (vault:chinchilla-compute-optimal.extracted.md)")
 >
-> Your `new_text` will be post-processed by a separate compression
-> subagent before it hits the gate — focus on accurate, dense content
-> and correct citations, not on grammar-stripping. Do not invoke any
-> skills or tools yourself.
+> **Compression (write at the target level as you go).** Rules below
+> are inlined verbatim from the "Rules" and "Intensity" sections of
+> [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)'s
+> SKILL.md. We normally compose skills rather than replicate them, per
+> Anthropic's skill guidance; we break that here because (a) invoking
+> `Skill(caveman)` inside this worker triggers caveman's own
+> Auto-Clarity clause ("Code/commits/PRs: write normal") against the
+> JSON return — silent no-op — and (b) spawning a dedicated compressor
+> subagent per page adds cold-start latency that dominates the actual
+> compression work in the CURATE hot loop. The duplicated ruleset is
+> small; correctness is the worker's responsibility, not a downstream
+> pass.
+>
+> For `analyses/` new-page tasks, write at **lite** level: no filler,
+> no hedging, no pleasantries; keep articles and full sentences
+> (readable prose, not telegraphic); professional-but-tight register.
+>
+> For every other page type (`concepts/`, `entities/`, `sources/`,
+> `evidence/`, `facts/`), write at **ultra** level: drop articles
+> (a/an/the) outside code and quotes; fragments OK — pattern
+> `[thing] [action] [reason]. [next step].`; abbreviate common terms
+> (DB, auth, config, req/res, fn, impl); strip conjunctions where
+> clear; arrows for causality (X → Y); one word when one word is
+> enough; short synonyms (big not extensive, fix not "implement a
+> solution for").
+>
+> Preserve byte-for-byte at every level: YAML frontmatter between
+> `---` fences; every `(vault:...)` citation; every `[[wikilink]]`
+> target before `|` (the display label after `|` may compress);
+> numbers, dates, proper names, code and formula fragments; errors
+> or quotes carried in exact.
+>
+> Do not invoke any skills or tools yourself.
 >
 > Page-type conventions (when the task is "create a new page"):
 > - **evidence/<stem>.md**: the DEFAULT channel for academic-paper
@@ -230,42 +259,6 @@ to get the cross-linked neighborhood of each page touched in the epoch.
 > ```
 > {"contradictions": [{"pages": [a, b], "claim": "...", "resolution": "auto-correct"|"human-review", "correction": "..." or null}]}
 > ```
-
----
-
-## caveman_compressor (worker model, batched)
-
-Used by CURATE Phase 2 at most twice per wave — once for `write_other`
-(concepts, entities, sources, evidence, facts; default `ultra`) and once
-for `write_analysis` (analyses; default `lite`). A single Agent receives
-every text in the wave that needs the same level and returns all
-compressed texts in one round-trip. Isolating compression in a subagent
-sidesteps caveman's "code/JSON = normal mode" Auto-Clarity rule;
-batching per level cuts the spawn count from N per wave to ≤2.
-
-> Your ONLY job is to compress each text block below at caveman
-> `<LEVEL>` level. Blocks are separated by `===BLOCK n===` headers on
-> their own lines. Output the same headers in the same order, with each
-> block's body replaced by its compressed form.
->
-> 1. Invoke the `caveman` skill at level `<LEVEL>` as your first action:
->    `Skill(skill: "caveman", args: "<LEVEL>")`.
-> 2. Rewrite each block's body at that level. Output ONLY the delimited
->    blocks in order — no preamble between them, no trailing notes, no
->    JSON wrapper.
->
-> Constraints (do not change even under ultra):
-> - Every `(vault:...)` citation stays byte-for-byte identical.
-> - Every `[[wikilink]]` target (the part before `|`, if any) stays
->   identical. The display label after `|` may be compressed.
-> - Numbers, dates, proper names, code/formula fragments stay identical.
-> - YAML frontmatter (between the `---` fences at the top of each
->   block) stays byte-for-byte identical — do not compress or reorder.
-> - Block headers (`===BLOCK n===`) stay byte-for-byte identical so the
->   caller can split the output.
->
-> Blocks:
-> <BLOCKS>
 
 ---
 

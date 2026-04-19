@@ -284,31 +284,18 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    ```
    (zero or more). Non-analysis workers must not populate `spawn_concept`.
 
-3. **Compress per level (caveman, ≤2 Agents per wave).** Split returned `new_text` blocks by target subdirectory:
-   - `analyses/*` → `write_analysis` level (default `lite`).
-   - `concepts/*`, `entities/*`, `sources/*`, `evidence/*`, `facts/*` → `write_other` level (default `ultra`).
+3. **Mechanical gate.** Workers emit already-compressed prose at the target level (rules inlined in the worker template — see the Caveman integration section below). Pipe each `new_text` into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db` (add `--new-page` for newly-created pages). The gate enforces citation preservation, body-token non-bloat (>1.5×, frontmatter excluded), citation FTS5 relevance, and new-page floors. It writes the file on accept.
 
-   For each non-empty bucket, dispatch ONE `caveman_compressor` Agent with the template and all blocks concatenated:
-   ```
-   ===BLOCK 1===
-   <new_text_1>
-   ===BLOCK 2===
-   <new_text_2>
-   ```
-   The Agent returns blocks compressed in place; split on `===BLOCK n===` to recover compressed texts. Skip this step if caveman isn't installed — no-caveman fallback is still valid.
+4. **Scrub.** For any accept drawn from vault content, run `uv run python3 <skill_path>/scripts/scrub_check.py --mode wiki <page>`. Hit = quarantine source(s) + stop the wave.
 
-4. **Mechanical gate.** For each compressed `new_text`, pipe into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db` (add `--new-page` for newly-created pages). The gate enforces citation preservation, body-token non-bloat (>1.5×, frontmatter excluded), citation FTS5 relevance, and new-page floors. It writes the file on accept.
-
-5. **Scrub.** For any accept drawn from vault content, run `uv run python3 <skill_path>/scripts/scrub_check.py --mode wiki <page>`. Hit = quarantine source(s) + stop the wave.
-
-6. **Batch reviewer (1 Agent per wave).** Collect all accepts into one JSON list — one entry per accept with `{n, page, task, original, new_text}` — and dispatch a single fresh-context reviewer Agent with the `batch_reviewer` template in `.curator/prompts.md`. Opus handles the whole list in one round-trip. Fresh-context rule still applies: the reviewer must be a separate Agent from every worker and from you. For each returned verdict:
+5. **Batch reviewer (1 Agent per wave).** Collect all accepts into one JSON list — one entry per accept with `{n, page, task, original, new_text}` — and dispatch a single fresh-context reviewer Agent with the `batch_reviewer` template in `.curator/prompts.md`. Opus handles the whole list in one round-trip. Fresh-context rule still applies: the reviewer must be a separate Agent from every worker and from you. For each returned verdict:
    - `accept` → keep.
    - `reject` → `git -C wiki checkout -- <page>` to revert; unlink the new file if the wave created it.
    - `flag_for_human` → keep + append under `## human-review-queue` in `.curator/log.md`.
 
-7. **Harvest `spawn_concept` entries.** Every accepted analysis carrying `spawn_concept` contributes its stem to a queue consumed by the NEXT wave's concept-promotion bucket (Phase 1 step 4 deduplicates against `concept-candidates`). Do NOT dispatch one-off follow-up workers for each concept — batching them into a regular wave is cheaper and keeps the mechanical plan in control.
+6. **Harvest `spawn_concept` entries.** Every accepted analysis carrying `spawn_concept` contributes its stem to a queue consumed by the NEXT wave's concept-promotion bucket (Phase 1 step 4 deduplicates against `concept-candidates`). Do NOT dispatch one-off follow-up workers for each concept — batching them into a regular wave is cheaper and keeps the mechanical plan in control.
 
-8. **Commit.**
+7. **Commit.**
    ```
    git -C wiki add -A
    git -C wiki commit -m "curate: <A accepted, R rejected, F flagged> (<mode>)"
@@ -373,21 +360,21 @@ CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`
 
 ### Caveman integration
 
-Compression happens in a dedicated subagent invoked **at most twice per wave** (once per level), not per worker result. After Phase 2 workers return, the orchestrator splits their `new_text` outputs by target subdirectory — analyses at `write_analysis` level, everything else at `write_other` — and dispatches ONE `caveman_compressor` Agent per non-empty bucket with the prose blocks concatenated under `===BLOCK n===` headers. The subagent invokes the caveman skill once, rewrites every block at the configured level, and returns the compressed texts; the orchestrator splits on the headers and feeds each into `score_diff`. Two round-trips per wave at most versus one-per-page previously, and the subagent still sees plain prose (not JSON) so caveman's "code/JSON = normal mode" Auto-Clarity rule doesn't short-circuit.
+Write-time compression happens **inside the worker**. The worker prompt in `.curator/prompts.md` inlines caveman's rules (the "Rules" and "Intensity" sections of [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)'s SKILL.md) so each worker emits prose at the target level in the same pass it writes content. No `caveman_compressor` subagent, no post-processing pass — zero Agent spawns for compression.
 
-The `.curator/config.json` `caveman` block picks levels:
-- `analyses/` pages → `write_analysis` (default `lite`): filler/hedging/transitions removed, articles kept.
-- all other page types (`entities/`, `concepts/`, `sources/`, `evidence/`, `facts/`) → `write_other` (default `ultra`): articles, copulas, filler, prepositions stripped; technical terms, numbers, citations, wikilink targets preserved verbatim.
+**Why we inline instead of compose.** Anthropic's general guidance is to compose skills rather than replicate them. We deliberately break that guidance here for two concrete reasons:
+1. **Auto-Clarity short-circuit.** Caveman's SKILL.md has an Auto-Clarity clause that disables compression on code / JSON output. The worker's return is a JSON object (`{"page":..., "new_text":...}`) so any in-worker `Skill(caveman, ...)` invocation saw structured output and declined to compress — silent no-op, verified empirically across dozens of epochs.
+2. **Hot-loop cold-start tax.** A dedicated compressor subagent per page (or even batched per level per wave) pays a per-spawn cost — tool schema load, skill search, system prompt, caveman skill read — that dominates the actual compression work in a loop firing waves every minute.
 
-**Constraints preserved under compression** (encoded in the `caveman_compressor` prompt):
-- Every `(vault:...)` citation stays byte-identical.
-- Every `[[wikilink]]` target (pre-`|`) stays identical; the display label post-`|` may compress.
-- Numbers, dates, proper names, code fragments stay identical.
-- YAML frontmatter stays untouched.
+The inlined ruleset is small (~6 preservation rules plus the lite / ultra intensity guides) and marked as borrowed in the worker template. Correctness is the worker's responsibility, not a downstream pass.
 
-**Read-time (optional).** The orchestrator may also invoke caveman on large vault passages before pasting them into a worker brief, to cut input tokens. Compounding: every future read of a page written at ultra is already compressed on disk.
+Level selection comes from `.curator/config.json`:
+- `analyses/` pages → `write_analysis` (default `lite`) — no filler/hedging, articles and full sentences kept.
+- all other page types (`concepts/`, `entities/`, `sources/`, `evidence/`, `facts/`) → `write_other` (default `ultra`) — articles dropped, fragments OK, abbreviations, causal arrows, telegraphic register.
 
-**No-caveman fallback.** If the caveman skill isn't installed, skip step 0 of Apply; workers' prose goes straight to `score_diff`. CURATE still works — just burns more context per page. Mitigations: (a) cap per-batch page reads to `parallel_workers × 2`, (b) read page slices rather than full files, (c) prefer `--minimal` output of `lint_scores.py`.
+**Read-time (composition path, kept).** The orchestrator may invoke the caveman skill directly via `Skill(skill: "caveman", args: "<level>")` when reading large vault passages into its own context before composing briefs. This is the standard compose-don't-replicate path — caveman runs in the orchestrator's plain-prose context, Auto-Clarity doesn't engage, and the invocation is one-shot (no hot-loop overhead). Compounding: pages already written at ultra are compressed on disk, so every future read is already cheap.
+
+**No-caveman fallback.** If the caveman skill isn't installed, the inlined rules in the worker prompt still apply — write-time compression is prompt-driven, not skill-driven. Only the optional read-time composition path becomes a no-op; the loop is otherwise unaffected.
 
 ## Writing rules
 
