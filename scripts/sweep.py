@@ -52,8 +52,12 @@ Subcommands
         Find missing wikilink targets that the wiki is already asking for:
         stems referenced as `[[target]]` from ≥N distinct pages with no
         corresponding `wiki/<any>/target.md` on disk. Ranked by inbound
-        count. Used by CURATE Phase 1 to drive concept-promotion:
-        wiki-observed demand → new `concepts/<stem>.md`. Default
+        count. Used by CURATE Phase 1 to drive demand-promotion:
+        wiki-observed demand → new `entities/<stem>.md` (proper
+        nouns: model families, orgs, frameworks, benchmarks) or
+        `concepts/<stem>.md` (abstract terms: algorithms, methods,
+        patterns). The candidates list doesn't classify; the
+        promotion worker does. Default
         min-inbound=3 filters out one-off typos and drive-by mentions.
         Prints ranked JSON (top 20 by default).
 

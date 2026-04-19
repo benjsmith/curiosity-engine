@@ -251,11 +251,16 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    - **repair** — otherwise. Editorial + frontier work remains; most pages are under-sourced or under-linked.
 4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode:
 
-   **Create mode** — priority order (concept → evidence → analyses):
-   - **Concept promotions** first: demand-ranked missing stems with ≥3 distinct inbound references. Promoting one auto-resolves every dead `[[stem]]` pointing at it. Worker brief must include the N referencing pages' names, the top 3–5 vault sources from `vault_search "<stem>"`, and the reminder that concept pages cite ≥2 distinct vault sources.
-   - **Evidence** next: one uncited vault source per slot → new `evidence/<stem>.md`, shape *method → result → interpretation → (optional) downstream influence*. The default channel for paper findings.
-   - **Analyses** fill the rest of the wave (unlimited in saturated operation). Each analysis is a multi-source synthesis (≥3 vault sources) with a required `## Open questions and next steps` section — hypotheses, experiments, source requests, adjacent concepts. Workers may return `spawn_concept` entries on analyses only; harvest them for the next wave's concept-promotion bucket. See the `analyses` expectations in the worker template.
-   - **Atomic facts** (`facts/<stem>.md`) are allowed as opportunistic additions when a worker reading vault material encounters a crisp standalone value — single-sentence test applies. Not a separate bucket; a worker doing evidence may emit a fact alongside if warranted.
+   **Create mode — per-bucket quotas** (out of `parallel_workers` slots, default 10). Evidence is the default channel for paper findings and empirically under-populated when priority-sequenced; allocate a floor, not a leftover. Order within the wave: evidence → facts → demand promotions → analyses.
+
+   - **Evidence — up to 30%** of slots (3 of 10). One uncited vault source per slot → new `evidence/<stem>.md`, shape *method → result → interpretation → (optional) downstream influence*. The default channel for paper findings.
+   - **Facts — up to 10%** of slots (1 of 10). One atomic numerical anchor per slot → new `facts/<stem>.md` (architectural hyperparameters, scaling exponents, benchmark scores, hyperparameter defaults). **Single-sentence test applies**: if explaining the finding takes more than one sentence, route to evidence instead. Cap is deliberate — facts are cheap to produce and low-information per page; 1 per wave keeps the anchor-citation layer growing without drowning out evidence/analyses.
+   - **Demand promotions — up to 20%** of slots (2 of 10). Demand-ranked missing stems with ≥3 distinct inbound references (from `sweep.py concept-candidates`). Capped because one promotion auto-resolves multiple `[[stem]]` references in a single commit (high per-commit multiplier), so two per wave is enough. **Subdirectory choice is explicit in the brief**: if the stem is a proper noun (model family, organization, framework, benchmark, person) → `entities/<stem>.md`; if it's an abstract term (algorithm, method, architectural pattern, phenomenon) → `concepts/<stem>.md`. The demand signal alone doesn't distinguish entity-vs-concept; the worker does, guided by the stem itself. Worker brief must include the N referencing pages' names and the top 3–5 vault sources from `vault_search "<stem>"`.
+   - **Analyses — remainder** (40% baseline, up to `parallel_workers` when other buckets exhaust). Multi-source synthesis (≥3 vault sources) with a required `## Open questions and next steps` section — hypotheses, experiments, source requests, adjacent concepts.
+
+   **Slack rolls to analyses only**, never to the capped buckets. If evidence has only 1 uncited source left, the other 2 evidence slots flow to analyses — analyses is the unbounded bucket that always absorbs extra work. Preserves the demand-promotion cap and the fact-suppression cap.
+
+   Workers may return `spawn_concept` entries on analyses only; harvest them for the next wave's demand-promotion bucket (where the worker will decide entity-vs-concept subdirectory based on the stem).
 
    **Wire mode** — run a LINK-style pass over the whole wiki (see the **LINK** op for the full protocol). Propose up to ~150 cross-page wikilinks via the `link_proposer` template, classify via the `link_classifier` template, and mechanically apply the `valid` ones. The "wave" is one LINK pass; no worker fan-out. Commit on completion.
 
@@ -293,7 +298,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    - `reject` → `git -C wiki checkout -- <page>` to revert; unlink the new file if the wave created it.
    - `flag_for_human` → keep + append under `## human-review-queue` in `.curator/log.md`.
 
-6. **Harvest `spawn_concept` entries.** Every accepted analysis carrying `spawn_concept` contributes its stem to a queue consumed by the NEXT wave's concept-promotion bucket (Phase 1 step 4 deduplicates against `concept-candidates`). Do NOT dispatch one-off follow-up workers for each concept — batching them into a regular wave is cheaper and keeps the mechanical plan in control.
+6. **Harvest `spawn_concept` entries.** Every accepted analysis carrying `spawn_concept` contributes its stem to a queue consumed by the NEXT wave's demand-promotion bucket (Phase 1 step 4 deduplicates against `concept-candidates`). The worker dispatched for that stem picks `entities/` or `concepts/` based on the stem, per the bucket's entity-vs-concept rule. Do NOT dispatch one-off follow-up workers for each concept — batching them into a regular wave is cheaper and keeps the mechanical plan in control.
 
 7. **Commit.**
    ```

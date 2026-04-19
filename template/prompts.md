@@ -123,18 +123,33 @@ this file; don't duplicate prompts there.
 >   multiple sources that has no dedicated page, add a
 >   `spawn_concept` entry even if it isn't already in (d) — same
 >   mechanism.
-> - **concepts/<stem>.md**: an intellectual primitive that multiple wiki
->   pages reference. The wiki's ethos treats concepts as intersections
->   across ≥2 sources — cite at least two distinct vault sources,
->   define the concept concisely (what it is, why it matters, where it
->   sits in the broader topic graph), and include ≥2 wikilinks to
->   parent entities/concepts/analyses. ~100-300 words at ultra level.
->   Title: `[con] <Topic Name>`. Concept pages are created by CURATE in
->   two cases: (a) demand-driven promotion (≥3 dead wikilinks point at
->   the stem → orchestrator dispatches a worker here), (b) analysis-
->   spawned (an analysis worker's `spawn_concept` triggers a follow-up
->   worker). In both cases your brief will list the referencing pages
->   and the vault sources to cite.
+> - **entities/<stem>.md**: a named thing — a specific model family
+>   (Mixtral, PaLM, Gemma), organization (OpenAI, Anthropic,
+>   DeepMind), framework (PyTorch, HuggingFace), benchmark
+>   (AgentBench, MMLU), or person. ~80-200 words at ultra level.
+>   Title: `[ent] <Proper Name>`. Describe what the thing is
+>   (origin / architecture / purpose), its notable properties, and
+>   cite the primary source where it was introduced plus ≥1
+>   secondary source discussing or using it. ≥2 wikilinks to parent
+>   concepts or related entities. Created by CURATE via the
+>   **demand-promotion** bucket (SKILL.md Phase 1) when the promoted
+>   stem is a proper noun.
+> - **concepts/<stem>.md**: an intellectual primitive that multiple
+>   wiki pages reference — an algorithm, method, architectural
+>   pattern, or phenomenon. **NOT a proper noun** — if the stem is a
+>   named model, org, framework, benchmark, or person, it's an entity
+>   (see above), not a concept. The wiki's ethos treats concepts as
+>   intersections across ≥2 sources — cite at least two distinct
+>   vault sources, define the concept concisely (what it is, why it
+>   matters, where it sits in the broader topic graph), and include
+>   ≥2 wikilinks to parent entities / concepts / analyses.
+>   ~100-300 words at ultra level. Title: `[con] <Topic Name>`.
+>   Concept pages are created by CURATE in two cases: (a) demand-
+>   driven promotion (≥3 dead wikilinks point at the stem AND the
+>   stem is abstract), (b) analysis-spawned (an analysis worker's
+>   `spawn_concept` triggers a follow-up worker). In both cases your
+>   brief will list the referencing pages and the vault sources to
+>   cite.
 >
 > Hard constraints:
 > - Preserve every existing `(vault:...)` citation. Never drop a citation.
@@ -160,9 +175,10 @@ this file; don't duplicate prompts there.
 > pick the single most load-bearing adjacent concept; others surface
 > naturally via the `sweep.py concept-candidates` demand ranking
 > (≥3 inbound references) in later waves. The orchestrator harvests
-> the stem into the NEXT wave's concept-promotion bucket, where it's
-> written as a new `concepts/<stem>.md` page with normal fan-out and
-> review. Do NOT populate this for non-analysis tasks; do NOT return
+> the stem into the NEXT wave's demand-promotion bucket, where it's
+> written as a new `entities/<stem>.md` or `concepts/<stem>.md` page
+> (subdirectory chosen by the worker based on whether the stem is a
+> proper noun or abstract) with normal fan-out and review. Do NOT populate this for non-analysis tasks; do NOT return
 > a concept instead of the analysis — the analysis must still be
 > delivered.
 
