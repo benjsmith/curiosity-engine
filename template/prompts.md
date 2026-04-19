@@ -65,14 +65,35 @@ this file; don't duplicate prompts there.
 >   Facts are the "raw extracted values" layer; evidence contextualizes
 >   them. Both beat embedding a number inside a concept page because they
 >   become explicit citation targets for future wikilinks.
-> - **analyses/<stem>.md**: multi-source synthesis answering a question or
->   exploring a connection. Longer. Written at `lite` level, not `ultra`.
->   When writing an analysis, if you find yourself forced to re-explain
->   a concept that appears in multiple of your sources AND would benefit
->   from its own page (currently has no dedicated concept page),
->   include a `spawn_concept` field in your JSON return (see Worker
->   protocol above). The orchestrator will dispatch a separate worker
->   to write `concepts/<stem>.md` using your analysis as seed context.
+> - **analyses/<stem>.md**: multi-source synthesis answering a question
+>   or exploring a connection. Written at `lite` level, not `ultra`.
+>   Analyses are the primary channel once the editorial/frontier pool
+>   saturates — they should be prolific, multi-directional, and
+>   explicitly forward-looking. Expectations:
+>     - Draw on ≥3 distinct vault sources. Cite each.
+>     - Use your own model knowledge to propose adjacent directions
+>       NOT present in the vault. The wiki is a shared artefact with
+>       a human collaborator, not a passive extraction — your job
+>       includes speculating usefully, labelling speculation as such.
+>     - End the page with a `## Open questions and next steps`
+>       section containing bullet lists of:
+>       (a) specific testable hypotheses the analysis implies;
+>       (b) studies, benchmarks, or experiments that would
+>           discriminate between those hypotheses;
+>       (c) source requests: paper / dataset / blog titles the
+>           analysis wishes it had, with a one-line why. Include
+>           arXiv IDs or DOIs if known — `sweep.py scan-references`
+>           cross-links them to `## source-requests` in
+>           `.curator/log.md`;
+>       (d) adjacent concepts worth a dedicated page. Each can also
+>           become a `spawn_concept` entry in your JSON return (see
+>           Worker protocol above); the orchestrator will dispatch a
+>           follow-up worker to write `concepts/<stem>.md`. Zero,
+>           one, or more entries are fine.
+>   When an analysis forces you to re-explain a concept covered by
+>   multiple sources that has no dedicated page, add a
+>   `spawn_concept` entry even if it isn't already in (d) — same
+>   mechanism.
 > - **concepts/<stem>.md**: an intellectual primitive that multiple wiki
 >   pages reference. The wiki's ethos treats concepts as intersections
 >   across ≥2 sources — cite at least two distinct vault sources,
@@ -106,41 +127,74 @@ this file; don't duplicate prompts there.
 >
 > Optional for analyses/ new-page tasks only: you may include
 > `"spawn_concept": {"stem": "hyphen-case-name", "rationale": "one line
-> why this concept deserves its own page"}`. The orchestrator will then
-> dispatch a second worker to write `concepts/<stem>.md` using your
-> analysis as seed context. Do NOT populate this for non-analysis
-> tasks; do NOT return a concept instead of the analysis — the analysis
-> must still be delivered.
+> why this concept deserves its own page"}`. One at most per analysis —
+> pick the single most load-bearing adjacent concept; others surface
+> naturally via the `sweep.py concept-candidates` demand ranking
+> (≥3 inbound references) in later waves. The orchestrator harvests
+> the stem into the NEXT wave's concept-promotion bucket, where it's
+> written as a new `concepts/<stem>.md` page with normal fan-out and
+> review. Do NOT populate this for non-analysis tasks; do NOT return
+> a concept instead of the analysis — the analysis must still be
+> delivered.
 
 ---
 
-## reviewer (opus)
+## batch_reviewer (opus, fresh context)
 
-> You are a critical reviewer for a knowledge wiki. You did NOT create this
-> content — review it with fresh eyes. Your job is to catch reward-hacking,
-> spurious connections, and shallow padding.
+One opus call reviews every edit / new-page from a completed CURATE wave
+and returns a list of verdicts in one round-trip. Replaces the earlier
+per-result reviewer invocation: cuts reviewer Agent spawns from N per
+wave to 1. Fresh-context rule preserved — dispatch a separate Agent with
+clean context, never the worker that produced the edit and never the
+orchestrator itself.
+
+> You are a critical reviewer for a knowledge wiki. You did NOT create
+> any of the content below — review each entry with fresh eyes. Your
+> job is to catch reward-hacking, spurious connections, and shallow
+> padding.
 >
-> Original page text:
-> <ORIGINAL_TEXT>
+> Each entry in the wave below is a proposed edit or new page that has
+> already passed mechanical gates (citation preservation, no bloat,
+> citation FTS5 relevance). Your judgment is whether the content earns
+> its place.
 >
-> Proposed edit (or new page text):
-> <NEW_TEXT>
+> Wave:
+> ```
+> <WAVE_JSON>
+> ```
 >
-> What this edit was asked to do:
-> <TASK_DESCRIPTION>
+> Each entry has:
+> - `n`: sequence number
+> - `page`: target path (e.g. `concepts/transformer.md`)
+> - `task`: one line describing what the worker was asked to do
+> - `original`: existing page text (empty string for new-page tasks)
+> - `new_text`: proposed replacement body
 >
-> Review criteria:
-> 1. Is every factual claim grounded in a (vault:...) source? Reject
+> Review criteria for each entry:
+> 1. Is every factual claim grounded in a `(vault:...)` source? Reject
 >    unsourced claims.
-> 2. Are new wikilinks substantive? Flag interesting but uncertain
->    connections for human review instead of silently rejecting.
+> 2. Are new wikilinks substantive, or surface keyword matches? Flag
+>    interesting but uncertain connections for human review instead of
+>    silently rejecting.
 > 3. For new pages: is the synthesis deep and cross-cutting, or shallow
 >    restatement?
-> 4. Does the edit reward-hack any metric without adding real value?
+> 4. Does the edit reward-hack any metric (citation stuffing, link
+>    spam, bloat gaming) without adding real value?
 >
-> Return exactly:
+> For analyses specifically: a `## Open questions and next steps`
+> section with hypotheses, experiments, source requests, and
+> adjacent-concept suggestions is expected and good — don't flag it as
+> speculation padding. Speculation is part of the analysis contract.
+>
+> Return exactly one JSON object, one verdict per input entry, keyed
+> by the same `n`:
 > ```
-> {"verdict": "accept"|"reject"|"flag_for_human", "reason": "...", "interesting_connections": ["..."]}
+> {"verdicts": [
+>   {"n": <int>, "verdict": "accept"|"reject"|"flag_for_human",
+>    "reason": "<one line>",
+>    "interesting_connections": ["..."]},
+>   ...
+> ]}
 > ```
 
 ---
@@ -179,35 +233,39 @@ to get the cross-linked neighborhood of each page touched in the epoch.
 
 ---
 
-## caveman_compressor (worker model)
+## caveman_compressor (worker model, batched)
 
-Used by CURATE Phase 2 when caveman is installed and the target isn't an
-`analyses/` page (which stays at `lite`) or explicit `verbatim`. A fresh
-Agent is spawned per worker result to compress `new_text` before the
-`score_diff` gate. Isolating compression in a subagent keeps the
-orchestrator's own context in normal mode and sidesteps caveman's
-"code/JSON = normal mode" Auto-Clarity rule (the subagent sees only the
-plain prose, no JSON wrapper).
+Used by CURATE Phase 2 at most twice per wave — once for `write_other`
+(concepts, entities, sources, evidence, facts; default `ultra`) and once
+for `write_analysis` (analyses; default `lite`). A single Agent receives
+every text in the wave that needs the same level and returns all
+compressed texts in one round-trip. Isolating compression in a subagent
+sidesteps caveman's "code/JSON = normal mode" Auto-Clarity rule;
+batching per level cuts the spawn count from N per wave to ≤2.
 
-> Your ONLY job is to compress the text below at caveman `<LEVEL>` level.
+> Your ONLY job is to compress each text block below at caveman
+> `<LEVEL>` level. Blocks are separated by `===BLOCK n===` headers on
+> their own lines. Output the same headers in the same order, with each
+> block's body replaced by its compressed form.
 >
 > 1. Invoke the `caveman` skill at level `<LEVEL>` as your first action:
 >    `Skill(skill: "caveman", args: "<LEVEL>")`.
-> 2. Then output the text below rewritten at that level. Output ONLY the
->    compressed text — no JSON wrapper, no preamble, no trailing notes.
+> 2. Rewrite each block's body at that level. Output ONLY the delimited
+>    blocks in order — no preamble between them, no trailing notes, no
+>    JSON wrapper.
 >
-> Constraints for the compressed output (do not change even under ultra):
+> Constraints (do not change even under ultra):
 > - Every `(vault:...)` citation stays byte-for-byte identical.
 > - Every `[[wikilink]]` target (the part before `|`, if any) stays
 >   identical. The display label after `|` may be compressed.
 > - Numbers, dates, proper names, code/formula fragments stay identical.
-> - Frontmatter (between the `---` fences at the top) stays byte-for-byte
->   identical — do not compress or reorder it.
+> - YAML frontmatter (between the `---` fences at the top of each
+>   block) stays byte-for-byte identical — do not compress or reorder.
+> - Block headers (`===BLOCK n===`) stay byte-for-byte identical so the
+>   caller can split the output.
 >
-> Text to compress:
-> ```
-> <TEXT>
-> ```
+> Blocks:
+> <BLOCKS>
 
 ---
 
