@@ -55,6 +55,15 @@ Subcommands
         lists (those point at vault extraction filenames, not stems).
         Prints JSON summary of renames and pages whose wikilinks changed.
 
+    sweep.py concept-candidates [wiki_dir] [--min-inbound N]
+        Find missing wikilink targets that the wiki is already asking for:
+        stems referenced as `[[target]]` from ≥N distinct pages with no
+        corresponding `wiki/<any>/target.md` on disk. Ranked by inbound
+        count. Used by CURATE Phase 1 to drive concept-promotion:
+        wiki-observed demand → new `concepts/<stem>.md`. Default
+        min-inbound=3 filters out one-off typos and drive-by mentions.
+        Prints ranked JSON (top 20 by default).
+
 Design notes
 ------------
 - sweep.py is workspace-agent-editable. It lives at `.curator/sweep.py` in
@@ -549,6 +558,41 @@ def cmd_resync_stems(wiki_dir: Path):
     }, indent=2))
 
 
+def cmd_concept_candidates(wiki_dir: Path, min_inbound: int = 3,
+                            limit: int = 20) -> None:
+    """Rank missing wikilink targets by demand (count of distinct pages).
+
+    Mirrors the scan-wikilinks walk but groups dead refs by target
+    instead of counting them flat. A target is a "demanded concept"
+    when at least `min_inbound` distinct pages link to it and no file
+    under `wiki/` has it as its stem (any subdirectory — a wikilink
+    target doesn't specify a subdir, so a sources/transformer.md
+    would satisfy a [[transformer]] link).
+    """
+    pages = wiki_pages(wiki_dir)
+    existing_stems = {p.stem.lower() for p in pages}
+    demand = defaultdict(set)
+    for page in pages:
+        text = page.read_text()
+        own = page.stem.lower()
+        for m in WIKILINK_RE.finditer(text):
+            target = m.group(1).strip().lower().replace(" ", "-")
+            if not target or target == own or target in existing_stems:
+                continue
+            demand[target].add(str(page.relative_to(wiki_dir)))
+    candidates = [
+        {
+            "target": t,
+            "inbound": len(srcs),
+            "referenced_by": sorted(srcs)[:10],
+        }
+        for t, srcs in demand.items()
+        if len(srcs) >= min_inbound
+    ]
+    candidates.sort(key=lambda c: (-c["inbound"], c["target"]))
+    print(json.dumps({"candidates": candidates[:limit]}, indent=2))
+
+
 def cmd_clean_tmp(wiki_dir: Path):
     """Remove transient `.curator/.tmp_*.md` staging files.
 
@@ -650,8 +694,16 @@ def main():
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
         "scan-references", "clean-tmp", "resync-stems",
+        "concept-candidates",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
+    ap.add_argument("--min-inbound", type=int, default=3,
+                    help="concept-candidates: minimum distinct pages that "
+                         "must reference a missing stem before it's a "
+                         "candidate (default 3)")
+    ap.add_argument("--limit", type=int, default=20,
+                    help="concept-candidates: max candidates returned "
+                         "(default 20)")
     args = ap.parse_args()
 
     wiki_dir = Path(args.wiki).resolve()
@@ -673,6 +725,9 @@ def main():
         cmd_clean_tmp(wiki_dir)
     elif args.command == "resync-stems":
         cmd_resync_stems(wiki_dir)
+    elif args.command == "concept-candidates":
+        cmd_concept_candidates(wiki_dir, min_inbound=args.min_inbound,
+                                limit=args.limit)
 
 
 if __name__ == "__main__":

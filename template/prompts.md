@@ -67,6 +67,24 @@ this file; don't duplicate prompts there.
 >   become explicit citation targets for future wikilinks.
 > - **analyses/<stem>.md**: multi-source synthesis answering a question or
 >   exploring a connection. Longer. Written at `lite` level, not `ultra`.
+>   When writing an analysis, if you find yourself forced to re-explain
+>   a concept that appears in multiple of your sources AND would benefit
+>   from its own page (currently has no dedicated concept page),
+>   include a `spawn_concept` field in your JSON return (see Worker
+>   protocol above). The orchestrator will dispatch a separate worker
+>   to write `concepts/<stem>.md` using your analysis as seed context.
+> - **concepts/<stem>.md**: an intellectual primitive that multiple wiki
+>   pages reference. The wiki's ethos treats concepts as intersections
+>   across ≥2 sources — cite at least two distinct vault sources,
+>   define the concept concisely (what it is, why it matters, where it
+>   sits in the broader topic graph), and include ≥2 wikilinks to
+>   parent entities/concepts/analyses. ~100-300 words at ultra level.
+>   Title: `[con] <Topic Name>`. Concept pages are created by CURATE in
+>   two cases: (a) demand-driven promotion (≥3 dead wikilinks point at
+>   the stem → orchestrator dispatches a worker here), (b) analysis-
+>   spawned (an analysis worker's `spawn_concept` triggers a follow-up
+>   worker). In both cases your brief will list the referencing pages
+>   and the vault sources to cite.
 >
 > Hard constraints:
 > - Preserve every existing `(vault:...)` citation. Never drop a citation.
@@ -85,6 +103,14 @@ this file; don't duplicate prompts there.
 > ```
 > {"page": "<page_path>", "new_text": "<full replacement page body>", "reason": "<one line>"}
 > ```
+>
+> Optional for analyses/ new-page tasks only: you may include
+> `"spawn_concept": {"stem": "hyphen-case-name", "rationale": "one line
+> why this concept deserves its own page"}`. The orchestrator will then
+> dispatch a second worker to write `concepts/<stem>.md` using your
+> analysis as seed context. Do NOT populate this for non-analysis
+> tasks; do NOT return a concept instead of the analysis — the analysis
+> must still be delivered.
 
 ---
 
