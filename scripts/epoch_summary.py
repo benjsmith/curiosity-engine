@@ -182,13 +182,15 @@ def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     return entries[-last_n:] if entries else []
 
 
-def saturation_check(wiki_dir: Path, threshold: float = 0.001,
-                      consecutive: int = 3) -> dict:
-    """Parse recent epoch logs and detect editorial saturation.
+def saturation_check(wiki_dir: Path, threshold: float = 0.005,
+                      consecutive: int = 2) -> dict:
+    """Parse recent wave logs and detect editorial saturation.
 
-    Reads rate_per_accept from the last N curate-epoch blocks in
+    Reads rate_per_accept from the last N curate-wave blocks in
     .curator/log.md. Returns a structured signal the orchestrator can
-    branch on without judgment calls.
+    branch on without judgment calls. Defaults (0.005 over 2 waves)
+    are loose on purpose: the CURATE loop pivots to create mode
+    aggressively rather than grind editorial for diminishing returns.
     """
     log_path = wiki_dir.parent / ".curator" / "log.md"
     if not log_path.exists():

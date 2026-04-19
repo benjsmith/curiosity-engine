@@ -1,6 +1,6 @@
 ---
 name: curiosity-engine
-description: "Self-improving knowledge wiki with a vault of raw sources. Use when the user mentions 'curiosity engine', 'wiki', 'vault', 'knowledge base', 'ingest', 'iterate', 'refine', 'improve', 'evolve', 'curator', 'lint', or wants to add sources, query accumulated knowledge, check wiki health, or run autonomous improvement. Also triggers on 'add to vault', 'what do I know about', 'improve wiki', 'set up knowledge base', 'new knowledge base', 'run curator'. 'Spawn N curators', 'N parallel curators', 'launch N CURATE sessions', 'run curate in parallel' → launch independent background sessions via `spawn.py`, NOT Agent subagent workers (workers are an in-session fan-out concept; sessions are separate claude processes coordinated via claims.py). Use even without explicit naming — if the user wants to file something for later or asks about accumulated knowledge, this is the skill."
+description: "Self-improving knowledge wiki with a vault of raw sources. Use when the user mentions 'curiosity engine', 'wiki', 'vault', 'knowledge base', 'ingest', 'iterate', 'refine', 'improve', 'evolve', 'curator', 'lint', or wants to add sources, query accumulated knowledge, check wiki health, or run autonomous improvement. Also triggers on 'add to vault', 'what do I know about', 'improve wiki', 'set up knowledge base', 'new knowledge base', 'run curator'. Use even without explicit naming — if the user wants to file something for later or asks about accumulated knowledge, this is the skill."
 ---
 
 # Curiosity Engine
@@ -111,20 +111,20 @@ Read `.curator/schema.md` before any operation.
   "worker_model": "claude-sonnet-4-6",
   "reviewer_model": "claude-opus-4-6",
   "parallel_workers": 10,
-  "epoch_seconds": 300,
   "wallclock_max_hours": 24,
-  "saturation_rate_threshold": 0.001,
-  "saturation_consecutive_epochs": 3,
+  "saturation_rate_threshold": 0.005,
+  "saturation_consecutive_waves": 2,
+  "orphan_dominance_threshold": 0.6,
   "caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
 }
 ```
 
 - **worker_model** — all CURATE workers. Haiku was dropped after testing showed systematic citation-preservation failures.
-- **reviewer_model** — CURATE audit, evaluate, and fresh-context judge reviews. Opus excels at judgment and connection discovery.
-- **parallel_workers** — concurrent worker subagents per batch.
-- **epoch_seconds** — wallclock budget per CURATE epoch.
+- **reviewer_model** — CURATE batch reviewer (one opus Agent per wave) and any other reviewer-model subagent. Opus excels at judgment and connection discovery.
+- **parallel_workers** — concurrent worker subagents per wave.
 - **wallclock_max_hours** — hard stop on the outer loop.
-- **saturation_rate_threshold** / **saturation_consecutive_epochs** — stop criterion on editorial rate-of-improvement (`rate_per_accept`). When saturated, CURATE shifts to analyses + questions + source-wishlist rather than stopping outright (curiosity trumps diminishing editorial returns).
+- **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
+- **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
 - **caveman** — compression levels for the optional [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) skill. Three keys:
   - `read` — applied when reading any wiki/vault text into context (orchestrator briefs, epoch_summary input). Ultra strips articles, copula, filler adverbs, pronouns, transitions, prepositions. ~30-40% token reduction.
   - `write_analysis` — applied when writing `analyses/` pages. Lite strips only filler adverbs and transition words, keeping articles and prepositions. Human-comfortable prose. ~10-15% token reduction.
@@ -186,7 +186,6 @@ Mechanical whole-wiki hygiene. Distinct from CURATE's semantic ratchet: SWEEP ru
    - `uv run python3 .curator/sweep.py fix-source-stubs wiki` (citation-style stems + `[src]`-prefixed titles via `naming.py`)
    - `uv run python3 .curator/sweep.py fix-index wiki` (rewrites `.curator/index.md`)
    - `uv run python3 .curator/sweep.py fix-percent-escapes wiki` (collapses Obsidian hidden-comment `%%`)
-   - `uv run python3 .curator/sweep.py clean-tmp wiki` (removes `.curator/.tmp_*.md` staging files — bash discipline forbids `rm` and `git clean` can't reach outside the wiki repo, so this is the only allowed cleanup path)
    - `uv run python3 .curator/sweep.py resync-stems wiki` (renames `sources/` stubs + rewrites inbound wikilinks when naming.py's citation-stem convention has changed since the wiki was built; idempotent — emits `renames: 0` when in sync. `setup.sh` runs this automatically after template refresh, guarded by a clean-git check.)
 3. **LLM-decided fixes** — duplicate slugs (merge), dead wikilinks (create/retarget/remove), frontmatter issues. Workers creating or renaming pages must use `naming.py` for stems and display titles.
 4. **Rebuild graph:** `uv run python3 <skill_path>/scripts/graph.py rebuild wiki` (keeps kuzu in sync with wiki link structure).
@@ -234,160 +233,147 @@ Three stages. Two reviewer-model calls plus mechanical application.
 
 ### CURATE — "curate", "run", "improve", "iterate"
 
-Single autonomous loop: **plan → execute → evaluate → stop check → loop**. Replaces the old ITERATE + EVOLVE split — there is one loop, not two nested ones. You are the orchestrator: you pick targets, compose briefs, dispatch workers, review results, and decide whether to continue.
+Single autonomous loop: **plan → execute → evaluate → stop check → loop**. You are the orchestrator: you pick targets, compose briefs, dispatch workers in parallel, review the whole wave in one reviewer call, commit, and decide whether to continue. The unit of visible progress is a **wave** — one planned batch of up to `parallel_workers` targets, ending in one git commit.
 
-Read `.curator/config.json` for model routing and thresholds (`worker_model`, `reviewer_model`, `parallel_workers`, `epoch_seconds`, `wallclock_max_hours`, `saturation_rate_threshold`, `saturation_consecutive_epochs`).
+Read `.curator/config.json` for model routing and thresholds (`worker_model`, `reviewer_model`, `parallel_workers`, `wallclock_max_hours`, `saturation_rate_threshold`, `saturation_consecutive_waves`, `orphan_dominance_threshold`).
 
 Worker + reviewer prompt templates live in `.curator/prompts.md` — read them verbatim each dispatch; don't improvise wording.
 
-**Phase 1 — Plan (reviewer model).**
+**Phase 1 — Plan (deterministic).**
+
+The plan is mechanical and fast (sub-second). No reviewer call. Every bucket below is pre-ranked by `epoch_summary.py` + `sweep.py concept-candidates`; the orchestrator just picks top-K.
 
 1. **Snapshot guarded scripts.** `bash <skill_path>/scripts/evolve_guard.sh snapshot .curator/.guard.snapshot`.
-2. **Gather.** `uv run python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON with aggregate scores, dimension distributions, vault frontier, cluster analysis, connection candidates, saturation signal, recent log.
-3. **Check sibling sessions' claims.** `uv run python3 <skill_path>/scripts/claims.py --wiki wiki list` → JSON of pages currently in flight in parallel CURATE sessions (see the "Parallel sessions" section below). **Exclude every claimed page from your candidate pools** for editorial, frontier, connection, and atomic-extraction targets. If your session ID isn't already set, pick one now: `sess-<ISO-timestamp>-<4-hex>`. Remember it for the rest of the epoch.
-4. **Plan.** Check `summary.saturation.action`:
-   - `"continue_editorial"` → normal plan with editorial targets.
-   - `"pivot_to_exploration"` → editorial rate has saturated. Shift the plan: drop editorial targets to at most 2 background items, prioritize frontier targets, connection proposals, and question proposals. This is a code-driven pivot, not a judgment call.
-   
-   **Additional pivot trigger: all editorial candidates claimed by siblings.** If step 3 left fewer than 3 editorial pages unclaimed in the top-20 worst list, treat that as a `pivot_to_exploration` case and shift to atomic extractions + questions + frontier. Don't sit idle — `facts/`, `evidence/`, and `analyses/` pages are net-new page creations that don't contend with other sessions editing existing pages, so there's almost always unclaimed work when the editorial pool is saturated by siblings.
-   
-   Produce `.curator/.epoch_plan.md` with:
-   - **Editorial targets** (worst lint pages, max ~10 normally, max ~2 if saturated) — skip `sources/`.
-   - **Frontier targets** (adaptive cap: `min(10, ceil(orphan_source_count / 20))`, min 3): orphan source stubs + uncited vault sources → which concept/entity page should incorporate them via citation AND `[[source-stem]]` wikilink. After a bulk ingest the cap opens to ~5; on a mature wiki it stays at 3.
-   - **Connection proposals** (max 3): page pairs sharing sources but not linking — substantive intellectual connections only.
-   - **Question proposals** (max 3): gaps → new `analyses/` pages. Depth over breadth.
-   - **Concept promotions** (max 2): missing wikilink targets that ≥3 distinct existing pages already reference → new `concepts/<stem>.md`. Run `uv run python3 <skill_path>/scripts/sweep.py concept-candidates wiki` at plan time to get the demand-ranked list (top-20 by default, filtered to ≥3 inbound). Pick the highest-demand candidate(s); promoting one auto-resolves every dead `[[stem]]` reference pointing at it, so `crossref_sparsity` and `orphan_rate` both improve in one commit. Worker brief must include: the N referencing pages' names, the vault sources found via `vault_search "<stem>"` (top 3-5), and a reminder that the body must cite ≥2 distinct vault sources (concepts are intersections across papers, not single-source extractions). The fresh-context reviewer should reject promotions that look like typos of existing stems (Levenshtein-close matches) or that can't be grounded in the vault — in those cases the dead links stay dead until a real source arrives via INGEST.
-   - **Source-backed evidence** (max 4): a contextualized empirical finding from vault material the epoch is reading → new `evidence/<stem>.md`. Canonical shape: *method → result → interpretation → (optional) downstream influence*. This is the default channel for academic-paper findings — a paper reporting "X architecture achieves Y on benchmark Z because W" lands here, not in `facts/`. Example: "Chinchilla 70B on 1.4T tokens outperforms Gopher 280B on 300B at the same compute budget (MMLU 67.5% vs 60.0%), showing token-count scaling was under-weighted in Kaplan et al.; reshaped subsequent LLM training budgets."
-   - **Atomic facts** (max 2): a single numerical parameter, value, or assertion extracted verbatim from one source → new `facts/<stem>.md`. **Hard test: if explaining the finding takes more than one sentence, it's evidence, not a fact.** Reserved for discrete values worth citing as standalone anchors: "Chinchilla scaling rule: params × 2 ⇒ tokens × 2", "BERT-base: 12 layers, 12 heads, 768 hidden dim, 110M params", "Kaplan et al. (2020): loss ∝ C^(-0.050), α_N ≈ 0.076, α_D ≈ 0.103". Architectural hyperparameters, benchmark scores, empirical constants. If you find yourself writing "the authors also note..." or "this connects to..." in a fact page, route it to evidence instead.
+2. **Gather.** `uv run python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON (aggregate scores, dimension distributions, vault frontier, connection candidates, saturation signal, recent log). Also: `uv run python3 <skill_path>/scripts/sweep.py concept-candidates wiki` for demand-ranked missing-concept stems.
+3. **Pick wave mode.** Exactly one of:
+   - **create** — if `summary.saturation.action == "pivot_to_exploration"` OR `summary.vault_frontier.uncited_count < 5`. First-level pool has thinned; time to generate new material.
+   - **wire** — else if summed orphan_rate contributions across non-source pages exceed `orphan_dominance_threshold` (default 0.6) of the summed composite. If most debt is inbound-link starvation, wiring is more productive than rewriting prose.
+   - **repair** — otherwise. Editorial + frontier work remains; most pages are under-sourced or under-linked.
+4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode:
 
-**Phase 2 — Execute (worker model + fresh-context reviewer).**
+   **Create mode** — priority order (concept → evidence → analyses):
+   - **Concept promotions** first: demand-ranked missing stems with ≥3 distinct inbound references. Promoting one auto-resolves every dead `[[stem]]` pointing at it. Worker brief must include the N referencing pages' names, the top 3–5 vault sources from `vault_search "<stem>"`, and the reminder that concept pages cite ≥2 distinct vault sources.
+   - **Evidence** next: one uncited vault source per slot → new `evidence/<stem>.md`, shape *method → result → interpretation → (optional) downstream influence*. The default channel for paper findings.
+   - **Analyses** fill the rest of the wave (unlimited in saturated operation). Each analysis is a multi-source synthesis (≥3 vault sources) with a required `## Open questions and next steps` section — hypotheses, experiments, source requests, adjacent concepts. Workers may return `spawn_concept` entries on analyses only; harvest them for the next wave's concept-promotion bucket. See the `analyses` expectations in the worker template.
+   - **Atomic facts** (`facts/<stem>.md`) are allowed as opportunistic additions when a worker reading vault material encounters a crisp standalone value — single-sentence test applies. Not a separate bucket; a worker doing evidence may emit a fact alongside if warranted.
 
-**0. Claim target pages.** Before dispatching workers, claim every page the wave is about to touch:
-```
-uv run python3 <skill_path>/scripts/claims.py --wiki wiki claim <session_id> <operation> <page1> <page2> ...
-```
-Exit 1 means one of those pages was snatched by a sibling session between your plan and your claim. Drop the conflicting pages from the wave and either reach further down the candidate list (next-worst page, next frontier source, etc.) or proceed with just the pages you successfully claimed. For `operation`, use one of `editorial`, `frontier`, `connection`, `question`, `evidence`, `facts`.
+   **Wire mode** — run a LINK-style pass over the whole wiki (see the **LINK** op for the full protocol). Propose up to ~150 cross-page wikilinks via the `link_proposer` template, classify via the `link_classifier` template, and mechanically apply the `valid` ones. The "wave" is one LINK pass; no worker fan-out. Commit on completion.
 
-Staging files for this wave must use a session-scoped prefix: `.curator/.tmp_<session>_<slug>.md`. `clean-tmp` matches `.tmp_*.md` so session-prefixed names are still cleaned, but the prefix prevents two sessions from clobbering each other's staging mid-flight.
+   **Repair mode** — priority order (editorial → frontier):
+   - **Editorial** first: top-K worst non-source pages by composite score, skipping `sources/`.
+   - **Frontier**: orphan source stubs + uncited vault sources paired to the best-fit concept/entity page (incorporate via citation AND `[[source-stem]]` wikilink).
+   Mix to fill the wave.
 
-For each target, read the relevant page(s) and vault material, then fan out `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE page with a clear brief and the `.curator/prompts.md` worker template filled in.
+   Write the wave plan to `.curator/.epoch_plan.md` as JSON for transparency (one file overwritten per wave — no accumulation).
 
-Note: "workers" here = in-session Agent subagents, not separate CURATE processes. If the user asks for "parallel curators / parallel sessions", they mean the latter — see the **Parallel sessions** section below and use `spawn.py`, not Agent fan-out.
+**Phase 2 — Execute.**
 
-**Brief composition (orchestrator responsibility).** Workers only invoke the `caveman` skill (for compression) — no other tools. The orchestrator controls what vault context they see. Do NOT blindly dump full vault texts (these can be 40 KB each and would overwhelm worker context). Instead:
+*Wire-mode wave:* run LINK as documented above; skip to Phase 3.
 
-1. **Identify relevant sources:** `vault_search.py "<page topic>"` → ranked snippets showing which sources matter.
-2. **Extract the relevant passage:** for each source, run a focused query scoped to the claim: `vault_search.py "<specific claim keywords>" --limit 3`. The FTS5 snippet (~40 tokens around the best match) is often sufficient for a targeted edit. For broader tasks, Read the `.extracted.md` and extract the relevant section yourself — include only the passage, not the whole file.
-3. **Adapt based on feedback:** at plan time, read the previous epoch's `suspect_citations` count from `.curator/log.md`. If suspect rate was high, include more context in this epoch's briefs. If zero, current strategy is working. This is the self-improvement loop — no config to edit, the log drives it.
+*Create- and repair-mode waves:*
 
-**Worker protocol:** workers must return exactly
-```
-{"page": "<page_path>", "new_text": "<full replacement body>", "reason": "<one line>"}
-```
-Workers tasked with an `analyses/` new-page may additionally return an optional `spawn_concept: {"stem": "<hyphen-slug>", "rationale": "<one line>"}` when synthesis surfaces a concept that deserves its own page. The orchestrator treats this as a secondary task, **not** a replacement for the analysis. Non-analysis workers must not populate `spawn_concept`.
+1. **Compose briefs.** For each target, gather the minimal vault context (`vault_search.py` snippets, targeted passages). Do NOT dump full vault extractions — they overwhelm worker context. At plan time, also read the previous wave's `suspect_citations` count from `.curator/log.md`: if high, include more context per brief; if zero, current strategy is working. This is the self-improvement loop — no config to edit, the log drives it.
 
-Apply each result:
+2. **Fan out workers.** Dispatch `parallel_workers` Agent subagents **in one tool-call message**. Each worker gets ONE target with a clear brief and the `.curator/prompts.md` worker template filled in. Workers return
+   ```
+   {"page": "<page_path>", "new_text": "<full replacement body>", "reason": "<one line>"}
+   ```
+   Analyses workers may additionally return an optional
+   ```
+   "spawn_concept": {"stem": "<hyphen-slug>", "rationale": "<one line>"}
+   ```
+   (zero or more). Non-analysis workers must not populate `spawn_concept`.
 
-0. **Compress `new_text` via caveman** (if caveman is installed and the target isn't an `analyses/` page). Spawn a fresh Agent with the `caveman_compressor` template in `.curator/prompts.md`, substituting `<LEVEL>` with `write_other` from config.json (default `ultra`) for concept/entity/source/evidence/facts pages, `write_analysis` (default `lite`) for `analyses/`. Pass `<TEXT>` as the worker's `new_text`. The subagent's return is the compressed text; that's what you pipe into `score_diff`. This sidesteps caveman's "code/JSON = normal mode" Auto-Clarity rule, which made the earlier worker-side invocation a silent no-op. If caveman isn't installed, skip this step — no-caveman fallback is still valid.
+3. **Compress per level (caveman, ≤2 Agents per wave).** Split returned `new_text` blocks by target subdirectory:
+   - `analyses/*` → `write_analysis` level (default `lite`).
+   - `concepts/*`, `entities/*`, `sources/*`, `evidence/*`, `facts/*` → `write_other` level (default `ultra`).
 
-1. Pipe the (compressed) `new_text` into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db`. The gate enforces: no citation loss, no body-token bloat (>1.5×, frontmatter excluded), and citation relevance (each new `(vault:...)` citation must FTS5-match its source — catches spurious citations without a full reviewer pass). It writes the file on accept. Add `--dry-run` to get the verdict without writing (for batch review).
-2. For new pages add `--new-page` (minimum floors: ≥2 citations, ≥2 wikilinks, ≥100 words).
-3. Run `uv run python3 <skill_path>/scripts/scrub_check.py --mode wiki <page>` before any commit drawn from vault content. Hit = quarantine + stop cycle.
-4. For exploration / connection / new-page edits that pass the mechanical gate, run the **fresh-context reviewer** (a separate `reviewer_model` Agent — NOT the worker, NOT you). Use the reviewer template in `.curator/prompts.md`. Accept on `accept`; revert on `reject`; log `flag_for_human` under `## human-review-queue` in `.curator/log.md`.
+   For each non-empty bucket, dispatch ONE `caveman_compressor` Agent with the template and all blocks concatenated:
+   ```
+   ===BLOCK 1===
+   <new_text_1>
+   ===BLOCK 2===
+   <new_text_2>
+   ```
+   The Agent returns blocks compressed in place; split on `===BLOCK n===` to recover compressed texts. Skip this step if caveman isn't installed — no-caveman fallback is still valid.
 
-5. **Handle `spawn_concept` (analysis-spawned concepts).** If an analysis worker returned `spawn_concept` and its analysis passed gate + reviewer, dispatch a follow-up worker task: "Create `wiki/concepts/<stem>.md` grounded in the analysis you just wrote at `<analysis_path>` and its cited sources. Define the concept concisely; cite ≥2 sources the analysis already cited." Pass the accepted analysis body + the vault snippets for its cited sources as context. Gate through `score_diff --new-page` (default floors apply — concept pages are not in the relaxed-floor set) and run the fresh-context reviewer again. Reject the concept silently if the analysis was rejected. Commit analysis + concept in the same wave with message `curate: analysis + concept spawn <stem>`. Claim both pages up front via `claims.py` so sibling sessions don't collide.
+4. **Mechanical gate.** For each compressed `new_text`, pipe into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db` (add `--new-page` for newly-created pages). The gate enforces citation preservation, body-token non-bloat (>1.5×, frontmatter excluded), citation FTS5 relevance, and new-page floors. It writes the file on accept.
 
-Batched commit after each wave:
-```
-git -C wiki add -A
-git -C wiki commit -m "curate: <A accepted, R rejected, F flagged>"
-uv run python3 <skill_path>/scripts/claims.py --wiki wiki release <session_id> <page1> <page2> ...
-```
-Release the claims for pages in this wave immediately after the commit so sibling sessions can pick them up for further improvement in later epochs. Pages that were rejected should also be released (don't hold on to them just because your worker didn't produce a valid edit).
+5. **Scrub.** For any accept drawn from vault content, run `uv run python3 <skill_path>/scripts/scrub_check.py --mode wiki <page>`. Hit = quarantine source(s) + stop the wave.
 
-Append per-accept lines to `.curator/log.md` with page name and what changed.
+6. **Batch reviewer (1 Agent per wave).** Collect all accepts into one JSON list — one entry per accept with `{n, page, task, original, new_text}` — and dispatch a single fresh-context reviewer Agent with the `batch_reviewer` template in `.curator/prompts.md`. Opus handles the whole list in one round-trip. Fresh-context rule still applies: the reviewer must be a separate Agent from every worker and from you. For each returned verdict:
+   - `accept` → keep.
+   - `reject` → `git -C wiki checkout -- <page>` to revert; unlink the new file if the wave created it.
+   - `flag_for_human` → keep + append under `## human-review-queue` in `.curator/log.md`.
 
-**Phase 3 — Evaluate (reviewer model).**
+7. **Harvest `spawn_concept` entries.** Every accepted analysis carrying `spawn_concept` contributes its stem to a queue consumed by the NEXT wave's concept-promotion bucket (Phase 1 step 4 deduplicates against `concept-candidates`). Do NOT dispatch one-off follow-up workers for each concept — batching them into a regular wave is cheaper and keeps the mechanical plan in control.
+
+8. **Commit.**
+   ```
+   git -C wiki add -A
+   git -C wiki commit -m "curate: <A accepted, R rejected, F flagged> (<mode>)"
+   ```
+
+**Phase 3 — Evaluate (mechanical, per wave).**
 
 1. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check .curator/.guard.snapshot`. Drift = abort + revert.
-2. **Measure.** Compute `rate_per_accept = (start_score - end_score) / max(accepts, 1)`. Record `delta_per_epoch`, `elapsed_minutes`.
-3. **Semantic contradiction scan.** On concept, entity, and fact pages touched this epoch, expand to a 2-hop neighborhood via `uv run python3 <skill_path>/scripts/graph.py neighbors wiki <page> --hops 2`. Run the reviewer with the contradiction-scan template in `.curator/prompts.md` on each pair within the neighborhood. For each finding:
-   - `auto-correct` + concrete correction → apply the edit through the usual score_diff gate.
-   - `human-review` → append to `## human-review-queue` in `.curator/log.md`.
-4. **Curiosity metrics.** Record `frontier_size`, `cross_cluster_ratio`, `questions_generated`, and an updated `source_wishlist` (topics where the vault is thin).
-5. **Optimization-surface evaluation.** If the previous epoch modified `.curator/sweep.py`:
+2. **Rebuild graph if structural.** If any page was created or any wikilink changed (always true in wire mode; often true in create mode), run `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`. The rebuild is idempotent and short-circuits when the graph is already current.
+3. **Measure.** `rate_per_accept = (start_score − end_score) / max(accepts, 1)`. Record `delta_per_wave`, `elapsed_seconds`.
+4. **Optimization-surface evaluation.** If the previous wave modified `.curator/sweep.py`:
    - Improved `rate_per_accept` vs. the prior sweep-change? Keep. Propose a new untried sweep edit.
-   - Degraded? Reverse-diff from the skill's reference: `cp <skill_path>/scripts/sweep.py .curator/sweep.py`. Log the failed diff so future CURATE iterations don't retry it. Propose a different untried edit.
-   Every sweep.py diff is logged to `.curator/log.md` before and after.
-6. **Epoch log.** Append to `.curator/log.md`:
+   - Degraded? Reverse-diff from the skill's reference: `cp <skill_path>/scripts/sweep.py .curator/sweep.py`. Log the failed diff so future iterations don't retry it.
+5. **Wave log.** Append to `.curator/log.md`:
+   ```
+   ## curate-wave <N> <ISO timestamp>
+   mode: create | wire | repair
+   start_score: X.XXX
+   end_score: X.XXX
+   rate_per_accept: X.XXXXX
+   elapsed_seconds: X
+   accepted: M (mode-specific breakdown — concepts/evidence/analyses or editorial/frontier or links_applied)
+   rejected: R
+   flagged_for_human: F
+   suspect_citations: N
+   spawn_concept_queued: [stem1, stem2]
+   sweep_change: <none | "added rule X" | "reverted (rate degraded)">
+   notes: <what worked, what didn't>
+   ```
 
-```
-## curate-epoch <N> <ISO timestamp>
-start_score: X.XXX
-end_score: X.XXX
-rate_per_accept: X.XXXXX
-elapsed_minutes: X.X
-accepted: M (editorial: E, exploration: X, connection: C, question: Q)
-rejected: R
-flagged_for_human: F
-contradictions_auto_corrected: C
-contradictions_flagged: F
-curiosity_metrics:
-  frontier_size: N
-  cross_cluster_ratio: X.XXX
-  questions_generated: N
-  source_wishlist: [topic1, topic2]
-suspect_citations: N (citations rejected by FTS5 relevance check)
-brief_strategy: <"snippet" | "passage" | "full-section"> + notes on adjustments
-sweep_change: <none | "added rule X" | "reverted (rate degraded)">
-notes: <what worked, what didn't>
-```
+Semantic contradiction scanning is no longer per-wave — it's expensive and most waves don't introduce contradictions. It runs as an on-demand op (see **CONTRADICTION**).
 
 **Phase 4 — Stop check.** Loop back to Phase 1 unless:
 
-- **User interrupt.** `^C` or `/stop`. Release all this session's claims before exiting: `uv run python3 <skill_path>/scripts/claims.py --wiki wiki release <session_id>` (no page list = release everything owned by this session).
-- **Wallclock.** Total elapsed ≥ `wallclock_max_hours` (default 24). Same release step.
-- **Guard drift.** Hash-guarded script changed mid-epoch → abort, revert, release claims.
-- **Saturation.** Detected by `epoch_summary.py`'s `saturation` field (code-driven, not a judgment call). When `saturation.action == "pivot_to_exploration"`, **do not stop**: Phase 1 automatically shifts the plan to analyses + questions + source-wishlist with minimal editorial background. The loop only truly stops on user interrupt, wallclock, or guard drift.
+- **User interrupt.** `^C` — just exit.
+- **Wallclock.** Total elapsed ≥ `wallclock_max_hours` (default 24).
+- **Guard drift.** Hash-guarded script changed mid-wave → abort, revert.
+- **Saturation does NOT stop the loop.** Phase 1 re-picks mode every wave; saturation automatically shifts the next wave to create mode.
 
-**Process-level restart.** For long runs, each epoch can be a fresh process invocation with clean context. All state lives in `.curator/log.md`, `.curator/.epoch_plan.md`, and `.curator/.guard.snapshot` — no cross-epoch memory needed.
+**Process-level restart.** Each wave can be a fresh process invocation with clean context. All state lives in `.curator/log.md`, `.curator/.epoch_plan.md`, and `.curator/.guard.snapshot` — no cross-wave memory needed. Useful for very long runs.
 
-### Parallel sessions
+### CONTRADICTION — "scan contradictions", "check contradictions"
 
-**Vocabulary — don't confuse workers with sessions.** Two different things share the word "parallel"; they do different things:
+On-demand semantic contradiction scan. Previously ran inside every CURATE epoch; pulled out because most waves don't introduce contradictions and the per-wave cost (O(neighborhood) reviewer pair-checks) was disproportionate.
 
-- **Worker** = a tool-less Agent subagent dispatched *inside one CURATE session's Phase 2* to edit ONE page. Count is `parallel_workers` in `.curator/config.json` (default 10). Workers live only until their JSON return. They're how one session fans out across targets in an epoch.
-- **Session** = an independent `claude` process running its own CURATE loop against the workspace. Long-lived. Sessions coordinate via `claims.py` so they pick disjoint pages.
-
-When the user says **"spawn N curators"**, **"N parallel curators"**, **"run CURATE in parallel"**, **"launch N curate sessions"**, or **"N parallel runs"** — they mean **sessions**. Use `spawn.py N`. A "curator" is the whole agent running the CURATE loop, not an in-session worker. If the user says **"workers"** or **"worker subagents"** or is configuring `parallel_workers`, that's in-session fan-out. If ambiguous (e.g. a bare "run 5 in parallel"), ask explicitly: "Do you mean (a) 5 independent background CURATE sessions via `spawn.py`, or (b) raising `parallel_workers` to 5 for this session's next Phase 2 wave?"
-
-Multiple CURATE sessions can run against one workspace concurrently, coordinated by `claims.py`. Each session picks a unique `session_id` (format `sess-<timestamp>-<4-hex>`) at startup, claims pages before editing, and releases after commit. Stale claims time out after 1 hour, so a crashed session doesn't permanently block its pages.
-
-**Spawn helper.** To launch N sessions with a resource safety check:
-```
-uv run python3 <skill_path>/scripts/spawn.py <N>           # measure + warn + spawn
-uv run python3 <skill_path>/scripts/spawn.py <N> --force   # skip the safety gate
-uv run python3 <skill_path>/scripts/spawn.py --measure-only  # print numbers, exit
-```
-`spawn.py` measures a trivial `claude -p` invocation's peak RSS and compares against 70% of available memory. If the requested N would overcommit, it prints a safe number and exits non-zero. Each spawned session backgrounds a `claude -p /curate` with `CURIOSITY_SESSION=<id>` set so the orchestrator inside can pass the ID to claim/release without re-inventing it.
-
-**Rate limits.** The other ceiling is the user's Claude Code account tier (tokens/min, requests/min). `spawn.py` can't measure that locally — if spawned sessions stall or get 429s, reduce N.
-
-**Saturation at scale.** When many sessions are running, editorial candidates in the top-20 worst list can all be claimed. The Phase 1 pivot trigger detects this and shifts the plan to `facts/`, `evidence/`, `analyses/`, `questions/` — all net-new-page creations that don't contend. Sibling sessions thus gracefully transition from editing to creating as the editorial pool thins out.
+1. **Pick candidates.** Pages passed on the CLI (`wiki/concepts/x.md wiki/facts/y.md`), or with no args, every page touched in the last M commits (default M=20) on concept/entity/fact pages.
+2. **Expand neighborhoods.** For each candidate, 2-hop neighbors via `uv run python3 <skill_path>/scripts/graph.py neighbors wiki <page> --hops 2`.
+3. **Scan each pair.** Dispatch one reviewer-model Agent with the `semantic contradiction scan` template in `.curator/prompts.md` per pair. For each finding:
+   - `auto-correct` + concrete correction → apply the edit through the usual `score_diff` gate.
+   - `human-review` → append to `## human-review-queue` in `.curator/log.md`.
+4. **Commit.** `git -C wiki commit -m "contradiction-scan: K auto-corrected, H flagged"`.
 
 ### Optimization surface
 
-CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`. Evaluation is log-based (see Phase 3 step 5). Every diff is logged. Degraded rate restores from the skill's pristine reference.
+CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`. Evaluation is log-based (see Phase 3 step 4). Every diff is logged. Degraded rate restores from the skill's pristine reference.
 
 - **Agent-editable:** `.curator/sweep.py` only (workspace copy).
 - **Human-edited (stable):** `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json`. CURATE must not edit these during a run.
-- **Off-limits (hash-guarded by `evolve_guard.sh`):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`. The snapshot/check pair enforces this; violation aborts the epoch.
+- **Off-limits (hash-guarded by `evolve_guard.sh`):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`. The snapshot/check pair enforces this; violation aborts the wave.
 - **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates.
 - **Fresh-context rule:** the reviewer MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
 
 ### Caveman integration
 
-Compression happens in a dedicated subagent spawned per worker result, not in the worker itself. The worker writes normal prose; a `caveman_compressor` subagent invokes the caveman skill and rewrites the prose at the configured level before `score_diff` sees it. This was moved out of the worker because the worker's output is a JSON object and caveman's Auto-Clarity clause declines to compress code/structured output — the earlier worker-side invocation was a silent no-op (verified empirically: zero compressed pages in the test workspace across dozens of epochs).
+Compression happens in a dedicated subagent invoked **at most twice per wave** (once per level), not per worker result. After Phase 2 workers return, the orchestrator splits their `new_text` outputs by target subdirectory — analyses at `write_analysis` level, everything else at `write_other` — and dispatches ONE `caveman_compressor` Agent per non-empty bucket with the prose blocks concatenated under `===BLOCK n===` headers. The subagent invokes the caveman skill once, rewrites every block at the configured level, and returns the compressed texts; the orchestrator splits on the headers and feeds each into `score_diff`. Two round-trips per wave at most versus one-per-page previously, and the subagent still sees plain prose (not JSON) so caveman's "code/JSON = normal mode" Auto-Clarity rule doesn't short-circuit.
 
 The `.curator/config.json` `caveman` block picks levels:
 - `analyses/` pages → `write_analysis` (default `lite`): filler/hedging/transitions removed, articles kept.
