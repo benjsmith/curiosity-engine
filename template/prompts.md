@@ -33,17 +33,27 @@ this file; don't duplicate prompts there.
 > skills or tools yourself.
 >
 > Page-type conventions (when the task is "create a new page"):
-> - **evidence/<stem>.md**: ONE source-backed observation with enough
->   context to interpret it. ~50-150 words. Title: `[evi] <observation>`.
->   ≥1 wikilink, ≥1 `(vault:...)` citation. Example:
->   `[evi] Chinchilla compute-optimal scaling` describing the 70B/1.4T
->   Chinchilla-vs-Gopher result AND why it revised Kaplan.
-> - **facts/<stem>.md**: ONE atomic parameter, value, or assertion, lifted
->   verbatim or near-verbatim from a single source. ~30-100 words; often
->   just a one-sentence claim with numerical backing. Title:
->   `[fact] <claim>`. ≥1 wikilink, ≥1 `(vault:...)` citation. Do NOT pad
->   to meet a word count — if the fact is 40 words, leave it at 40 words
->   (the gate accepts ≥30 for `facts/`). Concrete examples:
+> - **evidence/<stem>.md**: the DEFAULT channel for academic-paper
+>   findings. ONE contextualized empirical observation following the
+>   canonical shape: **method → result → interpretation → (optional)
+>   downstream influence**. ~50-150 words. Title: `[evi] <observation>`.
+>   ≥1 wikilink, ≥1 `(vault:...)` citation. Most paper claims — "X
+>   architecture achieves Y on benchmark Z because W", "method M
+>   outperforms baseline B by N points on task T" — are evidence.
+>   Canonical example: `evidence/chinchilla-compute-optimal.md` —
+>   describes training 400 Transformer models across a parameter/token
+>   grid, the 70B/1.4T Chinchilla result vs 280B/300B Gopher on MMLU,
+>   the interpretation (token-count scaling under-weighted in Kaplan),
+>   and the downstream influence on Llama/Mistral training budgets.
+> - **facts/<stem>.md**: ONE atomic parameter, value, or assertion,
+>   lifted near-verbatim from a single source. Reserved for discrete
+>   numerical anchors worth citing standalone. **Decision rule: if
+>   explaining this finding takes more than one sentence, it's
+>   evidence, not a fact.** If you find yourself writing "the authors
+>   also note...", "this enables...", "foundational to...", or any
+>   follow-on context, stop — route to evidence. Title: `[fact]
+>   <claim>`. ≥1 wikilink, ≥1 `(vault:...)` citation. 30-60 words is
+>   the natural range; don't pad. Concrete examples:
 >     - `facts/kaplan-scaling-exponents.md`: "Kaplan et al. (2020) report
 >       neural language-model test loss scaling as L ∝ C^(-0.050), with
 >       N-exponent α_N ≈ 0.076 and D-exponent α_D ≈ 0.103 (vault:...)."
