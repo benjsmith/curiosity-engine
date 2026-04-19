@@ -18,6 +18,7 @@ prose growth.
 Usage:
     echo "<new text>" | python3 score_diff.py <page.md> --new-text-stdin
     python3 score_diff.py <page.md> --new-text-stdin --vault-db vault/vault.db
+    python3 score_diff.py <page.md> --new-text-file <path>          # alias: --new-file
     python3 score_diff.py <page.md> --new-page --new-text-stdin
     python3 score_diff.py <page.md> --new-text-stdin --dry-run
 
@@ -231,7 +232,13 @@ def new_page_verdict(text: str, page: Path = None) -> tuple:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("page")
-    ap.add_argument("--new-file", default=None)
+    # --new-text-file is the canonical name (pairs naturally with
+    # --new-text-stdin). --new-file kept as back-compat alias; the
+    # orchestrator's natural intuition produced --new-text-file
+    # repeatedly, costing a retry per page every wave.
+    ap.add_argument("--new-text-file", "--new-file", dest="new_file",
+                    default=None,
+                    help="path to file containing new page text")
     ap.add_argument("--new-text-stdin", action="store_true")
     ap.add_argument("--new-page", action="store_true")
     ap.add_argument("--dry-run", action="store_true",
