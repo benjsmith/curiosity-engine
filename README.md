@@ -1,132 +1,115 @@
 # Curiosity Engine
 
-A self-improving knowledge wiki for Claude Code. Add sources to a vault, build interlinked wiki pages, and let an autonomous curate loop work on the wiki in the background.
+Drop files into a folder, ask questions, and let an agent keep improving your notes while you sleep.
+
+Curiosity Engine is a Claude Code skill for people who read a lot in a specific domain and want the understanding to compound. You feed sources (papers, PDFs, blog posts, docs) into a vault; an autonomous curator reads them, writes concise interlinked wiki pages, cites every claim, and tends the wiki overnight. A citation-preserving ratchet ensures the wiki only gets better or unchanged, never worse.
+
+Built on top of [Claude Code](https://claude.com/claude-code). The wiki is plain markdown — open it in Obsidian, browse the graph, edit by hand. Everything's git-tracked.
+
+## How it works
+
+Three objects, three verbs.
+
+```
+  your files
+      │
+      ▼
+  ┌─────────┐       ┌───────────┐      ┌─────────┐
+  │  vault  │──────▶│  curator  │─────▶│  wiki   │
+  │ (raw)   │ reads │  (agent)  │writes│ (notes) │
+  └─────────┘       └───────────┘      └─────────┘
+                         ▲                  │
+                         │ ask              │ answer
+                         └──────── you ─────┘
+```
+
+- **Vault** (`vault/`) — where your sources live. Append-only; never modified after ingest. FTS5 keyword-indexed; optional MiniLM semantic index for fuzzier queries on large corpora.
+- **Wiki** (`wiki/`) — where your understanding lives. Git-tracked markdown with `[[wikilinks]]` and `(vault:path)` citations. Six subdirectories (`sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`) that carry shape — short notes in each.
+- **Curator** — an agent that reads the vault, writes in the wiki, and has an autonomous mode that keeps improving the notes in the background.
+
+Three verbs:
+
+- **`ingest`** — *"add `~/papers/foo.pdf` to the vault"*. The source is copied in, text extracted, indexed.
+- **`query`** — *"what do I know about transformers?"* The curator searches the wiki and vault, answers with citations, ends with a probing follow-up.
+- **`curate`** — *"curate this wiki for an hour"*. The curator runs a plan-execute-evaluate loop, drafts improvements in parallel, gates each through a mechanical check, has a reviewer judge the wave, and commits.
 
 ## Quick start
 
-Install the skill, then point Claude Code at a fresh working directory:
-
 ```bash
+# install the skill (pick one path — all equivalent)
 claude skill install curiosity-engine
+npx skills add benjsmith/curiosity-engine
+# or: git clone into ~/.claude/skills/curiosity-engine/
+
+# set up a workspace
 mkdir my-research && cd my-research
 claude
 > set up a knowledge base here
 > add ~/papers/some-paper.pdf to the vault
 > what do I know about transformer architectures?
-> curate this wiki in the background
+> curate this wiki for an hour
 ```
 
-### Alternative quick install
+The first command runs `setup.sh`, which creates the folder layout, initialises the wiki git repo, drops in a Claude Code settings file that auto-allows safe operations, and optionally installs companion skills.
 
-```bash
-npx skills add benjsmith/curiosity-engine
-```
+## What makes it different
 
-Or clone the repo directly into `~/.claude/skills/curiosity-engine/`. All three paths produce an identical install — pick whichever matches your workflow.
+- **Citations are load-bearing.** Every factual claim cites a vault source. A mechanical gate (`score_diff.py`) rejects any edit that drops a citation or adds one whose source doesn't FTS5-match the claim.
+- **Wiki structure IS the semantic layer.** Concept and entity pages are the hubs; wikilinks express relationships. No vector DB required — though one can be bolted on for fuzzy fallback on large corpora.
+- **Keep-or-revert ratchet.** Autonomous curator proposes edits; a reviewer grades; accepted edits commit, rejected ones revert. The wiki never regresses.
+- **Hash-guarded scoring.** Scoring scripts are SHA-256 hashed between waves; the curator can't edit them to game its own metrics.
+- **Obsidian-compatible.** Open `wiki/` as an Obsidian vault — wikilinks, backlinks, graph view all work without plugins.
 
-### Viewing the wiki in Obsidian
+## When to use (and when not)
 
-The `wiki/` directory is plain markdown with `[[wikilinks]]`, so any Obsidian vault opened on it works out of the box:
+**Reach for this** when:
+- You're reading 30–300 substantial sources in a domain over weeks or months.
+- You care about provenance — every claim traceable to a vault file.
+- You want cross-source connections surfaced, not just stored.
+- You want the understanding to persist across sessions and compound.
 
-1. Open Obsidian → **Open folder as vault** → pick `<your-workspace>/wiki`.
-2. Wikilinks, backlinks, and the graph view light up immediately — no plugins needed.
-3. Leave Claude Code running in the workspace root; Obsidian picks up new pages as the curator writes them. Git commits from the curator show up as normal file changes.
+Good fits: personal research, literature reviews, idea gardens, due-diligence analysts, cross-field synthesis.
 
-Treat Obsidian as a read-mostly view. You can edit by hand, but remember that any change outside a `git -C wiki commit` won't be seen by the curator until the next operation reads the page.
+**Reach for something else** when:
+- You want instant answers from a huge (>1000) doc store → use RAG (LlamaIndex, LangChain).
+- You're working on code → use Claude Code directly on the repo.
+- You need multi-user collaboration → Obsidian sync, Notion, Confluence.
+- Knowledge is structured (tables, time-series) → a database.
 
-## How it works
+For the full design rationale (why not RAG, how the ratchet works, where the skill struggles), see [`docs/architecture.md`](docs/architecture.md).
 
-**The Vault** is a folder of raw source files — PDFs, Word docs, slide decks, web clips, screenshots, markdown, anything. Claude Code reads them natively through its multimodal capabilities. Text extractions sit alongside originals and are indexed in a SQLite FTS5 database for sub-millisecond BM25 search.
+## Viewing in Obsidian
 
-**The Wiki** is a git-tracked directory of markdown files that Claude Code writes and maintains. Entity pages, concept pages, synthesis documents — all interlinked with wikilinks, all citing vault sources. The wiki is the compounding artifact: it gets richer with every source ingested and every question asked.
+`wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian → **Open folder as vault** → pick `<your-workspace>/wiki`. Backlinks and the graph view light up immediately, no plugins. Leave Claude Code running in the workspace root; Obsidian picks up new pages as the curator writes them.
 
-**The Curate Loop** autonomously tends the wiki. A single loop — **plan → execute → evaluate → stop check → loop** — picks targets by observable lint signals, drafts improvements in parallel worker subagents, applies each edit through a citation-preserving mechanical gate (no sourced claim lost, no >1.5× raw-token bloat, each new citation FTS5-matches its source), and has a fresh-context reviewer vet the non-editorial edits. Each epoch runs a fixed wallclock budget (Karpathy-style autoresearch). Filler is rejected automatically. The wiki never gets worse, only better or unchanged.
+Treat Obsidian as a read-mostly view. Manual edits outside a `git -C wiki commit` won't be seen by the curator until the next operation reads the page.
 
-The loop never fetches new content on its own. It only reorganizes what's already in the vault, and flags a source-wishlist when the vault runs thin on a topic. Acquisition is your job; curation is the loop's.
+## Caveman mode (optional compression)
 
-The curator may edit exactly one thing about its own operation: `.curator/sweep.py` (its hygiene-pass script). Every diff is logged; if the post-edit improvement rate degrades, the reference copy is restored automatically. The scoring and measurement scripts (`lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`) are SHA-256 hash-guarded on every epoch boundary, and any tampering aborts the epoch and reverts.
+[JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) is a companion skill that strips filler tokens so the curator writes terse, dense pages (~30–40% reduction). Setup prompts to install it; answer `y` to wire in. Configured via the `caveman` block in `.curator/config.json`. Details in the skill's SKILL.md.
 
-The loop runs until one of: user interrupt, 24h wallclock, or guard drift. When editorial rate-of-improvement saturates, the plan shifts to new analyses, open questions, and source-wishlist items rather than stopping — curiosity trumps diminishing editorial returns.
+## Semantic vault search (optional)
 
-## Operations
-
-| Command | What it does |
-|---|---|
-| "add X to the vault" | Ingests a source file, extracts text, updates wiki pages |
-| "what do I know about X?" | Searches wiki and vault, synthesizes an answer |
-| "lint" | Scores every wiki page on crossref sparsity, orphan rate, unsourced density, vault coverage |
-| "curate" / "run" / "improve" / "iterate" | Autonomous CURATE loop (runs in background until interrupted, 24h, or guard drift) |
-
-## The acceptance criterion
-
-A wiki edit is accepted only if:
-1. No sourced claims are lost (`citations(after) >= citations(before)`)
-2. No extreme bloat (`body_tokens(after) <= body_tokens(before) * 1.5`, frontmatter excluded)
-3. Each newly added `(vault:...)` citation FTS5-matches its source (catches spurious citations without a reviewer pass)
-
-These are hard floors. Quality beyond the floors is judged by a fresh-context reviewer (opus by default), not by the mechanical gate.
-
-## What's in the vault search
-
-SQLite FTS5 with BM25 ranking. Sub-millisecond queries. Unlimited concurrent readers (WAL mode). `sqlite3` is Python stdlib — no extra install. No vector database, no embeddings, no model downloads. The wiki itself is the semantic layer.
-
-## Caveman mode (optional)
-
-[JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) is a companion skill for read-time and write-time token compression. Setup prompts to install it; answer `y` to wire it in. Configured via the `caveman` block in `.curator/config.json`:
-
-```json
-"caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
-```
-
-- **read (ultra)** — every wiki page or vault passage is stripped of articles, copula, filler adverbs, pronouns, transitions, and prepositions before the curator reads it. ~30–40% fewer input tokens per read.
-- **write_analysis (lite)** — `analyses/` pages stay human-readable; only filler adverbs and transition words are stripped. ~10–15% reduction.
-- **write_other (ultra)** — `entities/`, `concepts/`, `sources/`, `evidence/`, `facts/` are written in dense telegraphic form. Compounds: every future read of a compressed page is cheaper.
-
-### Pros
-
-- **Bigger epochs in the same context budget.** ~30–40% savings compound across long runs and let more pages fit into each worker brief.
-- **Cheaper full-wiki scans** (lint, epoch_summary, query) once most pages are written at ultra.
-- **LLMs reconstruct grammar natively** — worker quality is roughly unchanged on compressed input.
-- **Still plain markdown.** Wikilinks, citations, and frontmatter are preserved, so Obsidian and git diffs keep working.
-
-### Cons
-
-- **Ultra pages read poorly to humans.** Open them in Obsidian and you'll see telegraphic text. If you want to browse prose, request an `analyses/` page (lite) or skip caveman entirely.
-- **Extra skill dependency** — one more thing to install and keep current.
-- **Small quality risk on edge cases.** Very short pages or heavily idiomatic passages occasionally lose nuance under ultra.
-- **Irreversible in place.** The uncompressed version isn't stored; recovering expanded prose means re-synthesizing from the vault.
-
-### No-caveman fallback
-
-If you skip caveman, CURATE works verbatim. The `caveman` block in `config.json` is ignored, pages are written in standard prose, and context-budget mitigations kick in instead: capped per-batch page reads, slice-reads of frontmatter + substantive prose, and `lint_scores.py --minimal` output. Expect proportionally shorter epochs for the same token budget.
+For vaults above a few hundred sources where keyword search starts missing fuzzy matches, an optional MiniLM embedding index layered over sqlite-vec gives the curator a semantic fallback. Setup prompts to install `sentence-transformers` + `sqlite-vec` (~200MB model download); opt in only if you need it. Embeddings augment FTS5, never replace — keyword stays primary.
 
 ## Inspired by
 
 | From | Idea taken |
 |---|---|
-| [Karpathy's LLM-Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) | The wiki as a compounding artifact. |
+| [Karpathy's LLM-Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) | The wiki as a compounding artefact. |
 | [Karpathy's Autoresearch](https://github.com/karpathy/autoresearch) | Keep-or-revert ratchet with a measurable metric. Git as the ledger. |
 | [MemPalace](https://github.com/milla-jovovich/mempalace) | Store everything verbatim. Don't let AI decide what to forget. |
-| [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) | Optional companion skill for read- and write-time token compression. Strip predictable grammar tokens so the curator burns less context. See [Caveman mode](#caveman-mode-optional). |
-
-## What this does NOT include
-
-- **No autonomous web fetching** — the skill never pulls content from URLs on its own. You add sources; the loop improves them. This eliminates the prompt-injection surface entirely.
-- **No AAAK dialect** — regresses retrieval 12 points, bespoke notation
-- **No palace hierarchy** — spatial metaphor for semantic structure; just use directories
-- **No self-assessed curiosity formula** — observable signals only; avoids the noisy-TV problem
-- **Limited meta-evolution** — the curator may only edit its own hygiene script (`.curator/sweep.py`); reverse-diffs on degradation. Scoring scripts are hash-guarded.
-- **No vector database** — FTS5 handles keyword search; the wiki handles semantics
-- **No API client** — Claude Code IS the agent
+| [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) | Optional companion skill for read/write token compression. |
 
 ## Dependencies
 
-- **Python 3** — most scripts use stdlib only (`sqlite3`, `json`, `re`, `pathlib`).
-- **[uv](https://github.com/astral-sh/uv)** (required) — workspace venv + script runner. `setup.sh` installs uv if missing, creates `./.venv`, and installs kuzu into it. The skill's canonical command is `uv run python3 <skill_path>/scripts/<name>.py ...`; the `uv run` prefix auto-discovers `./.venv` so imports resolve without activation.
-- **[kuzu](https://kuzudb.com/)** (required) — embedded property-graph database behind `graph.py`. Stores `WikiPage`/`VaultSource` nodes and `WikiLink`/`Cites` edges; used for neighbors, shortest-path, shared-source, and bridge-candidate queries during plan/evaluate. Installed automatically into the workspace `.venv` by `setup.sh`.
-- **[JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)** (optional) — read/write token compression. See [Caveman mode](#caveman-mode-optional). Setup offers to install it via `npx skills add JuliusBrussee/caveman`.
-- **git** — the wiki is a git repo; every accepted edit commits.
-- **Claude Code** — this is a skill, not a standalone CLI. There is no separate API client; Claude Code is the agent.
+- **Python 3** — most scripts use stdlib only.
+- **[uv](https://github.com/astral-sh/uv)** (required) — workspace venv + script runner. Installed by `setup.sh` if missing.
+- **[kuzu](https://kuzudb.com/)** (required) — embedded property-graph database for structural queries. Auto-installed into the workspace venv.
+- **[sentence-transformers](https://sbert.net/)** + **[sqlite-vec](https://github.com/asg017/sqlite-vec)** (optional) — semantic vault search. ~200MB model.
+- **[JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)** (optional) — read/write compression.
+- **git** — the wiki is a git repo.
+- **Claude Code** — this is a skill, not a standalone CLI.
 
 ## License
 
