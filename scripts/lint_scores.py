@@ -28,6 +28,7 @@ to shrink the payload ~800x for target selection.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -35,6 +36,77 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from naming import SKIP_FILES  # noqa: E402
+
+
+# Cache location and small helpers for per-page score caching. At scale
+# this is the difference between a sub-second plan phase (unchanged pages
+# hit cache) and an O(pages × titles) recompute every wave.
+_CACHE_FILENAME = ".score_cache.json"
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _titles_hash(titles: set) -> str:
+    return hashlib.sha256("|".join(sorted(titles)).encode("utf-8")).hexdigest()[:16]
+
+
+def _vault_rowcount(vault_db_path: Path) -> int:
+    """Total source rows in the vault FTS5 index. Used as a cache buster.
+
+    New vault entries shift every page's vault_coverage_gap (the top BM25
+    hits can change), so any vault growth invalidates the whole cache.
+    """
+    if vault_db_path is None or not vault_db_path.exists():
+        return 0
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(vault_db_path))
+        row = conn.execute("SELECT count(*) FROM sources").fetchone()
+        conn.close()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def _cache_path(wiki_dir: Path) -> Path:
+    return wiki_dir.parent / ".curator" / _CACHE_FILENAME
+
+
+def _load_cache(wiki_dir: Path, titles_hash: str, vault_rowcount: int) -> dict:
+    """Return cached pages map, or empty if global invariants drifted.
+
+    Global invariants: title set (affects crossref_sparsity for every
+    page) and vault rowcount (affects vault_coverage_gap for every page).
+    Per-page invariants are checked in compute_all.
+    """
+    path = _cache_path(wiki_dir)
+    if not path.exists():
+        return {}
+    try:
+        cache = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if (cache.get("titles_hash") != titles_hash
+            or cache.get("vault_rowcount") != vault_rowcount):
+        return {}
+    return cache.get("pages", {})
+
+
+def _save_cache(wiki_dir: Path, titles_hash: str, vault_rowcount: int,
+                pages: dict) -> None:
+    path = _cache_path(wiki_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "titles_hash": titles_hash,
+        "vault_rowcount": vault_rowcount,
+        "pages": pages,
+    }
+    try:
+        path.write_text(json.dumps(payload))
+    except OSError:
+        pass
 
 
 def wiki_pages_in(wiki_dir: Path):
@@ -195,6 +267,16 @@ def compute_all(wiki_dir: Path) -> list:
     - orphan_rate        (inbound link coverage)
     - unsourced_density  (citation coverage)
     - vault_coverage_gap (unexplored vault material)
+
+    **Incremental cache.** Per-page scores are cached at
+    `.curator/.score_cache.json` keyed by text hash + inbound count. A
+    page whose text and inbound count are unchanged since last run
+    returns cached scores without recomputation. Global invariants
+    (title set, vault rowcount) invalidate the whole cache — adding /
+    renaming / deleting a page changes crossref_sparsity for every
+    page; adding vault sources changes vault_coverage_gap for every
+    page. Typical CURATE wave touches a handful of pages, so the cache
+    hit rate is ~(N - touched)/N after the second wave.
     """
     pages = wiki_pages_in(wiki_dir)
     pages_text = {p: p.read_text() for p in pages}
@@ -205,26 +287,42 @@ def compute_all(wiki_dir: Path) -> list:
     if inbound is None:
         inbound = _inbound_from_scan(pages_text, titles)
 
+    titles_h = _titles_hash(titles)
+    vault_n = _vault_rowcount(vault_db_path)
+    cached_pages = _load_cache(wiki_dir, titles_h, vault_n)
+    new_cache: dict = {}
+
     results = []
     for page, text in pages_text.items():
+        rel = str(page.relative_to(wiki_dir))
         own = page.stem.lower()
-        scores = {
-            "crossref_sparsity": crossref_sparsity(text, titles, own),
-            "orphan_rate": orphan_rate(own, inbound),
-            "unsourced_density": unsourced_density(text),
-            "vault_coverage_gap": vault_coverage_gap(own, text, vault_db_path),
-        }
-        scores["composite"] = round(
-            0.25 * scores["crossref_sparsity"]
-            + 0.25 * scores["orphan_rate"]
-            + 0.25 * scores["unsourced_density"]
-            + 0.25 * scores["vault_coverage_gap"],
-            3,
-        )
-        results.append({
-            "page": str(page.relative_to(wiki_dir)),
-            "scores": scores,
-        })
+        th = _text_hash(text)
+        inb = inbound.get(own, 0)
+
+        prior = cached_pages.get(rel)
+        if (prior is not None
+                and prior.get("text_hash") == th
+                and prior.get("inbound") == inb):
+            scores = prior["scores"]
+        else:
+            scores = {
+                "crossref_sparsity": crossref_sparsity(text, titles, own),
+                "orphan_rate": orphan_rate(own, inbound),
+                "unsourced_density": unsourced_density(text),
+                "vault_coverage_gap": vault_coverage_gap(own, text, vault_db_path),
+            }
+            scores["composite"] = round(
+                0.25 * scores["crossref_sparsity"]
+                + 0.25 * scores["orphan_rate"]
+                + 0.25 * scores["unsourced_density"]
+                + 0.25 * scores["vault_coverage_gap"],
+                3,
+            )
+
+        new_cache[rel] = {"text_hash": th, "inbound": inb, "scores": scores}
+        results.append({"page": rel, "scores": scores})
+
+    _save_cache(wiki_dir, titles_h, vault_n, new_cache)
 
     results.sort(key=lambda x: x["scores"]["composite"], reverse=True)
     return results
