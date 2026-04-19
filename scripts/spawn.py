@@ -282,7 +282,9 @@ def _spawn_one(workspace: Path, session_id: str) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Parallel CURATE launcher")
     ap.add_argument("n", type=int, nargs="?", default=None,
-                    help="number of parallel sessions to spawn")
+                    help="number of parallel sessions to spawn. Default: "
+                         "enters the live dashboard after spawning. Pass "
+                         "--no-watch to background-detach instead.")
     ap.add_argument("--workspace", default=".",
                     help="workspace path (default: cwd)")
     ap.add_argument("--force", action="store_true",
@@ -291,13 +293,18 @@ def main() -> None:
                     help="measure + report, print commands, do not spawn")
     ap.add_argument("--measure-only", action="store_true",
                     help="print resource numbers and exit")
+    ap.add_argument("--no-watch", action="store_true",
+                    help="after spawning, detach silently instead of "
+                         "entering the dashboard. Sessions run in the "
+                         "background; monitor later via `spawn.py --watch`.")
     ap.add_argument("--watch", action="store_true",
-                    help="live status dashboard (sessions, claims, recent "
-                         "commits). Ctrl-C to exit; sessions keep running.")
+                    help="monitor existing sessions (no spawning). With "
+                         "spawn, watch is already the default; this flag "
+                         "is redundant but accepted.")
     ap.add_argument("--status", action="store_true",
                     help="print status block once and exit")
     ap.add_argument("--interval", type=float, default=2.0,
-                    help="--watch refresh interval in seconds (default 2.0)")
+                    help="dashboard refresh interval in seconds (default 2.0)")
     args = ap.parse_args()
 
     workspace = Path(args.workspace).resolve()
@@ -370,24 +377,30 @@ def main() -> None:
         for s in spawned:
             f.write(f"{s['pid']}|{s['session_id']}|{t0}\n")
 
-    print(json.dumps({
-        "spawned": len(spawned),
-        "sessions": spawned,
-        "logs": str(workspace / ".curator" / "sessions"),
-        "note": (
-            "Claude Code rate limits (tokens/min, requests/min) are the "
-            "non-local ceiling we can't measure here — if spawned sessions "
-            "stall, check your account tier. Kill all: "
-            f"for p in $(cut -d'|' -f1 {pids_file}); do kill $p; done. "
-            "Monitor: `uv run python3 spawn.py --watch`."
-        ),
-    }, indent=2))
+    if args.no_watch:
+        # Background-detach: print the full JSON summary so the user has
+        # the PIDs and kill-command handy, then exit.
+        print(json.dumps({
+            "spawned": len(spawned),
+            "sessions": spawned,
+            "logs": str(workspace / ".curator" / "sessions"),
+            "note": (
+                "Claude Code rate limits (tokens/min, requests/min) are the "
+                "non-local ceiling we can't measure here — if spawned sessions "
+                "stall, check your account tier. Kill all: "
+                f"for p in $(cut -d'|' -f1 {pids_file}); do kill $p; done. "
+                "Monitor later: `uv run python3 spawn.py --watch`."
+            ),
+        }, indent=2))
+        return
 
-    if args.watch:
-        print("\nEntering watch mode (Ctrl-C to exit; sessions keep running)...\n",
-              file=sys.stderr)
-        time.sleep(1)
-        _watch(workspace, interval=args.interval)
+    # Default: enter the dashboard. Brief confirmation line so the user
+    # sees what was spawned before the dashboard paints.
+    print(f"\nSpawned {len(spawned)} session(s); entering dashboard "
+          f"(Ctrl-C to detach; sessions keep running)...\n",
+          file=sys.stderr)
+    time.sleep(0.8)
+    _watch(workspace, interval=args.interval)
 
 
 if __name__ == "__main__":
