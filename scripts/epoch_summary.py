@@ -148,12 +148,36 @@ def page_type_counts(pages_text: dict, wiki_dir: Path) -> dict:
     return dict(counts)
 
 
+_LOG_TAIL_BYTES = 64 * 1024  # 64 KB — ~20 recent epoch blocks typical
+
+
+def _tail_bytes(path: Path, max_bytes: int = _LOG_TAIL_BYTES) -> str:
+    """Return the last max_bytes of `path` aligned to a line boundary.
+
+    The curator log is append-only and grows unbounded as epochs accrue
+    — at 155 KB it's already the single biggest chunk of context the
+    orchestrator ingests per plan phase. Capping here keeps warmup
+    bounded as the wiki matures. Nothing we need (saturation check,
+    recent-entry list) looks further back than the last few epochs.
+    """
+    size = path.stat().st_size
+    if size <= max_bytes:
+        return path.read_text()
+    with path.open("rb") as f:
+        f.seek(size - max_bytes)
+        chunk = f.read()
+    text = chunk.decode("utf-8", errors="replace")
+    # Drop leading partial line so mid-word cutoff doesn't confuse parsers
+    nl = text.find("\n")
+    return text[nl + 1:] if nl >= 0 else text
+
+
 def recent_log_entries(wiki_dir: Path, last_n: int = 5) -> list:
     """Extract last N log section headers with key metrics."""
     log_path = wiki_dir.parent / ".curator" / "log.md"
     if not log_path.exists():
         return []
-    text = log_path.read_text()
+    text = _tail_bytes(log_path)
     entries = re.findall(r'^## (.+)$', text, re.MULTILINE)
     return entries[-last_n:] if entries else []
 
@@ -170,7 +194,7 @@ def saturation_check(wiki_dir: Path, threshold: float = 0.001,
     if not log_path.exists():
         return {"saturated": False, "epochs_checked": 0, "rates": []}
 
-    text = log_path.read_text()
+    text = _tail_bytes(log_path)
     rates = [float(m) for m in re.findall(
         r"^rate_per_accept:\s*([\d.]+)", text, re.MULTILINE)]
 

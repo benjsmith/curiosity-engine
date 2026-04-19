@@ -136,8 +136,14 @@ def _resource_report(verbose: bool):
     }
 
 
-def _alive_pids(spawned_path: Path) -> list:
-    """Return [(pid, session_id), ...] for processes in .spawned still alive."""
+def _read_spawned(spawned_path: Path) -> list:
+    """Parse .spawned into [{pid, session_id, batch}, ...] records.
+
+    Each line is `pid|session_id|batch_ts`. Batch is the unix-ts the
+    spawn.py invocation started — all sessions from one command share
+    it, so filtering by batch gives you exactly the sessions from the
+    latest spawn.
+    """
     if not spawned_path.exists():
         return []
     out = []
@@ -145,13 +151,37 @@ def _alive_pids(spawned_path: Path) -> list:
         if not line.strip():
             continue
         parts = line.split("|")
-        if len(parts) < 2:
+        if len(parts) < 3:
             continue
-        pid = parts[0]
-        sid = parts[1]
+        out.append({"pid": parts[0], "session_id": parts[1],
+                    "batch": parts[2]})
+    return out
+
+
+def _current_batch(curator: Path) -> str:
+    """Return the most recent batch id written by spawn.py, or ''."""
+    marker = curator / ".current-batch"
+    if marker.exists():
+        return marker.read_text().strip()
+    # Fall back to the most recent batch in .spawned if no marker.
+    spawned = curator / ".spawned"
+    records = _read_spawned(spawned)
+    if not records:
+        return ""
+    return max(r["batch"] for r in records)
+
+
+def _alive_pids(spawned_path: Path, batch: str = "") -> list:
+    """Return [(pid, session_id), ...] for alive sessions, optionally
+    filtered to a single batch."""
+    records = _read_spawned(spawned_path)
+    if batch:
+        records = [r for r in records if r["batch"] == batch]
+    out = []
+    for r in records:
         try:
-            os.kill(int(pid), 0)
-            out.append((pid, sid))
+            os.kill(int(r["pid"]), 0)
+            out.append((r["pid"], r["session_id"]))
         except (ProcessLookupError, PermissionError, ValueError):
             continue
     return out
@@ -187,29 +217,38 @@ def _exit_reason(log_path: Path) -> str:
     return "other"
 
 
-def _format_status(workspace: Path, watch_mode: bool = False) -> str:
-    """Compose a compact status block from .spawned, .claims, and git log."""
+def _format_status(workspace: Path, watch_mode: bool = False,
+                    all_batches: bool = False,
+                    batch: str = "") -> str:
+    """Compose a compact status block from .spawned, .claims, and git log.
+
+    Default scope is the most recent batch only (last spawn.py run) —
+    previous batches' exited sessions are noise. `all_batches=True`
+    includes everything. `batch=X` filters to a specific batch.
+    """
     import datetime as _dt
-    spawned = workspace / ".curator" / ".spawned"
-    claims_path = workspace / ".curator" / ".claims"
-    sessions_dir = workspace / ".curator" / "sessions"
-    alive = _alive_pids(spawned)
+    curator = workspace / ".curator"
+    spawned = curator / ".spawned"
+    claims_path = curator / ".claims"
+    sessions_dir = curator / "sessions"
+
+    scope_batch = batch
+    if not all_batches and not scope_batch:
+        scope_batch = _current_batch(curator)
+
+    records = _read_spawned(spawned)
+    if scope_batch:
+        records = [r for r in records if r["batch"] == scope_batch]
+    alive = _alive_pids(spawned, batch=scope_batch)
     alive_pids = {p for p, _ in alive}
+    total_spawned = len(records)
 
-    all_entries = []
-    if spawned.exists():
-        for line in spawned.read_text().splitlines():
-            parts = line.strip().split("|")
-            if len(parts) >= 2:
-                all_entries.append((parts[0], parts[1]))
-    total_spawned = len(all_entries)
-
-    # Categorize exited sessions by log signal.
+    # Categorize exited sessions by log signal (within scope).
     exit_counts = {}
-    for pid, sid in all_entries:
-        if pid in alive_pids:
+    for r in records:
+        if r["pid"] in alive_pids:
             continue
-        log = sessions_dir / f"{sid}.log"
+        log = sessions_dir / f"{r['session_id']}.log"
         reason = _exit_reason(log) if log.exists() else "no-log"
         exit_counts[reason] = exit_counts.get(reason, 0) + 1
     exit_str = ", ".join(f"{k}={v}" for k, v in sorted(exit_counts.items())) or "—"
@@ -245,8 +284,16 @@ def _format_status(workspace: Path, watch_mode: bool = False) -> str:
         log_out = []
 
     now_str = _dt.datetime.now().strftime("%H:%M:%S")
+    if scope_batch:
+        try:
+            batch_time = _dt.datetime.fromtimestamp(int(scope_batch)).strftime("%H:%M:%S")
+            scope_label = f"batch @ {batch_time} (--all for full history)"
+        except ValueError:
+            scope_label = f"batch {scope_batch}"
+    else:
+        scope_label = "all batches"
     lines = [
-        f"CURATE status — {now_str}",
+        f"CURATE status — {now_str}  —  scope: {scope_label}",
         f"  sessions: {len(alive)} alive / {total_spawned} spawned",
         f"  exited:   {total_spawned - len(alive)}  [{exit_str}]",
         f"  claims:   {len(claims)} pages in flight  [{ops_str}]",
@@ -280,7 +327,8 @@ def _format_status(workspace: Path, watch_mode: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _watch(workspace: Path, interval: float = 2.0) -> None:
+def _watch(workspace: Path, interval: float = 2.0,
+            all_batches: bool = False, batch: str = "") -> None:
     """Live status. ANSI cursor control if stdout is a TTY.
 
     Non-TTY stdout (pipes, Claude Code Bash tool, log redirection) doesn't
@@ -289,7 +337,8 @@ def _watch(workspace: Path, interval: float = 2.0) -> None:
     point the user at the interactive invocation instead.
     """
     if not sys.stdout.isatty():
-        print(_format_status(workspace, watch_mode=False))
+        print(_format_status(workspace, watch_mode=False,
+                              all_batches=all_batches, batch=batch))
         print()
         print("[non-TTY: printed one snapshot instead of a live loop. "
               "For in-place updates run `spawn.py --watch` from a terminal.]",
@@ -298,7 +347,8 @@ def _watch(workspace: Path, interval: float = 2.0) -> None:
     try:
         first = True
         while True:
-            block = _format_status(workspace, watch_mode=True)
+            block = _format_status(workspace, watch_mode=True,
+                                    all_batches=all_batches, batch=batch)
             if not first:
                 sys.stdout.write("\033[2J\033[H")
             else:
@@ -310,6 +360,45 @@ def _watch(workspace: Path, interval: float = 2.0) -> None:
     except KeyboardInterrupt:
         print("\nWatch stopped; sessions continue in background.",
               file=sys.stderr)
+
+
+def _open_new_terminal_watch(workspace: Path, batch: str,
+                              interval: float) -> bool:
+    """On macOS, open a new Terminal.app tab running the dashboard.
+
+    The dashboard needs a real TTY for ANSI cursor control to render
+    in-place updates. Opening a new window gets the user a live view
+    without pinning their current terminal. Returns True on success,
+    False on non-macOS or osascript failure.
+    """
+    if sys.platform != "darwin":
+        return False
+    if not shutil.which("osascript"):
+        return False
+    script_path = Path(__file__).resolve()
+    cmd = (
+        f"cd {_shell_quote(str(workspace))} && "
+        f"uv run python3 {_shell_quote(str(script_path))} "
+        f"--watch --batch {_shell_quote(batch)} --interval {interval}"
+    )
+    apple = (
+        f'tell application "Terminal"\n'
+        f'  activate\n'
+        f'  do script "{cmd}"\n'
+        f'end tell'
+    )
+    try:
+        subprocess.run(["osascript", "-e", apple],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        check=True, timeout=5)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+def _shell_quote(s: str) -> str:
+    """Minimal single-quote shell escape for AppleScript do-script."""
+    return "'" + s.replace("'", "'\\''") + "'"
 
 
 def _spawn_one(workspace: Path, session_id: str) -> int:
@@ -380,6 +469,16 @@ def main() -> None:
                     help="print status block once and exit")
     ap.add_argument("--interval", type=float, default=2.0,
                     help="dashboard refresh interval in seconds (default 2.0)")
+    ap.add_argument("--all", action="store_true", dest="all_batches",
+                    help="dashboard/status: include every session ever "
+                         "spawned. Default is the most recent batch only.")
+    ap.add_argument("--batch", default="",
+                    help="dashboard/status: filter to one specific batch id "
+                         "(the unix timestamp from .spawned column 3).")
+    ap.add_argument("--no-terminal", action="store_true",
+                    help="suppress opening a new Terminal tab for the "
+                         "dashboard when spawning on macOS (default is to "
+                         "open one so the live view doesn't pin this shell).")
     args = ap.parse_args()
 
     workspace = Path(args.workspace).resolve()
@@ -395,14 +494,16 @@ def main() -> None:
         return
 
     if args.status:
-        print(_format_status(workspace))
+        print(_format_status(workspace, all_batches=args.all_batches,
+                              batch=args.batch))
         return
 
     # --watch alone (no n): enter watch mode. spawn.py N --watch spawns
     # first then watches. No n and no watch: error.
     if args.n is None:
         if args.watch:
-            _watch(workspace, interval=args.interval)
+            _watch(workspace, interval=args.interval,
+                   all_batches=args.all_batches, batch=args.batch)
             return
         print("error: must provide N (number of sessions), or use --watch / "
               "--status / --measure-only", file=sys.stderr)
@@ -442,6 +543,7 @@ def main() -> None:
 
     spawned = []
     t0 = int(time.time())
+    batch_id = str(t0)
     for i in range(args.n):
         sid = f"sess-{t0}-{i:03d}"
         pid = _spawn_one(workspace, sid)
@@ -450,13 +552,18 @@ def main() -> None:
     pids_file = workspace / ".curator" / ".spawned"
     with pids_file.open("a") as f:
         for s in spawned:
-            f.write(f"{s['pid']}|{s['session_id']}|{t0}\n")
+            f.write(f"{s['pid']}|{s['session_id']}|{batch_id}\n")
+
+    # Mark this as the current batch so `--dashboard` / `--status` scope
+    # defaults to these sessions, not every session ever spawned.
+    (workspace / ".curator" / ".current-batch").write_text(batch_id + "\n")
 
     if args.no_watch:
         # Background-detach: print the full JSON summary so the user has
         # the PIDs and kill-command handy, then exit.
         print(json.dumps({
             "spawned": len(spawned),
+            "batch": batch_id,
             "sessions": spawned,
             "logs": str(workspace / ".curator" / "sessions"),
             "note": (
@@ -464,18 +571,28 @@ def main() -> None:
                 "non-local ceiling we can't measure here — if spawned sessions "
                 "stall, check your account tier. Kill all: "
                 f"for p in $(cut -d'|' -f1 {pids_file}); do kill $p; done. "
-                "Monitor later: `uv run python3 spawn.py --watch`."
+                "Monitor later: `uv run python3 spawn.py --dashboard`."
             ),
         }, indent=2))
         return
 
-    # Default: enter the dashboard. Brief confirmation line so the user
-    # sees what was spawned before the dashboard paints.
-    print(f"\nSpawned {len(spawned)} session(s); entering dashboard "
-          f"(Ctrl-C to detach; sessions keep running)...\n",
+    # Default: open a new Terminal.app tab running the live dashboard.
+    # Falls back to in-process watch if new-terminal open fails (non-Mac,
+    # no osascript, --no-terminal flag).
+    if not args.no_terminal and _open_new_terminal_watch(
+            workspace, batch_id, args.interval):
+        print(f"\nSpawned {len(spawned)} session(s) (batch {batch_id}). "
+              f"Dashboard opened in a new Terminal tab.\n"
+              f"(Close that tab anytime — sessions keep running. "
+              f"This shell is free.)\n",
+              file=sys.stderr)
+        return
+
+    print(f"\nSpawned {len(spawned)} session(s) (batch {batch_id}); "
+          f"entering dashboard (Ctrl-C to detach; sessions keep running)...\n",
           file=sys.stderr)
     time.sleep(0.8)
-    _watch(workspace, interval=args.interval)
+    _watch(workspace, interval=args.interval, batch=batch_id)
 
 
 if __name__ == "__main__":
