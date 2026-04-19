@@ -16,10 +16,17 @@ echo "=== Curiosity Engine Setup ==="
 # an approval prompt. So we compute both and emit allowlist entries for
 # each when they differ; for direct-clone installs they're equal and
 # de-dupe naturally.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-SKILL_ROOT_LOGICAL="$(cd "$SCRIPT_DIR/.." && pwd)"
-SKILL_ROOT_PHYSICAL="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-SKILL_ROOT="$SKILL_ROOT_PHYSICAL"    # file operations — unambiguous
+_src_dir="$(dirname "$0")"
+# Two independent derivations: `cd` without -P preserves the symlink
+# (logical); `cd` followed by `pwd -P` canonicalizes (physical). Deriving
+# one from the other would collapse both to the same value, so each path
+# starts from the original $0 source dir.
+SCRIPT_DIR_LOGICAL="$(cd "$_src_dir" && pwd)"
+SCRIPT_DIR_PHYSICAL="$(cd "$_src_dir" && pwd -P)"
+SKILL_ROOT_LOGICAL="$(dirname "$SCRIPT_DIR_LOGICAL")"
+SKILL_ROOT_PHYSICAL="$(dirname "$SCRIPT_DIR_PHYSICAL")"
+SCRIPT_DIR="$SCRIPT_DIR_PHYSICAL"    # internal file ops — unambiguous
+SKILL_ROOT="$SKILL_ROOT_PHYSICAL"
 TEMPLATE_DIR="$SKILL_ROOT/template"
 SKILL_ROOTS=("$SKILL_ROOT_PHYSICAL")
 if [ "$SKILL_ROOT_LOGICAL" != "$SKILL_ROOT_PHYSICAL" ]; then
