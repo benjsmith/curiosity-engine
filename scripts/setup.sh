@@ -7,15 +7,24 @@ echo "=== Curiosity Engine Setup ==="
 # TEMPLATE_DIR is its sibling template/ — the single source of truth for
 # the wiki and curator skeleton copied into each new workspace.
 #
-# `pwd -P` is critical: the skill is typically installed at
+# Path discipline: the skill is typically installed at
 # ~/.claude/skills/<name> which is a symlink to ~/.agents/skills/<name>
-# (or wherever npx-skills dropped the real tree). Claude Code canonicalizes
-# symlinks when invoking Bash commands, so the allowlist we emit must use
-# the same physical path or every script invocation trips an approval
-# prompt.
+# (or wherever npx-skills dropped the real tree). Claude Code's
+# `<skill_path>` substitution is NOT stable across sessions — sometimes
+# it resolves the symlink (physical path), sometimes it doesn't
+# (logical path). If the allowlist only has one form, the other trips
+# an approval prompt. So we compute both and emit allowlist entries for
+# each when they differ; for direct-clone installs they're equal and
+# de-dupe naturally.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+SKILL_ROOT_LOGICAL="$(cd "$SCRIPT_DIR/.." && pwd)"
+SKILL_ROOT_PHYSICAL="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+SKILL_ROOT="$SKILL_ROOT_PHYSICAL"    # file operations — unambiguous
 TEMPLATE_DIR="$SKILL_ROOT/template"
+SKILL_ROOTS=("$SKILL_ROOT_PHYSICAL")
+if [ "$SKILL_ROOT_LOGICAL" != "$SKILL_ROOT_PHYSICAL" ]; then
+    SKILL_ROOTS+=("$SKILL_ROOT_LOGICAL")
+fi
 
 # Ensure `uv` is available. The skill's canonical Python invocation is
 # `uv run python3 ...`, which auto-discovers the workspace `.venv`. Without
@@ -192,9 +201,11 @@ else
     # recent addition, so a single missing check catches workspaces
     # multiple versions behind.
     CANARY_ENTRIES=(
-        "uv run python3"          # pre-uv switch
-        "Edit(./wiki/"            # path-scoped Edit/Write for in-process workers
-        "$SKILL_ROOT/scripts/"    # physical skill path; detects pre-pwd-P settings
+        "uv run python3"                     # pre-uv switch
+        "Edit(./wiki/"                       # path-scoped Edit/Write
+        "$SKILL_ROOT_LOGICAL/scripts/"       # logical skill path — catches
+                                              # pre-dual-path settings that
+                                              # only had the physical path
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -228,6 +239,7 @@ fi
 
 if [ "$regenerate_settings" = "1" ]; then
     mkdir -p .claude
+    # Header + git entries + workspace sweep (path-independent).
     cat > .claude/settings.json <<EOF
 {
   "permissions": {
@@ -250,17 +262,26 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(git -C */wiki checkout:*)",
       "Bash(git -C */wiki rev-parse:*)",
       "Bash(git -C */wiki show:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/lint_scores.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/vault_search.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/vault_index.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/local_ingest.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/scrub_check.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/score_diff.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/sweep.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/epoch_summary.py:*)",
-      "Bash(uv run python3 $SKILL_ROOT/scripts/graph.py:*)",
       "Bash(uv run python3 .curator/sweep.py:*)",
-      "Bash(bash $SKILL_ROOT/scripts/evolve_guard.sh:*)",
+EOF
+    # One block of skill-script entries per skill root (logical +
+    # physical when they differ under a symlinked install).
+    for root in "${SKILL_ROOTS[@]}"; do
+        cat >> .claude/settings.json <<EOF
+      "Bash(uv run python3 $root/scripts/lint_scores.py:*)",
+      "Bash(uv run python3 $root/scripts/vault_search.py:*)",
+      "Bash(uv run python3 $root/scripts/vault_index.py:*)",
+      "Bash(uv run python3 $root/scripts/local_ingest.py:*)",
+      "Bash(uv run python3 $root/scripts/scrub_check.py:*)",
+      "Bash(uv run python3 $root/scripts/score_diff.py:*)",
+      "Bash(uv run python3 $root/scripts/sweep.py:*)",
+      "Bash(uv run python3 $root/scripts/epoch_summary.py:*)",
+      "Bash(uv run python3 $root/scripts/graph.py:*)",
+      "Bash(bash $root/scripts/evolve_guard.sh:*)",
+EOF
+    done
+    # Footer: workspace-scoped Edit/Write + misc.
+    cat >> .claude/settings.json <<EOF
       "Edit(./wiki/**)",
       "Write(./wiki/**)",
       "Edit(./.curator/**)",
@@ -270,7 +291,11 @@ if [ "$regenerate_settings" = "1" ]; then
   }
 }
 EOF
-    echo "  Created .claude/settings.json (auto-allow git -C wiki + uv run python3 skill scripts + scoped Edit/Write)"
+    if [ "${#SKILL_ROOTS[@]}" -gt 1 ]; then
+        echo "  Created .claude/settings.json (dual-path allowlist for symlinked skill install)"
+    else
+        echo "  Created .claude/settings.json (auto-allow git -C wiki + uv run python3 skill scripts + scoped Edit/Write)"
+    fi
 fi
 
 # Clean up leftover parallel-session state from an earlier skill version.
