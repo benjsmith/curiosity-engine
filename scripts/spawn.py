@@ -252,6 +252,23 @@ def _format_status(workspace: Path, watch_mode: bool = False) -> str:
         f"  claims:   {len(claims)} pages in flight  [{ops_str}]",
         f"  recent:   {len(log_out)} commits in last 5 min",
     ]
+
+    # Per-alive-session breakdown — separates "warming up in plan" from
+    # "actively working claims" from "running but stalled" at a glance.
+    if alive:
+        by_session = {}
+        for c in claims:
+            by_session.setdefault(c["session"], []).append(c)
+        lines.append("  per-session:")
+        for pid, sid in alive:
+            sess_claims = by_session.get(sid, [])
+            short = sid.split("-")[-1] if "-" in sid else sid
+            if sess_claims:
+                ops = ", ".join(c["op"] for c in sess_claims[:3])
+                extra = f" (+{len(sess_claims)-3})" if len(sess_claims) > 3 else ""
+                lines.append(f"    {short}: {len(sess_claims)} claimed — {ops}{extra}")
+            else:
+                lines.append(f"    {short}: (no claims yet — planning or idle)")
     for entry in log_out[:3]:
         if "|" in entry:
             when, subj = entry.split("|", 1)
