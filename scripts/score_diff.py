@@ -182,6 +182,22 @@ def matchable_links(text: str) -> int:
                if " " not in m.group(1).strip())
 
 
+def _bad_wikilink_targets(text: str) -> list:
+    """Return wikilink target stems that contain a space or uppercase letter.
+
+    These render as broken in Obsidian even when sweep considers them
+    live (sweep normalises before matching; Obsidian does not). We gate
+    on them to stop new instances from landing.
+    """
+    bad = []
+    for m in WIKILINK_RE.finditer(text):
+        inner = m.group(1).strip()
+        target = inner.split("|", 1)[0]
+        if " " in target or target != target.lower():
+            bad.append(target)
+    return bad
+
+
 def metrics(text: str) -> dict:
     return {
         "tokens": body_tokens(text),
@@ -269,6 +285,14 @@ def main():
             "page": str(page), "accept": accept, "reason": reason,
             "after": metrics(new_text), "applied": False, "new_page": True,
         }
+        if accept:
+            bad = _bad_wikilink_targets(new_text)
+            if bad:
+                accept = False
+                reason = (f"invalid wikilink targets (space or uppercase): "
+                           f"{sorted(set(bad))[:3]} — use [[kebab-case|Display]]")
+                result.update({"accept": False, "reason": reason,
+                                "bad_wikilinks": sorted(set(bad))})
         if accept and write:
             page.parent.mkdir(parents=True, exist_ok=True)
             page.write_text(new_text)
@@ -296,6 +320,17 @@ def main():
             accept = False
             reason = f"suspect citations: {', '.join(s['citation'] for s in suspects)}"
             result.update({"accept": False, "reason": reason, "suspects": suspects})
+
+    if accept:
+        before_bad = set(_bad_wikilink_targets(old_text))
+        after_bad = set(_bad_wikilink_targets(new_text))
+        new_bad = after_bad - before_bad
+        if new_bad:
+            accept = False
+            reason = (f"invalid wikilink targets added (space or uppercase): "
+                       f"{sorted(new_bad)[:3]} — use [[kebab-case|Display]]")
+            result.update({"accept": False, "reason": reason,
+                            "bad_wikilinks": sorted(new_bad)})
 
     if accept and write:
         page.write_text(new_text)

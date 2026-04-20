@@ -36,6 +36,23 @@ Subcommands
         emit it (LaTeX escape habit) which silently eats page prose.
         Idempotent. Prints JSON summary of pages touched.
 
+    sweep.py fix-spaced-wikilinks [wiki_dir]
+        Rewrite `[[Title Case]]` wikilinks to `[[kebab-case|Title Case]]`
+        when the normalised form matches an existing page stem. Obsidian
+        treats `[[Foo Bar]]` as a literal lookup and auto-creates an
+        empty `Foo Bar.md` on click even when `foo-bar.md` exists; this
+        rewrite kills that foot-gun while preserving the original display
+        text. sweep.py scan's normal dead-wikilink scan doesn't catch
+        these (it normalises before comparing). Idempotent.
+
+    sweep.py fix-orphan-root-files [wiki_dir]
+        Remove empty (zero-byte) `.md` files at `wiki/` top level. These
+        are almost always Obsidian auto-create artefacts from clicks on
+        unresolved wikilinks; the wiki's convention is pages-under-
+        subdirs, so any empty file directly in `wiki/` is suspect.
+        Scoped narrowly: top-level only (not `**/*.md`), size 0 only.
+        Idempotent.
+
     sweep.py scan-references [wiki_dir]
         Scan vault extractions for arXiv/DOI references and append any not
         already represented in the vault to a `## source-requests` block in
@@ -155,6 +172,36 @@ def scan_wikilinks(pages: list) -> tuple:
     return all_refs, dead_refs, dict(inbound)
 
 
+def scan_spaced_wikilinks(pages: list) -> list:
+    """Wikilinks whose raw target has a space or uppercase letter but
+    whose normalised form matches an existing stem.
+
+    sweep.py's normal dead-wikilink scan lowercases + hyphenates before
+    comparing, so `[[Foo Bar]]` → `foo-bar` → considered live. But
+    Obsidian does no normalisation — to Obsidian, `[[Foo Bar]]` is an
+    unresolved filename lookup, and clicking it auto-creates an empty
+    `Foo Bar.md` in the vault. The two tools disagree; this catches
+    the cases where they do.
+    """
+    stems_on_disk = {p.stem.lower() for p in pages}
+    bad = []
+    for page in pages:
+        text = page.read_text()
+        for m in WIKILINK_RE.finditer(text):
+            inner = m.group(1).strip()
+            target = inner.split("|", 1)[0]
+            if " " not in target and target == target.lower():
+                continue
+            normalized = target.lower().replace(" ", "-")
+            if normalized in stems_on_disk:
+                bad.append({
+                    "source": str(page),
+                    "raw": target,
+                    "normalized": normalized,
+                })
+    return bad
+
+
 def scan_duplicate_slugs(pages: list) -> list:
     groups = defaultdict(list)
     for p in pages:
@@ -241,10 +288,15 @@ def scan_missing_source_stubs(wiki_dir: Path) -> list:
 def cmd_scan(wiki_dir: Path):
     pages = wiki_pages(wiki_dir)
     _, dead_refs, inbound = scan_wikilinks(pages)
+    spaced = scan_spaced_wikilinks(pages)
+    empty_roots = [str(f.relative_to(wiki_dir)) for f in wiki_dir.glob("*.md")
+                    if f.is_file() and not f.is_symlink() and f.stat().st_size == 0]
     report = {
         "wiki_dir": str(wiki_dir),
         "page_count": len(pages),
         "dead_wikilinks": [{"source": s, "target": t} for (s, t) in dead_refs],
+        "spaced_wikilinks": spaced,
+        "empty_root_files": empty_roots,
         "duplicate_slugs": scan_duplicate_slugs(pages),
         "orphans": scan_orphans(pages, inbound),
         "frontmatter_issues": scan_frontmatter(pages),
@@ -253,6 +305,8 @@ def cmd_scan(wiki_dir: Path):
     }
     report["hygiene_debt"] = (
         len(report["dead_wikilinks"])
+        + len(report["spaced_wikilinks"])
+        + len(report["empty_root_files"])
         + len(report["duplicate_slugs"])
         + len(report["frontmatter_issues"])
         + len(report["index_drift"]["on_disk_not_in_index"])
@@ -435,6 +489,80 @@ def _collapse_double_percent(text: str) -> str:
         cursor = end
     out.append(_DOUBLE_PERCENT_RE.sub("%", body[cursor:]))
     return head + "".join(out)
+
+
+_WIKILINK_WITH_ALIAS_RE = re.compile(r"\[\[([^\]|]+)(\|[^\]]*)?\]\]")
+
+
+def cmd_fix_spaced_wikilinks(wiki_dir: Path):
+    """Rewrite [[Title Case]] → [[kebab-case|Title Case]] when the
+    normalised form matches an existing page stem.
+
+    If the target already has a pipe-alias (`[[Raw|Display]]`), rewrite
+    just the target portion, keeping the display text. If not, add the
+    original raw target as the display alias so rendered prose keeps
+    its capitalisation.
+    """
+    pages = wiki_pages(wiki_dir)
+    stems_on_disk = {p.stem.lower() for p in pages}
+    touched = []
+    total_fixed = 0
+
+    def _fix_factory(page_stem_lower: str):
+        def _fix(m):
+            nonlocal total_fixed
+            target = m.group(1).strip()
+            alias_suffix = m.group(2) or ""  # starts with pipe, or empty
+            if " " not in target and target == target.lower():
+                return m.group(0)
+            normalized = target.lower().replace(" ", "-")
+            if normalized not in stems_on_disk:
+                return m.group(0)
+            # Self-link edge case — preserve display if any
+            if alias_suffix:
+                new_link = f"[[{normalized}{alias_suffix}]]"
+            else:
+                new_link = f"[[{normalized}|{target}]]"
+            total_fixed += 1
+            return new_link
+        return _fix
+
+    for page in pages:
+        text = page.read_text()
+        new_text = _WIKILINK_WITH_ALIAS_RE.sub(_fix_factory(page.stem.lower()), text)
+        if new_text != text:
+            page.write_text(new_text)
+            touched.append(str(page.relative_to(wiki_dir)))
+    print(json.dumps({
+        "pages_touched": len(touched),
+        "links_fixed": total_fixed,
+        "pages": touched,
+    }, indent=2))
+
+
+def cmd_fix_orphan_root_files(wiki_dir: Path):
+    """Remove empty (zero-byte) .md files at wiki/ top level.
+
+    Scoped narrowly: glob is `*.md` (not recursive), size must be 0,
+    symlinks skipped. Captures Obsidian click-artefacts without
+    touching any real content. Idempotent.
+    """
+    removed = []
+    for f in sorted(wiki_dir.glob("*.md")):
+        if not f.is_file() or f.is_symlink():
+            continue
+        try:
+            if f.stat().st_size != 0:
+                continue
+        except OSError:
+            continue
+        try:
+            f.unlink()
+            removed.append(f.name)
+        except OSError as e:
+            print(f"sweep fix-orphan-root-files: failed to remove {f}: {e}",
+                  file=sys.stderr)
+    print(json.dumps({"removed": len(removed), "files": removed}, indent=2))
 
 
 def cmd_fix_percent_escapes(wiki_dir: Path):
@@ -791,6 +919,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
+        "fix-spaced-wikilinks", "fix-orphan-root-files",
         "scan-references", "resync-stems", "concept-candidates",
         "evidence-candidates", "pending-multimodal",
     ])
@@ -821,6 +950,10 @@ def main():
         cmd_fix_index(wiki_dir)
     elif args.command == "fix-percent-escapes":
         cmd_fix_percent_escapes(wiki_dir)
+    elif args.command == "fix-spaced-wikilinks":
+        cmd_fix_spaced_wikilinks(wiki_dir)
+    elif args.command == "fix-orphan-root-files":
+        cmd_fix_orphan_root_files(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":
