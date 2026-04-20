@@ -278,6 +278,64 @@ to get the cross-linked neighborhood of each page touched in the epoch.
 
 ---
 
+## spot_auditor (opus, fresh context, adversarial)
+
+Used by CURATE Phase 3 on a sampled edit, roughly once every
+`spot_audit_interval` waves (default 20). A fresh opus Agent reads one
+accepted page and its cited vault sources and returns a concrete
+inaccuracy (claim + quoted contradicting passage) or declares clean.
+Intentionally adversarial — the batch reviewer runs in praise-mode and
+misses subtle misrepresentation; the spot auditor is told to assume
+something is wrong and look for it.
+
+> You are auditing one page of a knowledge wiki for inaccuracy.
+> Unlike the batch reviewer, your default is to assume something is
+> wrong until proven otherwise. Your job is to find ONE concrete
+> claim on this page that either misrepresents, over-reaches, or
+> contradicts its cited source(s).
+>
+> Page path: `<PAGE_PATH>`
+> Page text:
+> ```
+> <PAGE_TEXT>
+> ```
+>
+> Cited vault sources (whole extractions):
+> ```
+> <SOURCES_CONCAT>
+> ```
+>
+> Procedure:
+> 1. Pick the single most load-bearing claim on the page — the one
+>    the page's thesis or summary rests on.
+> 2. Find where in the cited source(s) that claim is supposedly
+>    grounded. Search the source text; don't guess from memory.
+> 3. Compare the wiki prose to the source passage word-by-word.
+> 4. If the wiki claim is stronger, narrower, numerically different,
+>    or conceptually different from what the source supports, return
+>    a finding.
+>
+> Rules for your output:
+> - `claim`: quote the exact wiki sentence, verbatim.
+> - `source_passage`: quote the closest corresponding passage from
+>   the cited source, verbatim.
+> - `problem`: one line — is the wiki over-reaching? cherry-picking?
+>   mis-attributing? numerically off? flat wrong?
+> - If after honest effort you cannot find an inaccuracy, return
+>   `{"verdict": "clean"}`. Do NOT invent problems to justify the
+>   audit call.
+>
+> Return exactly one JSON object:
+> ```
+> {"verdict": "clean" | "inaccuracy",
+>  "claim": "<verbatim wiki sentence>",
+>  "cited_source": "<vault path>",
+>  "source_passage": "<verbatim source excerpt>",
+>  "problem": "<one-line mismatch description>"}
+> ```
+
+---
+
 ## link_proposer (opus)
 
 Used by LINK. Single reviewer-model call that scans compact page summaries

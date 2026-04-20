@@ -115,6 +115,7 @@ Read `.curator/schema.md` before any operation.
   "saturation_rate_threshold": 0.005,
   "saturation_consecutive_waves": 2,
   "orphan_dominance_threshold": 0.6,
+  "spot_audit_interval": 20,
   "caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
 }
 ```
@@ -125,6 +126,7 @@ Read `.curator/schema.md` before any operation.
 - **wallclock_max_hours** — hard stop on the outer loop.
 - **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
 - **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
+- **spot_audit_interval** — every Nth wave (default 20), Phase 3 dispatches a single-page adversarial spot auditor against a random accepted edit. Set to 0 to disable. Catches subtle source misrepresentation the praise-mode batch reviewer doesn't flag.
 - **caveman** — compression levels for the optional [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) skill. Three keys:
   - `read` — applied when reading any wiki/vault text into context (orchestrator briefs, epoch_summary input). Ultra strips articles, copula, filler adverbs, pronouns, transitions, prepositions. ~30-40% token reduction.
   - `write_analysis` — applied when writing `analyses/` pages. Lite strips only filler adverbs and transition words, keeping articles and prepositions. Human-comfortable prose. ~10-15% token reduction.
@@ -311,10 +313,11 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 1. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check .curator/.guard.snapshot`. Drift = abort + revert.
 2. **Rebuild graph if structural.** If any page was created or any wikilink changed (always true in wire mode; often true in create mode), run `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`. The rebuild is idempotent and short-circuits when the graph is already current.
 3. **Measure.** `rate_per_accept = (start_score − end_score) / max(accepts, 1)`. Record `delta_per_wave`, `elapsed_seconds`.
-4. **Optimization-surface evaluation.** If the previous wave modified `.curator/sweep.py`:
+4. **Spot audit (sampled).** When `wave_number % spot_audit_interval == 0` (default 20), pick one accepted edit from this wave at random and dispatch a fresh-context opus Agent with the `spot_auditor` template in `.curator/prompts.md`. Pass the page text and its cited vault sources' full extractions. If the verdict is `inaccuracy`, append the finding (claim, cited_source, source_passage, problem) under `## spot-audit-findings` in `.curator/log.md` — human-review territory, not auto-reverted because the batch reviewer already passed the edit. If `clean` or the wave has no accepts, no log entry. Skip entirely if `spot_audit_interval` is 0. Adversarial and cheap: one extra opus call per ~20 waves catches subtle source misrepresentation the praise-mode batch reviewer misses.
+5. **Optimization-surface evaluation.** If the previous wave modified `.curator/sweep.py`:
    - Improved `rate_per_accept` vs. the prior sweep-change? Keep. Propose a new untried sweep edit.
    - Degraded? Reverse-diff from the skill's reference: `cp <skill_path>/scripts/sweep.py .curator/sweep.py`. Log the failed diff so future iterations don't retry it.
-5. **Wave log.** Append to `.curator/log.md`:
+6. **Wave log.** Append to `.curator/log.md`:
    ```
    ## curate-wave <N> <ISO timestamp>
    mode: create | wire | repair
@@ -326,6 +329,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    rejected: R
    flagged_for_human: F
    suspect_citations: N
+   spot_audit: skipped | clean | inaccuracy
    spawn_concept_queued: [stem1, stem2]
    sweep_change: <none | "added rule X" | "reverted (rate degraded)">
    notes: <what worked, what didn't>
@@ -355,7 +359,7 @@ On-demand semantic contradiction scan. Previously ran inside every CURATE epoch;
 
 ### Optimization surface
 
-CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`. Evaluation is log-based (see Phase 3 step 4). Every diff is logged. Degraded rate restores from the skill's pristine reference.
+CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`. Evaluation is log-based (see Phase 3 step 5). Every diff is logged. Degraded rate restores from the skill's pristine reference.
 
 - **Agent-editable:** `.curator/sweep.py` only (workspace copy).
 - **Human-edited (stable):** `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json`. CURATE must not edit these during a run.
