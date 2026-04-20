@@ -7,6 +7,8 @@
   "saturation_consecutive_waves": 2,
   "orphan_dominance_threshold": 0.6,
   "spot_audit_interval": 20,
+  "embedding_enabled": false,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "caveman": {
     "read": "ultra",
     "write_analysis": "lite",

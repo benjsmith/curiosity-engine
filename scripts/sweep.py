@@ -13,11 +13,17 @@ Subcommands
         Read-only report. Emits one JSON object covering every hygiene
         dimension. Main session reads the report and decides what to fix.
 
-    sweep.py fix-source-stubs [wiki_dir]
+    sweep.py fix-source-stubs [wiki_dir] [--cited-only]
         Deterministic backfill: for every file in `vault/` without a
         corresponding stub in `wiki/sources/`, create one from the vault
         file's extracted-text frontmatter and a short auto-summary.
         Idempotent. Prints JSON summary of what was created.
+
+        `--cited-only` is the tiered-vault mode: only create stubs for
+        vault files already cited by non-source wiki pages via
+        `(vault:<path>)`. Uncited vault material stays searchable (FTS5,
+        semantic) without cluttering the wiki. Useful once the vault
+        grows past ~500 sources.
 
     sweep.py fix-index [wiki_dir]
         Rewrite `.curator/index.md` so it matches the pages on disk.
@@ -248,12 +254,29 @@ def cmd_scan(wiki_dir: Path):
     print(json.dumps(report, indent=2))
 
 
-def cmd_fix_source_stubs(wiki_dir: Path):
+def _cited_vault_paths(wiki_dir: Path) -> set:
+    """Vault paths referenced by (vault:...) citations in non-source pages."""
+    from naming import CITATION_RE
+    cited = set()
+    for p in wiki_pages(wiki_dir):
+        rel = str(p.relative_to(wiki_dir))
+        if rel.startswith("sources/"):
+            continue
+        for m in CITATION_RE.finditer(p.read_text()):
+            cited.add(m.group(1).strip())
+    return cited
+
+
+def cmd_fix_source_stubs(wiki_dir: Path, cited_only: bool = False):
     """Create wiki/sources/<topic>.md for every vault extraction without a stub.
 
     Uses naming.parse_source_meta + naming.citation_stem to build the
     filename and naming.source_display_title for the frontmatter title.
     Idempotent.
+
+    `cited_only=True` restricts creation to vault files already cited by
+    non-source wiki pages — the tiered-vault mode. Uncited sources stay
+    in the vault (FTS5 + semantic searchable) but don't get a wiki page.
     """
     import hashlib
     from naming import citation_stem, parse_source_meta, source_display_title, TYPE_PREFIX
@@ -266,6 +289,8 @@ def cmd_fix_source_stubs(wiki_dir: Path):
     created = []
     skipped = 0
     skipped_unnamed = []
+    skipped_uncited = 0
+    cited_filter = _cited_vault_paths(wiki_dir) if cited_only else None
     # Guard against producing garbage stubs when naming fails. Topics
     # matching a generic section heading (abstract, overview, ...) indicate
     # parse_source_meta couldn't find a real title and fell through to
@@ -275,6 +300,9 @@ def cmd_fix_source_stubs(wiki_dir: Path):
         "references", "contents", "background", "discussion", "results",
     }
     for extracted in sorted(vault_dir.glob("*.extracted.md")):
+        if cited_filter is not None and extracted.name not in cited_filter:
+            skipped_uncited += 1
+            continue
         sha = hashlib.sha256(extracted.read_bytes()).hexdigest()
         if extracted.name.lower() in covered_paths or sha.lower() in covered_hashes:
             skipped += 1
@@ -323,9 +351,12 @@ def cmd_fix_source_stubs(wiki_dir: Path):
         )
         stub_path.write_text(stub)
         created.append(str(stub_path))
-    print(json.dumps({"created": len(created), "skipped": skipped,
-                      "skipped_unnamed": skipped_unnamed,
-                      "created_paths": created}, indent=2))
+    out = {"created": len(created), "skipped": skipped,
+           "skipped_unnamed": skipped_unnamed,
+           "created_paths": created}
+    if cited_only:
+        out["skipped_uncited"] = skipped_uncited
+    print(json.dumps(out, indent=2))
 
 
 def cmd_fix_index(wiki_dir: Path):
@@ -678,6 +709,10 @@ def main():
     ap.add_argument("--limit", type=int, default=20,
                     help="concept-candidates: max candidates returned "
                          "(default 20)")
+    ap.add_argument("--cited-only", action="store_true",
+                    help="fix-source-stubs: only create stubs for vault "
+                         "files already cited by non-source wiki pages "
+                         "(tiered-vault mode)")
     args = ap.parse_args()
 
     wiki_dir = Path(args.wiki).resolve()
@@ -688,7 +723,7 @@ def main():
     if args.command == "scan":
         cmd_scan(wiki_dir)
     elif args.command == "fix-source-stubs":
-        cmd_fix_source_stubs(wiki_dir)
+        cmd_fix_source_stubs(wiki_dir, cited_only=args.cited_only)
     elif args.command == "fix-index":
         cmd_fix_index(wiki_dir)
     elif args.command == "fix-percent-escapes":

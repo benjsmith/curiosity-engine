@@ -361,6 +361,46 @@ if [ -t 0 ] && [ -t 1 ]; then
     esac
 fi
 
+# Optional: semantic vault search (sentence-transformers + sqlite-vec).
+# Adds ~200MB of model weights and enables hybrid FTS5 + cosine search.
+# Most small vaults (<500 sources) don't need this — FTS5 keyword
+# search covers the common case. Opt in when you start hitting
+# paraphrased queries that miss with keyword alone.
+if [ -t 0 ] && [ -t 1 ]; then
+    echo ""
+    printf "Install semantic vault search (sentence-transformers + sqlite-vec, ~200MB)? [y/N] "
+    read -r reply_embed || reply_embed="n"
+    case "$reply_embed" in
+        y|Y|yes|YES)
+            echo "  Installing sentence-transformers + sqlite-vec into .venv ..."
+            if uv pip install sentence-transformers sqlite-vec; then
+                # Flip embedding_enabled to true in config.json so vault_index
+                # will compute embeddings on next ingest / --rebuild.
+                uv run --no-project python3 -c "
+import json
+from pathlib import Path
+p = Path('.curator/config.json')
+cfg = json.loads(p.read_text())
+cfg['embedding_enabled'] = True
+cfg.setdefault('embedding_model', 'sentence-transformers/all-MiniLM-L6-v2')
+p.write_text(json.dumps(cfg, indent=2))
+"
+                echo "  Enabled embedding_enabled=true in .curator/config.json"
+                echo "  To embed the existing vault:"
+                echo "    uv run python3 $SCRIPT_DIR/vault_index.py --rebuild"
+            else
+                echo "  Install failed. Enable later:"
+                echo "    uv pip install sentence-transformers sqlite-vec"
+            fi
+            ;;
+        *)
+            echo "  Skipping semantic search. Enable later:"
+            echo "    uv pip install sentence-transformers sqlite-vec"
+            echo "    (then set embedding_enabled=true in .curator/config.json)"
+            ;;
+    esac
+fi
+
 # Initialize vault FTS5 index
 uv run python3 "$SCRIPT_DIR/vault_index.py" --init
 

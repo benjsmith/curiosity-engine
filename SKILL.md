@@ -91,9 +91,10 @@ This creates the full project structure, initializes git in the wiki, creates th
 ## Data stores
 
 **Vault** (`vault/`) — Folder of raw source files. Append-only. Never modify existing files.
-- Search: `uv run python3 <skill_path>/scripts/vault_search.py "query"` → JSON
-- You can read PDFs, images, DOCX, PPTX natively — no extraction libraries needed
-- Each source gets a `.extracted.md` alongside it for FTS5 indexing
+- Search: `uv run python3 <skill_path>/scripts/vault_search.py "query"` → JSON (FTS5 / BM25).
+- Optional semantic search (opt-in via `embedding_enabled=true` in config): `vault_search.py --mode hybrid "query"` merges FTS5 and MiniLM cosine rankings via Reciprocal Rank Fusion. Catches paraphrases FTS5 misses. Embeddings indexed alongside FTS5 at ingest time via sqlite-vec. Rebuild the embedding layer with `vault_index.py --rebuild`; re-embed under a different model with `vault_index.py --reembed`.
+- You can read PDFs, images, DOCX, PPTX natively — no extraction libraries needed.
+- Each source gets a `.extracted.md` alongside it for FTS5 indexing.
 
 **Wiki** (`wiki/`) — Git-tracked markdown. You own this entirely.
 - YAML frontmatter: title, type, created, updated, sources
@@ -127,6 +128,7 @@ Read `.curator/schema.md` before any operation.
 - **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
 - **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
 - **spot_audit_interval** — every Nth wave (default 20), Phase 3 dispatches a single-page adversarial spot auditor against a random accepted edit. Set to 0 to disable. Catches subtle source misrepresentation the praise-mode batch reviewer doesn't flag.
+- **embedding_enabled** / **embedding_model** — opt-in semantic vault search. When `true`, `vault_index.py` computes an embedding alongside every FTS5 row (stored in sqlite-vec), and `vault_search.py --mode hybrid` merges FTS5 + cosine rankings via RRF. Default model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim, ~80MB). Install the deps (`uv pip install sentence-transformers sqlite-vec`) before flipping `embedding_enabled` to true. Setup prompts for this at bootstrap time.
 - **caveman** — compression levels for the optional [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) skill. Three keys:
   - `read` — applied when reading any wiki/vault text into context (orchestrator briefs, epoch_summary input). Ultra strips articles, copula, filler adverbs, pronouns, transitions, prepositions. ~30-40% token reduction.
   - `write_analysis` — applied when writing `analyses/` pages. Lite strips only filler adverbs and transition words, keeping articles and prepositions. Human-comfortable prose. ~10-15% token reduction.
@@ -185,7 +187,7 @@ Mechanical whole-wiki hygiene. Distinct from CURATE's semantic ratchet: SWEEP ru
 
 1. **Scan** — `uv run python3 .curator/sweep.py scan wiki` → JSON report.
 2. **Deterministic fixes:**
-   - `uv run python3 .curator/sweep.py fix-source-stubs wiki` (citation-style stems + `[src]`-prefixed titles via `naming.py`)
+   - `uv run python3 .curator/sweep.py fix-source-stubs wiki [--cited-only]` (citation-style stems + `[src]`-prefixed titles via `naming.py`. `--cited-only` is the tiered-vault mode: only creates stubs for vault files already cited by non-source wiki pages — keeps the wiki bounded even when the vault grows past ~500 sources.)
    - `uv run python3 .curator/sweep.py fix-index wiki` (rewrites `.curator/index.md`)
    - `uv run python3 .curator/sweep.py fix-percent-escapes wiki` (collapses Obsidian hidden-comment `%%`)
    - `uv run python3 .curator/sweep.py resync-stems wiki` (renames `sources/` stubs + rewrites inbound wikilinks when naming.py's citation-stem convention has changed since the wiki was built; idempotent — emits `renames: 0` when in sync. `setup.sh` runs this automatically after template refresh, guarded by a clean-git check.)
