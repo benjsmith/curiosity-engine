@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # evolve_guard.sh — reward-hacking guard for the CURATE loop.
 #
-# Hash-guards the scoring/measurement scripts (and itself). Records a
-# fingerprint at epoch start, compares at epoch end. Drift aborts the
-# epoch. CURATE may edit .curator/sweep.py but nothing in this list.
+# Hash-guards every skill script that scores, gates, evaluates, or
+# composes wiki structure, plus itself. Records a fingerprint at wave
+# start, compares at wave end. Drift aborts the wave.
+#
+# There is no agent-editable code path. Improvement ideas land as prose
+# notes in .curator/log.md (## improvement-suggestions) for the human
+# maintainer to evaluate. No agent-generated code enters execution.
 #
 # Usage:
 #   evolve_guard.sh hash                    # print fingerprint to stdout
@@ -25,6 +29,7 @@ GUARDED=(
     "$SCRIPT_DIR/scrub_check.py"
     "$SCRIPT_DIR/naming.py"
     "$SCRIPT_DIR/graph.py"
+    "$SCRIPT_DIR/sweep.py"
 )
 
 sha256_cmd() {

@@ -54,11 +54,9 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve.
-3. `uv run python3 .curator/sweep.py ...` — the workspace-editable sweep copy
-4. `uv run python3 <skill_path>/scripts/graph.py <subcommand> wiki ...` — kuzu knowledge graph (see below)
-5. `bash <skill_path>/scripts/evolve_guard.sh ...`
-6. `date ...`
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
+3. `bash <skill_path>/scripts/evolve_guard.sh ...`
+4. `date ...`
 
 **Graph queries** (`graph.py`): the kuzu graph stores WikiPage and VaultSource nodes with WikiLink and Cites edges. Rebuild after any wiki structural change. Subcommands:
 - `rebuild wiki` — drop + rebuild from pages on disk. Run after sweep and after ingest.
@@ -187,14 +185,14 @@ Composite formula lives in `lint_scores.py compute_all()`. Contradictions and qu
 
 ### SWEEP — "sweep", "clean up", "hygiene pass"
 
-Mechanical whole-wiki hygiene. Distinct from CURATE's semantic ratchet: SWEEP runs in seconds and targets issues CURATE cannot see (dead wikilinks, duplicate slugs, missing source stubs, index drift). Prefer the workspace copy (`uv run python3 .curator/sweep.py`) — it may carry agent-proposed improvements over the pristine reference at `<skill_path>/scripts/sweep.py`.
+Mechanical whole-wiki hygiene. Distinct from CURATE's semantic ratchet: SWEEP runs in seconds and targets issues CURATE cannot see (dead wikilinks, duplicate slugs, missing source stubs, index drift). Always runs `<skill_path>/scripts/sweep.py` — hash-guarded, never agent-edited at runtime.
 
-1. **Scan** — `uv run python3 .curator/sweep.py scan wiki` → JSON report.
+1. **Scan** — `uv run python3 <skill_path>/scripts/sweep.py scan wiki` → JSON report.
 2. **Deterministic fixes:**
-   - `uv run python3 .curator/sweep.py fix-source-stubs wiki [--cited-only]` (citation-style stems + `[src]`-prefixed titles via `naming.py`. `--cited-only` is the tiered-vault mode: only creates stubs for vault files already cited by non-source wiki pages — keeps the wiki bounded even when the vault grows past ~500 sources.)
-   - `uv run python3 .curator/sweep.py fix-index wiki` (rewrites `.curator/index.md`)
-   - `uv run python3 .curator/sweep.py fix-percent-escapes wiki` (collapses Obsidian hidden-comment `%%`)
-   - `uv run python3 .curator/sweep.py resync-stems wiki` (renames `sources/` stubs + rewrites inbound wikilinks when naming.py's citation-stem convention has changed since the wiki was built; idempotent — emits `renames: 0` when in sync. `setup.sh` runs this automatically after template refresh, guarded by a clean-git check.)
+   - `uv run python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki [--cited-only]` (citation-style stems + `[src]`-prefixed titles via `naming.py`. `--cited-only` is the tiered-vault mode: only creates stubs for vault files already cited by non-source wiki pages — keeps the wiki bounded even when the vault grows past ~500 sources.)
+   - `uv run python3 <skill_path>/scripts/sweep.py fix-index wiki` (rewrites `.curator/index.md`)
+   - `uv run python3 <skill_path>/scripts/sweep.py fix-percent-escapes wiki` (collapses Obsidian hidden-comment `%%`)
+   - `uv run python3 <skill_path>/scripts/sweep.py resync-stems wiki` (renames `sources/` stubs + rewrites inbound wikilinks when naming.py's citation-stem convention has changed since the wiki was built; idempotent — emits `renames: 0` when in sync. `setup.sh` runs this automatically after template refresh, guarded by a clean-git check.)
 3. **LLM-decided fixes** — duplicate slugs (merge), dead wikilinks (create/retarget/remove), frontmatter issues. Workers creating or renaming pages must use `naming.py` for stems and display titles.
 4. **Rebuild graph:** `uv run python3 <skill_path>/scripts/graph.py rebuild wiki` (keeps kuzu in sync with wiki link structure).
 5. Commit: `git -C wiki add -A && git -C wiki commit -m "sweep: <summary>"`.
@@ -322,9 +320,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 2. **Rebuild graph if structural.** If any page was created or any wikilink changed (always true in wire mode; often true in create mode), run `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`. The rebuild is idempotent and short-circuits when the graph is already current.
 3. **Measure.** `rate_per_accept = (start_score − end_score) / max(accepts, 1)`. Record `delta_per_wave`, `elapsed_seconds`.
 4. **Spot audit (sampled).** When `wave_number % spot_audit_interval == 0` (default 20), pick one accepted edit from this wave at random and dispatch a fresh-context opus Agent with the `spot_auditor` template in `.curator/prompts.md`. Pass the page text and its cited vault sources' full extractions. If the verdict is `inaccuracy`, append the finding (claim, cited_source, source_passage, problem) under `## spot-audit-findings` in `.curator/log.md` — human-review territory, not auto-reverted because the batch reviewer already passed the edit. If `clean` or the wave has no accepts, no log entry. Skip entirely if `spot_audit_interval` is 0. Adversarial and cheap: one extra opus call per ~20 waves catches subtle source misrepresentation the praise-mode batch reviewer misses.
-5. **Optimization-surface evaluation.** If the previous wave modified `.curator/sweep.py`:
-   - Improved `rate_per_accept` vs. the prior sweep-change? Keep. Propose a new untried sweep edit.
-   - Degraded? Reverse-diff from the skill's reference: `cp <skill_path>/scripts/sweep.py .curator/sweep.py`. Log the failed diff so future iterations don't retry it.
+5. **Improvement suggestions (optional, prose only).** If during this wave the curator observed a clear opportunity to improve a skill script — a missing sweep rule that could have caught something concrete, a lint dimension producing misleading signal on a specific page, a brief-composition pattern that consistently failed — append a note under `## improvement-suggestions` in `.curator/log.md`. Format: one-line symptom, one-line proposal, the observed evidence (page paths, counts, quoted text). The curator does NOT edit skill scripts; all are hash-guarded. Suggestions exist for the human maintainer to evaluate and apply via the skill source. Skip entirely when no observation warrants it — noise-free suggestions beat pro-forma ones.
 6. **Wave log.** Append to `.curator/log.md`:
    ```
    ## curate-wave <N> <ISO timestamp>
@@ -339,7 +335,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    suspect_citations: N
    spot_audit: skipped | clean | inaccuracy
    spawn_concept_queued: [stem1, stem2]
-   sweep_change: <none | "added rule X" | "reverted (rate degraded)">
+   suggestions_added: N (count of new entries under ## improvement-suggestions)
    notes: <what worked, what didn't>
    ```
 
@@ -365,14 +361,13 @@ On-demand semantic contradiction scan. Previously ran inside every CURATE epoch;
    - `human-review` → append to `## human-review-queue` in `.curator/log.md`.
 4. **Commit.** `git -C wiki commit -m "contradiction-scan: K auto-corrected, H flagged"`.
 
-### Optimization surface
+### Scripts and safety
 
-CURATE may modify exactly ONE thing about its own operation: `.curator/sweep.py`. Evaluation is log-based (see Phase 3 step 5). Every diff is logged. Degraded rate restores from the skill's pristine reference.
+CURATE cannot edit any skill script at runtime. All scripts that score, gate, evaluate, parse structure, or perform sweep operations are hash-guarded by `evolve_guard.sh`. A snapshot is taken at the start of every wave and rechecked at end; any drift aborts the wave and reverts.
 
-- **Agent-editable:** `.curator/sweep.py` only (workspace copy).
-- **Human-edited (stable):** `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json`. CURATE must not edit these during a run.
-- **Off-limits (hash-guarded by `evolve_guard.sh`):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`. The snapshot/check pair enforces this; violation aborts the wave.
-- **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates.
+- **Hash-guarded (all skill scripts):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`, `sweep.py`, `evolve_guard.sh` itself. Edits land in the skill source (git-tracked upstream), not inside a workspace — no agent-editable code path exists.
+- **Human-edited (per-workspace):** `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json`. CURATE must not edit these during a run.
+- **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates. Script improvement ideas land under `## improvement-suggestions` as prose notes — no agent-generated code enters the execution path.
 - **Fresh-context rule:** the reviewer MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
 
 ### Caveman integration

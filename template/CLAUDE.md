@@ -15,11 +15,12 @@ file from the template.
   `concepts/`, `analyses/`, `evidence/`, `facts/`.
 - `.curator/` — curator state, not git-tracked.
   - `schema.md`, `prompts.md`, `config.json` — human-edited.
-  - `sweep.py` — agent-editable workspace copy (pristine ref at
-    `<skill>/scripts/sweep.py`).
   - `graph.kuzu` — kuzu property graph (WikiPage/VaultSource nodes,
     WikiLink/Cites edges). Rebuilt via `graph.py rebuild wiki`.
   - `log.md`, `index.md`, `.epoch_plan.md`, `.guard.snapshot` — auto.
+    Improvement ideas for skill scripts land in `log.md` under
+    `## improvement-suggestions` — prose only, no agent-generated code
+    enters execution (all skill scripts are hash-guarded).
 
 Read `.curator/schema.md` before any operation.
 
@@ -50,12 +51,11 @@ bash commands allowed:
 2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare
    `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the
    workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve.
-3. `uv run python3 .curator/sweep.py ...` — the workspace sweep copy
-4. `uv run python3 <skill_path>/scripts/graph.py <subcommand> wiki ...` —
-   kuzu knowledge graph: `rebuild`, `shared-sources`, `path`, `neighbors`,
-   `bridge-candidates`. Rebuild after any structural wiki change.
-5. `bash <skill_path>/scripts/evolve_guard.sh ...`
-6. `date ...`
+   Covers sweep.py, graph.py, lint_scores.py, score_diff.py,
+   epoch_summary.py, scrub_check.py, vault_index.py, vault_search.py,
+   local_ingest.py — all hash-guarded skill scripts.
+3. `bash <skill_path>/scripts/evolve_guard.sh ...`
+4. `date ...`
 
 **For everything else, use the tool layer:**
 - Read (not `cat`/`head`/`tail`/`less`)

@@ -25,13 +25,15 @@ On reject the edit is NOT written; the orchestrator moves on. On accept the file
 
 The ratchet is deliberately mechanical. It doesn't judge prose quality — that's the reviewer's job. It catches catastrophic regressions that a praise-mode reviewer might miss because they look innocuous.
 
-## Hash-guarded scoring
+## Hash-guarded scripts
 
-The curator can edit exactly one thing about its own operation: `.curator/sweep.py` (the workspace-editable hygiene pass). Every other script that scores, gates, or evaluates is SHA-256 hashed at the start of each wave (`evolve_guard.sh snapshot`) and re-checked at the end (`evolve_guard.sh check`). Any drift aborts the wave and reverts.
+The curator cannot edit any skill script at runtime. Every script that scores, gates, evaluates, parses structure, or performs sweep operations is SHA-256 hashed at the start of each wave (`evolve_guard.sh snapshot`) and re-checked at the end (`evolve_guard.sh check`). Any drift aborts the wave and reverts.
 
-Off-limits to the curator: `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`.
+Hash-guarded: `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`, `sweep.py`, `evolve_guard.sh` itself.
 
-Why: a self-improving loop that can edit its own reward function is a self-deceiving loop. The guard forecloses that entire class of failure rather than relying on vigilance.
+Earlier versions allowed the curator to edit `.curator/sweep.py` (a workspace copy of the hygiene pass) as a narrow "optimization surface", reverting on degraded rate. That capability has been removed. The threat model is simple: a self-improving loop that can edit code in its own execution path is one prompt-injection or one reward-hack away from gaming itself. Suggestions now land as prose in `.curator/log.md` under `## improvement-suggestions`; a human maintainer evaluates and applies the change via the skill source.
+
+Why hash-guard rather than file-permissions or a sandboxed subinterpreter: a hash guard is cheap, deterministic, and legible — a human reviewing `.curator/log.md` after an epoch can trace exactly what the curator observed and proposed, and whether any script drifted during the run. The goal isn't to contain a malicious agent (that battle is deeper than any single skill); it's to make the common self-deception failure mode mechanically impossible.
 
 ## The CURATE loop
 

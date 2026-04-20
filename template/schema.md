@@ -73,10 +73,10 @@ not by the mechanical gate.
 ## CURATE meta-rules
 - `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json` are
   human-edited. CURATE must not edit them during a run.
-- `.curator/sweep.py` is agent-editable (workspace copy). Every edit is
-  diffed against the pristine reference and logged. If the post-edit rate
-  degrades vs. the previous sweep-change, restore from the reference.
-- Off-limits (hash-guarded by evolve_guard.sh): `lint_scores.py`,
+- ALL skill scripts are hash-guarded by evolve_guard.sh: `lint_scores.py`,
   `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`,
-  `graph.py`, `evolve_guard.sh` itself.
+  `graph.py`, `sweep.py`, `evolve_guard.sh` itself. The curator has NO
+  agent-editable code path. Improvement ideas land as prose notes under
+  `## improvement-suggestions` in `.curator/log.md` for the human
+  maintainer to evaluate and apply via the skill source.
 - `.curator/log.md` is append-only. Never rewrite history to inflate rates.

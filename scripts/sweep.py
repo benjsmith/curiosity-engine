@@ -69,13 +69,12 @@ Subcommands
 
 Design notes
 ------------
-- sweep.py is workspace-agent-editable. It lives at `.curator/sweep.py` in
-  the workspace; the pristine reference ships with the skill at
-  `<skill>/scripts/sweep.py` and is NOT hash-guarded. CURATE may edit the
-  workspace copy to try better hygiene heuristics (every edit is diffed
-  and logged).
+- sweep.py is hash-guarded by evolve_guard.sh. CURATE cannot edit it at
+  runtime. Improvement ideas land as prose notes under
+  `## improvement-suggestions` in `.curator/log.md` for the human
+  maintainer to evaluate — no agent-generated code enters execution.
 - Source naming, citation stems, display titles, and frontmatter parsing
-  live in `naming.py` (hash-guarded). sweep.py imports from there.
+  live in `naming.py` (also hash-guarded). sweep.py imports from there.
 - Only `fix-*` subcommands write. `scan` is pure read.
 - Uses only stdlib. Runs in well under a second even on a 1000-page wiki.
 """
@@ -86,17 +85,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))
-
-# When running as the workspace copy at `.curator/sweep.py`, naming.py is
-# not next to us — it lives in the skill's scripts/ directory. setup.sh
-# writes `.curator/.skill_path` with the absolute path of that directory
-# so the workspace copy can still import it.
-if not (_HERE / "naming.py").exists():
-    _skill_path_marker = _HERE / ".skill_path"
-    if _skill_path_marker.exists():
-        sys.path.insert(0, _skill_path_marker.read_text().strip())
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from naming import (  # noqa: E402
     FRONTMATTER_TYPES,

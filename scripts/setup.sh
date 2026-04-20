@@ -161,36 +161,20 @@ if [ ! -f .curator/index.md ]; then
     echo "  Created .curator/index.md"
 fi
 
-# Drop the agent-editable sweep.py workspace copy alongside the pristine
-# reference at $SKILL_ROOT/scripts/sweep.py. The skill's reference copy is
-# what the guard treats as the baseline; the workspace copy may be edited
-# by CURATE.
-#
-# The workspace copy needs to resolve `from naming import ...` against the
-# skill's scripts/ dir, which isn't next to .curator/. We write the skill
-# scripts path to `.curator/.skill_path` so sweep.py's import-fallback can
-# find naming.py. This file is always refreshed (cheap, idempotent).
-printf '%s\n' "$SKILL_ROOT/scripts" > .curator/.skill_path
-
-if [ ! -f .curator/sweep.py ]; then
-    cp "$SKILL_ROOT/scripts/sweep.py" .curator/sweep.py
-    echo "  Created .curator/sweep.py (agent-editable workspace copy)"
-elif ! grep -q '.skill_path' .curator/sweep.py; then
-    # Existing workspace copy predates the skill-path fallback and will
-    # fail on `from naming import ...`. Refresh from the skill reference.
-    # Backs up the agent-editable version so any CURATE optimizations
-    # that landed are not lost.
-    cp .curator/sweep.py .curator/sweep.py.bak
-    cp "$SKILL_ROOT/scripts/sweep.py" .curator/sweep.py
-    echo "  Refreshed stale .curator/sweep.py (backed up to sweep.py.bak)"
-fi
+# No workspace sweep.py copy anymore — sweep.py is hash-guarded by
+# evolve_guard.sh alongside every other skill script. The agent cannot
+# edit it at runtime. If a previous install left a workspace copy or the
+# skill-path marker, remove them (they will otherwise mask the fresh
+# guarded version in any call that still points at .curator/sweep.py).
+for stale in .curator/sweep.py .curator/sweep.py.bak .curator/.skill_path; do
+    [ -e "$stale" ] && rm -f "$stale" && echo "  Removed stale $stale"
+done
 
 refresh_template_md "$TEMPLATE_DIR/CLAUDE.md" "CLAUDE.md"
 
 # Generate Claude Code settings inline. Auto-allows:
 #   - git commands scoped via `git -C wiki <cmd>` AND `git -C */wiki <cmd>`
 #   - `uv run python3` invocations of skill scripts at this exact absolute path
-#   - `uv run python3 .curator/sweep.py` (the workspace sweep copy)
 #   - bash evolve_guard.sh
 #   - date
 # The `uv run` prefix picks up the workspace `.venv` so kuzu etc. resolve.
@@ -221,6 +205,11 @@ else
             break
         fi
     done
+    # Anti-canary: stale entries from prior skill versions that should be
+    # regenerated away even though the required canaries are all present.
+    if [ -z "$missing_canary" ] && grep -qF ".curator/sweep.py:*" .claude/settings.json; then
+        missing_canary=".curator/sweep.py (stale: workspace-sweep allowlist from pre-hash-guard era)"
+    fi
     if [ -n "$missing_canary" ]; then
         echo "  Existing .claude/settings.json is missing canonical allowlist"
         echo "  entry matching: $missing_canary"
@@ -269,7 +258,6 @@ if [ "$regenerate_settings" = "1" ]; then
       "Bash(git -C */wiki checkout:*)",
       "Bash(git -C */wiki rev-parse:*)",
       "Bash(git -C */wiki show:*)",
-      "Bash(uv run python3 .curator/sweep.py:*)",
 EOF
     # One block of skill-script entries per skill root (logical +
     # physical when they differ under a symlinked install).
@@ -429,10 +417,10 @@ if [ -d wiki/.git ]; then
     else
         echo ""
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
-        uv run python3 "$SCRIPT_DIR/sweep.py" resync-stems wiki >/dev/null \
-            && uv run python3 "$SCRIPT_DIR/sweep.py" fix-index wiki >/dev/null \
-            && uv run python3 "$SCRIPT_DIR/graph.py" rebuild wiki >/dev/null \
-            && echo "  Migration pass complete. Review with: git -C wiki diff --stat"
+        uv run python3 "$SCRIPT_DIR/sweep.py" resync-stems wiki >/dev/null
+        uv run python3 "$SCRIPT_DIR/sweep.py" fix-index wiki >/dev/null
+        uv run python3 "$SCRIPT_DIR/graph.py" rebuild wiki >/dev/null
+        echo "  Migration pass complete. Review with: git -C wiki diff --stat"
         # If resync renamed anything, there are now unstaged changes — we
         # intentionally leave them unstaged so the user inspects + commits
         # with a message of their choosing.
