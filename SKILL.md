@@ -47,7 +47,10 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 7. **Bulk ingestion path.** Two modes:
    - **Drop folder (recommended):** user drops files into `vault/raw/`, then `uv run python3 <skill_path>/scripts/local_ingest.py` (no args) extracts each file, moves the original into `vault/`, and removes it from the drop folder.
    - **External directory:** `uv run python3 <skill_path>/scripts/local_ingest.py <dir>` copies files from any directory into the vault.
-   Both modes wrap extractions with `untrusted: true` and `<!-- BEGIN/END FETCHED CONTENT -->` markers. `scrub_check.py --mode vault` runs on each extraction at ingest time to surface injection markers before any wiki page is built from the source.
+
+   Text formats (`.md`, `.txt`, `.rst`, `.html`, `.json`, `.yaml`, `.org`) are UTF-8-decoded directly. PDFs go through a two-tier extractor: `pypdf` handles the fast path, and anything that fails sanity (printable-ratio, word-count floor) OR has math/table heuristics triggering gets `multimodal_recommended: true` in its frontmatter for a later quality pass via `sweep.py pending-multimodal` + agent multimodal read. Other rich formats (DOCX, images, PPTX) still need the manual INGEST operation with multimodal agent reads.
+
+   All modes wrap extractions with `untrusted: true` and `<!-- BEGIN/END FETCHED CONTENT -->` markers. `scrub_check.py --mode vault` runs on each extraction at ingest time to surface injection markers before any wiki page is built from the source.
 
 ## Bash discipline (hard rule)
 
@@ -153,9 +156,10 @@ INGEST stays lean. Evidence and fact pages emerge later, via CURATE reads.
 7. Backfill source stubs: `uv run python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`. This calls `naming.py` internally so stubs get `[src]`-prefixed titles and citation-style stems (`attention-vaswani-2017`, `deep-learning-wikipedia-2026`).
 8. Refresh the index: `uv run python3 <skill_path>/scripts/sweep.py fix-index wiki` (writes `.curator/index.md`).
 9. Rebuild the knowledge graph: `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
-10. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
-11. Append an ingest-summary entry to `.curator/log.md` with timestamp.
-12. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
+10. **Multimodal upgrade pass (optional quality tier).** `local_ingest.py` runs a fast `pypdf` extractor on PDFs and tags frontmatter with `multimodal_recommended: true` when either (a) the fast extractor produced too little usable text, or (b) the doc contains math symbols / table references the text extractor tends to mangle. Query the queue: `uv run python3 <skill_path>/scripts/sweep.py pending-multimodal wiki` → JSON list of `{extracted, original, extraction_quality, has_math, has_tables}`. For each entry, read the `original` file multimodally, overwrite the corresponding `.extracted.md` body with clean markdown, and update its frontmatter: `extraction_method: multimodal`, `multimodal_recommended: false`. Re-run `vault_index.py` on the updated paths (or `--rebuild` if many). Skip this step on non-PDF ingests — the queue will be empty.
+11. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
+12. Append an ingest-summary entry to `.curator/log.md` with timestamp.
+13. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -261,7 +265,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 
    **Create mode — per-bucket quotas** (out of `parallel_workers` slots, default 10). Evidence is the default channel for paper findings and empirically under-populated when priority-sequenced; allocate a floor, not a leftover. Order within the wave: evidence → facts → demand promotions → analyses.
 
-   - **Evidence — up to 30%** of slots (3 of 10). One uncited vault source per slot → new `evidence/<stem>.md`, shape *method → result → interpretation → (optional) downstream influence*. The default channel for paper findings.
+   - **Evidence — up to 30%** of slots (3 of 10). Candidates come from `sweep.py evidence-candidates wiki`: vault sources cited by ≥3 distinct non-source wiki pages with no existing `evidence/*.md` anchored to them — the wiki is re-referencing the source across contexts without a consolidated anchor. Write the new `evidence/<stem>.md` in the canonical shape *method → result → interpretation → (optional) downstream influence*, and it becomes the shared anchor existing pages can link to via `[[<stem>]]`. Falls back to `vault_frontier` (zero-citation sources) when the demand list is empty; flows slack to analyses when both buckets are dry.
    - **Facts — up to 10%** of slots (1 of 10). One atomic numerical anchor per slot → new `facts/<stem>.md` (architectural hyperparameters, scaling exponents, benchmark scores, hyperparameter defaults). **Single-sentence test applies**: if explaining the finding takes more than one sentence, route to evidence instead. Cap is deliberate — facts are cheap to produce and low-information per page; 1 per wave keeps the anchor-citation layer growing without drowning out evidence/analyses.
    - **Demand promotions — up to 20%** of slots (2 of 10). Demand-ranked missing stems with ≥3 distinct inbound references (from `sweep.py concept-candidates`). Capped because one promotion auto-resolves multiple `[[stem]]` references in a single commit (high per-commit multiplier), so two per wave is enough. **Subdirectory choice is explicit in the brief**: if the stem is a proper noun (model family, organization, framework, benchmark, person) → `entities/<stem>.md`; if it's an abstract term (algorithm, method, architectural pattern, phenomenon) → `concepts/<stem>.md`. The demand signal alone doesn't distinguish entity-vs-concept; the worker does, guided by the stem itself. Worker brief must include the N referencing pages' names and the top 3–5 vault sources from `vault_search "<stem>"`.
    - **Analyses — remainder** (40% baseline, up to `parallel_workers` when other buckets exhaust). Multi-source synthesis (≥3 vault sources) with a required `## Open questions and next steps` section — hypotheses, experiments, source requests, adjacent concepts.

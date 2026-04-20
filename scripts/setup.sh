@@ -69,6 +69,13 @@ if ! uv run --no-project python3 -c "import kuzu" >/dev/null 2>&1; then
     echo "  Installing kuzu into .venv ..."
     uv pip install kuzu
 fi
+# pypdf: small, pure-Python PDF text extraction. Used by local_ingest.py
+# as the fast-tier PDF path. Installed unconditionally — it's lightweight
+# (~2 MB) and PDFs are a mainline ingest format.
+if ! uv run --no-project python3 -c "import pypdf" >/dev/null 2>&1; then
+    echo "  Installing pypdf (PDF text extraction) into .venv ..."
+    uv pip install pypdf
+fi
 
 # Working directory layout:
 #   vault/                 raw sources
@@ -197,6 +204,8 @@ else
         "$SKILL_ROOT_LOGICAL/scripts/"       # logical skill path — catches
                                               # pre-dual-path settings that
                                               # only had the physical path
+        "Edit(./vault/"                      # post-multimodal-upgrade write
+                                              # path for .extracted.md
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -281,6 +290,8 @@ EOF
       "Write(./wiki/**)",
       "Edit(./.curator/**)",
       "Write(./.curator/**)",
+      "Edit(./vault/**)",
+      "Write(./vault/**)",
       "Bash(date:*)"
     ]
   }

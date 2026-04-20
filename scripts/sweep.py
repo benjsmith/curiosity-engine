@@ -67,6 +67,25 @@ Subcommands
         min-inbound=3 filters out one-off typos and drive-by mentions.
         Prints ranked JSON (top 20 by default).
 
+    sweep.py evidence-candidates [wiki_dir] [--min-inbound N]
+        Twin of concept-candidates on the evidence side. Finds vault
+        sources that are cited by ≥N distinct non-source wiki pages but
+        have no `evidence/*.md` anchored to them — the wiki is quietly
+        re-referencing the source across contexts without a consolidated
+        anchor. Used by CURATE Phase 1's create-mode evidence bucket.
+        Default min-inbound=3, same threshold as concept-candidates.
+        Ranked JSON (top 20 by default).
+
+    sweep.py pending-multimodal [wiki_dir]
+        List vault extractions tagged `multimodal_recommended: true` in
+        their frontmatter — PDFs where the fast pypdf pass either failed
+        sanity or the doc has math/tables the text extractor mangled.
+        The agent processes each entry by reading the original source
+        (path in `kept_as` frontmatter field) multimodally and
+        overwriting the `.extracted.md` body + updating frontmatter to
+        `extraction_method: multimodal`, `multimodal_recommended: false`.
+        Prints a JSON queue. No writes — pure read op.
+
 Design notes
 ------------
 - sweep.py is hash-guarded by evolve_guard.sh. CURATE cannot edit it at
@@ -575,6 +594,90 @@ def cmd_resync_stems(wiki_dir: Path):
     }, indent=2))
 
 
+def cmd_evidence_candidates(wiki_dir: Path, min_inbound: int = 3,
+                             limit: int = 20) -> None:
+    """Rank vault sources by reuse demand with no existing evidence anchor.
+
+    Demand signal for evidence is symmetric with concept-candidates:
+    count distinct non-source pages citing each vault source; filter to
+    sources with no existing evidence/*.md anchored to them (where
+    "anchored to them" means the evidence page's body cites that vault
+    path). Sources at >= min_inbound are surfaced, ranked.
+
+    Rationale. The old frontier trigger ("zero non-source citations")
+    went to zero the moment INGEST created an entity/concept page that
+    cites the source. That's binary; once it's cited once, the signal
+    dies — even though the source may be cited 10 times across the wiki
+    without a consolidated anchor. This trigger keeps the signal alive:
+    popular sources without an evidence page stay on the list until one
+    is created.
+    """
+    from naming import CITATION_RE
+
+    pages = wiki_pages(wiki_dir)
+    demand = defaultdict(set)
+    evidence_covered = set()
+    for p in pages:
+        rel = str(p.relative_to(wiki_dir))
+        text = p.read_text()
+        if rel.startswith("sources/"):
+            continue
+        for m in CITATION_RE.finditer(text):
+            vault_path = m.group(1).strip()
+            if rel.startswith("evidence/"):
+                evidence_covered.add(vault_path)
+            else:
+                demand[vault_path].add(rel)
+
+    candidates = []
+    for vault_path, citing_pages in demand.items():
+        if len(citing_pages) < min_inbound:
+            continue
+        if vault_path in evidence_covered:
+            continue
+        candidates.append({
+            "vault_path": vault_path,
+            "distinct_citers": len(citing_pages),
+            "citing_pages": sorted(citing_pages)[:10],
+        })
+    candidates.sort(key=lambda c: (-c["distinct_citers"], c["vault_path"]))
+    print(json.dumps({"candidates": candidates[:limit]}, indent=2))
+
+
+def cmd_pending_multimodal(wiki_dir: Path) -> None:
+    """List vault extractions flagged for multimodal upgrade.
+
+    Reads `multimodal_recommended: true` frontmatter tags set by
+    local_ingest.py on PDFs that either failed the fast-extraction
+    sanity check or look like they have math/tables. The agent consumes
+    this queue: for each entry, re-read the original source
+    multimodally, overwrite `.extracted.md` body + frontmatter.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    queue = []
+    if not vault_dir.exists():
+        print(json.dumps({"queue": [], "count": 0,
+                          "note": "no vault/ directory"}))
+        return
+    for f in sorted(vault_dir.glob("*.extracted.md")):
+        try:
+            fm, _ = read_frontmatter(f.read_text())
+        except Exception:
+            continue
+        flag = str(fm.get("multimodal_recommended", "")).lower() == "true"
+        if not flag:
+            continue
+        queue.append({
+            "extracted": f.name,
+            "original": fm.get("kept_as", ""),
+            "extraction_quality": fm.get("extraction_quality", ""),
+            "has_math": str(fm.get("has_math", "")).lower() == "true",
+            "has_tables": str(fm.get("has_tables", "")).lower() == "true",
+            "sanity_note": fm.get("sanity_note", ""),
+        })
+    print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
+
+
 def cmd_concept_candidates(wiki_dir: Path, min_inbound: int = 3,
                             limit: int = 20) -> None:
     """Rank missing wikilink targets by demand (count of distinct pages).
@@ -689,6 +792,7 @@ def main():
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
         "scan-references", "resync-stems", "concept-candidates",
+        "evidence-candidates", "pending-multimodal",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     ap.add_argument("--min-inbound", type=int, default=3,
@@ -724,6 +828,11 @@ def main():
     elif args.command == "concept-candidates":
         cmd_concept_candidates(wiki_dir, min_inbound=args.min_inbound,
                                 limit=args.limit)
+    elif args.command == "evidence-candidates":
+        cmd_evidence_candidates(wiki_dir, min_inbound=args.min_inbound,
+                                 limit=args.limit)
+    elif args.command == "pending-multimodal":
+        cmd_pending_multimodal(wiki_dir)
 
 
 if __name__ == "__main__":
