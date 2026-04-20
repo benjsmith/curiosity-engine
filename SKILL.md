@@ -117,6 +117,9 @@ Read `.curator/schema.md` before any operation.
   "saturation_consecutive_waves": 2,
   "orphan_dominance_threshold": 0.6,
   "spot_audit_interval": 20,
+  "embedding_enabled": false,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "cluster_scope_threshold": 500,
   "caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
 }
 ```
@@ -129,6 +132,7 @@ Read `.curator/schema.md` before any operation.
 - **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
 - **spot_audit_interval** — every Nth wave (default 20), Phase 3 dispatches a single-page adversarial spot auditor against a random accepted edit. Set to 0 to disable. Catches subtle source misrepresentation the praise-mode batch reviewer doesn't flag.
 - **embedding_enabled** / **embedding_model** — opt-in semantic vault search. When `true`, `vault_index.py` computes an embedding alongside every FTS5 row (stored in sqlite-vec), and `vault_search.py --mode hybrid` merges FTS5 + cosine rankings via RRF. Default model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim, ~80MB). Install the deps (`uv pip install sentence-transformers sqlite-vec`) before flipping `embedding_enabled` to true. Setup prompts for this at bootstrap time.
+- **cluster_scope_threshold** — when non-source wiki pages exceed this count, `epoch_summary.py` returns a `wave_scope` field (worst-scoring page + its 2-hop wikilink neighborhood). Phase 1 restricts **repair-mode** target selection to that scope; create and wire modes stay global. Default 500 pages; set to 0 to disable cluster scoping entirely.
 - **caveman** — compression levels for the optional [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) skill. Three keys:
   - `read` — applied when reading any wiki/vault text into context (orchestrator briefs, epoch_summary input). Ultra strips articles, copula, filler adverbs, pronouns, transitions, prepositions. ~30-40% token reduction.
   - `write_analysis` — applied when writing `analyses/` pages. Lite strips only filler adverbs and transition words, keeping articles and prepositions. Human-comfortable prose. ~10-15% token reduction.
@@ -253,7 +257,9 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    - **create** — if `summary.saturation.action == "pivot_to_exploration"` OR `summary.vault_frontier.uncited_count < 5`. First-level pool has thinned; time to generate new material.
    - **wire** — else if summed orphan_rate contributions across non-source pages exceed `orphan_dominance_threshold` (default 0.6) of the summed composite. If most debt is inbound-link starvation, wiring is more productive than rewriting prose.
    - **repair** — otherwise. Editorial + frontier work remains; most pages are under-sourced or under-linked.
-4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode:
+4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode.
+
+   **Cluster scoping** (activates on large wikis). If `summary.wave_scope` is non-null (non-source pages ≥ `cluster_scope_threshold`, default 500), restrict **repair-mode** target selection to pages within `wave_scope.pages` — the worst-scoring page plus its 2-hop wikilink neighborhood. Keeps each repair wave locally coherent so plan and execute stay bounded as the wiki grows. Create and wire modes stay global: create-mode new pages don't exist in the graph yet, and wire-mode inbound-link starvation can legitimately cross clusters. Ignore `wave_scope` when null (small wikis don't need scoping).
 
    **Create mode — per-bucket quotas** (out of `parallel_workers` slots, default 10). Evidence is the default channel for paper findings and empirically under-populated when priority-sequenced; allocate a floor, not a leftover. Order within the wave: evidence → facts → demand promotions → analyses.
 

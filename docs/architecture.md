@@ -82,8 +82,16 @@ Honest failure modes, in rough order of when you'll hit them:
 - **Keyword retrieval misses paraphrases.** FTS5 is sharp for exact / stem matches, weak for paraphrased semantic queries. The optional MiniLM+sqlite-vec layer mitigates.
 - **Cognitive overhead.** Learning the vocabulary (the six page types, three wave modes, four scoring dimensions) takes effort. Not a low-touch tool.
 - **Rate-limit bound.** `parallel_workers × reviewer × waves/hour` saturates API tiers. Tune via `parallel_workers` but you can't make it free.
-- **~500-page wiki ceiling.** Beyond that, plan latency grows. The incremental score cache helps; the tiered-vault design (bounded wiki + unbounded indexed vault) unlocks more, but at ~2000 pages cluster-scoped CURATE becomes necessary.
+- **~500-page wiki ceiling.** Beyond that, plan latency grows. The incremental score cache helps; the tiered-vault design (bounded wiki + unbounded indexed vault) unlocks more; cluster-scoped CURATE (see below) keeps individual waves coherent past the threshold.
 - **Single user.** No merge protocol for multiple humans editing the same wiki.
+
+## Cluster scoping at scale
+
+Past `cluster_scope_threshold` non-source pages (default 500), `epoch_summary.py` emits a `wave_scope` field — the worst-scoring page plus every page within two wikilink hops, in either direction. Phase 1 of the CURATE loop honours the scope for **repair mode**: editorial and frontier target selection are restricted to pages inside the scope. Create and wire modes stay global (new pages aren't in the graph yet; inbound-link starvation legitimately crosses clusters).
+
+The effect: each repair wave works on a locally coherent neighbourhood — edits to related pages compound (a wikilink added on page A is useful to page B in the same scope) and the worker brief context stays bounded even as the wiki grows into the thousands. The seed rotates: next wave picks a different worst-scoring page, which sits in a different neighbourhood.
+
+Cluster scoping is a knob, not a fixed feature. Set `cluster_scope_threshold: 0` in config.json to disable entirely; at 100 to activate much earlier; at 1000 to defer until the wiki is genuinely large. Default 500 matches the point where a single plan-phase brief over the full wiki starts costing more than a cluster.
 
 ## Why not RAG?
 

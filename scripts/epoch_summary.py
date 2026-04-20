@@ -150,6 +150,19 @@ def page_type_counts(pages_text: dict, wiki_dir: Path) -> dict:
 
 _LOG_TAIL_BYTES = 64 * 1024  # 64 KB — ~20 recent epoch blocks typical
 
+_CLUSTER_SCOPE_DEFAULT = 500
+
+
+def _cluster_scope_threshold(wiki_dir: Path) -> int:
+    cfg_path = wiki_dir.parent / ".curator" / "config.json"
+    if not cfg_path.exists():
+        return _CLUSTER_SCOPE_DEFAULT
+    try:
+        cfg = json.loads(cfg_path.read_text())
+        return int(cfg.get("cluster_scope_threshold", _CLUSTER_SCOPE_DEFAULT))
+    except (json.JSONDecodeError, OSError, ValueError, TypeError):
+        return _CLUSTER_SCOPE_DEFAULT
+
 
 def _tail_bytes(path: Path, max_bytes: int = _LOG_TAIL_BYTES) -> str:
     """Return the last max_bytes of `path` aligned to a line boundary.
@@ -226,6 +239,61 @@ def _format_frontier(vf) -> dict:
     }
 
 
+def wave_scope(wiki_dir: Path, worst_pages: list, threshold: int) -> dict:
+    """Cluster-scope for large wikis: seed page + 2-hop wikilink neighborhood.
+
+    When non_source_pages >= threshold (default 500), pick the worst-scoring
+    non-source page as the seed and expand to all pages within 2 wikilink
+    hops (either direction — inbound and outbound). This gives the
+    orchestrator a locally coherent slice to work on per wave, keeping
+    plan + execute cost bounded as the wiki grows.
+
+    Returns None below threshold so smaller wikis skip scoping entirely.
+    Returns {"seed": path, "pages": [...], "size": N} when active.
+    """
+    if len(worst_pages) < threshold or not worst_pages:
+        return None
+    seed = worst_pages[0]["page"]
+
+    graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
+    if not graph_path.exists():
+        return {"seed": seed, "pages": [seed], "size": 1}
+    try:
+        import kuzu
+    except ImportError:
+        return {"seed": seed, "pages": [seed], "size": 1}
+    try:
+        db = kuzu.Database(str(graph_path))
+        conn = kuzu.Connection(db)
+        # 1-hop neighborhood, both directions.
+        r1 = conn.execute(
+            "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
+            "WHERE a.path = $p OR b.path = $p "
+            "RETURN DISTINCT a.path, b.path",
+            {"p": seed}
+        )
+        hop1 = {seed}
+        while r1.has_next():
+            a, b = r1.get_next()
+            hop1.add(a)
+            hop1.add(b)
+        # 2-hop: edges touching any hop-1 node.
+        r2 = conn.execute(
+            "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
+            "WHERE a.path IN $ps OR b.path IN $ps "
+            "RETURN DISTINCT a.path, b.path",
+            {"ps": list(hop1)}
+        )
+        scope = set(hop1)
+        while r2.has_next():
+            a, b = r2.get_next()
+            scope.add(a)
+            scope.add(b)
+        return {"seed": seed, "pages": sorted(scope), "size": len(scope)}
+    except Exception:
+        return {"seed": seed, "pages": [seed], "size": 1}
+
+
 def connection_candidates(wiki_dir: Path, limit: int = 5) -> list:
     """Bridge candidates via the kuzu graph.
 
@@ -281,6 +349,10 @@ def main():
     non_source = [r for r in results if not r["page"].startswith("sources/")]
     composites = [r["scores"]["composite"] for r in non_source]
 
+    # Cluster-scope activates above threshold; below, wave_scope is null
+    # and the orchestrator plans globally as before.
+    scope_threshold = _cluster_scope_threshold(wiki_dir)
+
     summary = {
         "page_counts": page_type_counts(pages_text, wiki_dir),
         "non_source_pages": len(non_source),
@@ -299,6 +371,7 @@ def main():
         "vault_frontier": _format_frontier(vault_frontier(wiki_dir, pages_text)),
         "connection_candidates": connection_candidates(wiki_dir),
         "saturation": saturation_check(wiki_dir),
+        "wave_scope": wave_scope(wiki_dir, non_source, scope_threshold),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
     }
 

@@ -9,6 +9,7 @@
   "spot_audit_interval": 20,
   "embedding_enabled": false,
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "cluster_scope_threshold": 500,
   "caveman": {
     "read": "ultra",
     "write_analysis": "lite",
