@@ -21,10 +21,20 @@ Requires `uv pip install sentence-transformers sqlite-vec`.
 
 import hashlib
 import json
-import sqlite3
 import sys
 from pathlib import Path
 from datetime import datetime
+
+# macOS system Python's sqlite3 is often compiled without
+# --enable-loadable-sqlite-extensions, so conn.load_extension is missing —
+# which breaks sqlite-vec. pysqlite3-binary is a drop-in with extensions
+# enabled. Prefer it when available; fall back to stdlib for workspaces
+# that don't have embeddings turned on (and therefore never need to load
+# an extension).
+try:
+    import pysqlite3 as sqlite3
+except ImportError:
+    import sqlite3
 
 DB = Path("vault/vault.db")
 CONFIG_PATH = Path(".curator/config.json")

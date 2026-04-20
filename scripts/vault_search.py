@@ -23,9 +23,15 @@ Modes:
 import argparse
 import json
 import re
-import sqlite3
 import sys
 from pathlib import Path
+
+# See vault_index.py — stdlib sqlite3 on macOS often lacks load_extension,
+# which sqlite-vec needs. pysqlite3-binary is a drop-in with it enabled.
+try:
+    import pysqlite3 as sqlite3
+except ImportError:
+    import sqlite3
 
 DB = Path("vault/vault.db")
 CONFIG_PATH = Path(".curator/config.json")

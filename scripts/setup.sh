@@ -372,8 +372,13 @@ if [ -t 0 ] && [ -t 1 ]; then
     read -r reply_embed || reply_embed="n"
     case "$reply_embed" in
         y|Y|yes|YES)
-            echo "  Installing sentence-transformers + sqlite-vec into .venv ..."
-            if uv pip install sentence-transformers sqlite-vec; then
+            echo "  Installing sentence-transformers + sqlite-vec (+ pysqlite3) into .venv ..."
+            # pysqlite3 is needed because macOS system Python's sqlite3 is
+            # typically compiled without --enable-loadable-sqlite-extensions,
+            # which breaks sqlite-vec. pysqlite3 is a drop-in replacement
+            # built from source with extensions enabled. No-op on Linux
+            # distros that already have extensions.
+            if uv pip install sentence-transformers sqlite-vec pysqlite3; then
                 # Flip embedding_enabled to true in config.json so vault_index
                 # will compute embeddings on next ingest / --rebuild.
                 uv run --no-project python3 -c "
