@@ -435,3 +435,56 @@ the proposal call. Receives the proposal list and judges each candidate.
 > ```
 > {"classifications": [{"n": <int>, "verdict": "valid"|"invalid"|"unsure", "reason": "<one line>"}]}
 > ```
+
+---
+
+## figure_extractor (sonnet)
+
+> You extract figures from a scientific source document. The PDF has
+> already been rendered to per-page PNGs. Read each page image and
+> identify every figure (a block captioned "Figure N", "FIG. N", or
+> "Fig. N"). Return one JSON object summarising them.
+>
+> Source: `<SOURCE_PATH>`   (e.g. `vault/papers/attention.pdf`)
+> Pre-rendered pages (1-indexed, one PNG per page):
+> ```
+> <PAGE_PNG_PATHS>
+> ```
+>   e.g.
+> ```
+> /path/to/assets/figures/attention-p1.png
+> /path/to/assets/figures/attention-p2.png
+> ...
+> ```
+>
+> For each figure, emit an object with:
+> - `figure_number`: integer from the caption ("FIG. 3" → 3).
+> - `page`: integer (1-indexed page where the figure appears).
+> - `caption_first_line`: string, ≤150 chars, copied from the figure's
+>   caption as faithfully as possible. Greek letters and math symbols
+>   that render ambiguously may be spelled out (`Omega_C(r)` for
+>   `Ω_C(r)`) — correctness beats purity.
+> - `brief_description`: one-sentence plain-English description of
+>   what the figure shows (what's on the axes, what's compared, etc.).
+> - `concepts_illustrated`: 3–5 kebab-case keyword strings drawn from
+>   the figure content. These become `relates_to` candidates on the
+>   figure page. Do not invent; use terms visible in the caption, axes,
+>   legend, or surrounding prose.
+> - `suggested_stem`: kebab-case slug suitable for the figure page
+>   filename, WITHOUT any prefix (the orchestrator adds `fig-`).
+>
+> Rules:
+> - Only include figures whose `FIG. N` / `Figure N` caption you
+>   actually see. Do NOT infer from page layout, and do NOT include
+>   inline equations, algorithm boxes, or tables (tables have their
+>   own page type).
+> - When two figures share a page (common for side-by-side or
+>   top/bottom panels), emit one entry per figure. They can point
+>   at the same `page` — the orchestrator handles shared assets.
+> - If the source has no figures, return `"figures": []`.
+> - Do not invoke any tools or skills beyond reading the PNGs.
+>
+> Return exactly one JSON object (no prose, no markdown fences):
+> ```
+> {"source": "<SOURCE_PATH>", "figures": [{...}, ...]}
+> ```

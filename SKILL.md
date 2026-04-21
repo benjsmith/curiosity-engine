@@ -174,9 +174,15 @@ INGEST stays lean. Evidence and fact pages emerge later, via CURATE reads.
 8. Refresh the index: `uv run python3 <skill_path>/scripts/sweep.py fix-index wiki` (writes `.curator/index.md`).
 9. Rebuild the knowledge graph: `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
 10. **Multimodal upgrade pass (optional quality tier).** `local_ingest.py` runs a fast `pypdf` extractor on PDFs and tags frontmatter with `multimodal_recommended: true` when either (a) the fast extractor produced too little usable text, or (b) the doc contains math symbols / table references the text extractor tends to mangle. Query the queue: `uv run python3 <skill_path>/scripts/sweep.py pending-multimodal wiki` → JSON list of `{extracted, original, extraction_quality, has_math, has_tables}`. For each entry, read the `original` file multimodally, overwrite the corresponding `.extracted.md` body with clean markdown, and update its frontmatter: `extraction_method: multimodal`, `multimodal_recommended: false`. Re-run `vault_index.py` on the updated paths (or `--rebuild` if many). Skip this step on non-PDF ingests — the queue will be empty.
-11. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
-12. Append an ingest-summary entry to `.curator/log.md` with timestamp.
-13. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
+11. **Figure-extraction pass (PDFs only, Sonnet-driven).** When the source is a PDF and the ingested wiki page gained ≥1 `[[wikilink]]` inbound from existing wiki material (or the user explicitly asks), extract its figures:
+    1. Render every page: `uv run python3 <skill_path>/scripts/figures.py render-all <vault_pdf_path> --wiki wiki`. Idempotent — no-op on rerun.
+    2. Dispatch ONE fresh-context **sonnet** Agent with the `figure_extractor` template in `.curator/prompts.md`. Give it the source path + the list of rendered PNG paths. It returns `{"source": "...", "figures": [{figure_number, page, caption_first_line, brief_description, concepts_illustrated, suggested_stem}, ...]}`.
+    3. For each figure spec, build a figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <source-stem>-p<N>.png`, `source_path: <vault_pdf_path>`, `source_page: <N>`, `extraction_method: pdf_page_render`, `sources: [<extracted_md_path>]`, `relates_to: []` (filled as the wiki grows). Body: `![[../assets/figures/<asset>]]` + one-paragraph caption citing the extraction (`(vault:<extracted_md>)`).
+    4. Validate each page via `score_diff.py --new-page` (figures floor: ≥1 citation, 0 wikilinks, ≥10 words).
+    5. The rendered page PNGs that no figure spec pointed at stay in `assets/figures/` — unreferenced-page GC is a later hygiene pass (see `figures.py check`); cost is trivial.
+12. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
+13. Append an ingest-summary entry to `.curator/log.md` with timestamp.
+14. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -515,10 +521,12 @@ relates_to: [concepts/attention-mechanism.md, evidence/attention-layer-6.md]
 
 Two origins:
 
-- **`extracted`** — a page of a source PDF, rendered by `figures.py extract` at 150 DPI. Emerge on the same multimodal pass used for source text upgrades (`sweep.py pending-multimodal` + multimodal read); when the worker notices a relevant figure, it returns the figure spec alongside the text edit and the orchestrator post-processes. When two figures share a source page, both figure pages point at the same asset file and disambiguate via `page_region`; referring pages always link the specific figure page (`[[fig-attention-matrix-3a]]`), never the raw PNG, so no binary duplicates.
+- **`extracted`** — a page of a source PDF, rendered by `figures.py extract` at 150 DPI. Produced automatically by the INGEST figure-extraction pass (step 11) via a fresh-context **sonnet** Agent with the `figure_extractor` template. The worker reads the pre-rendered page PNGs and returns structured figure specs; the orchestrator creates one figure page per spec. When two figures share a source page, both figure pages point at the same asset file and disambiguate via `page_region`; referring pages always link the specific figure page (`[[fig-attention-matrix-3a]]`), never the raw PNG, so no binary duplicates.
 - **`created`** — a plot or diagram authored during an analysis. `source_analysis` names the analysis page that produced it. Cannot be auto-regenerated; a missing asset surfaces via `figures.py check` for human review.
 
-Integrity + regen: `uv run python3 <skill_path>/scripts/figures.py check wiki` lists any figure whose asset is missing. `regen` rebuilds `extracted` assets from vault sources; `created` figures are listed, not regenerated. Setup.sh runs `regen` at the end of every bootstrap so a fresh clone materialises its asset folder automatically. Bash surface: `figures.py {extract, check, regen, list}`.
+Model choice (sonnet, not opus or haiku) was pinned after a three-way comparison on an 11-page ML paper: sonnet hit 100% figure recall at ~25% of the opus cost, with better math-symbol transcription than opus and with substantially better recall than haiku (100% vs 73%). Opus adds no quality headroom worth 3× cost; haiku silently drops ~25% of figures.
+
+Integrity + regen: `uv run python3 <skill_path>/scripts/figures.py check wiki` lists any figure whose asset is missing. `regen` rebuilds `extracted` assets from vault sources; `created` figures are listed, not regenerated. Setup.sh runs `regen` at the end of every bootstrap so a fresh clone materialises its asset folder automatically. Bash surface: `figures.py {extract, render-all, pages, check, regen, list}` — `render-all` + `pages` are orchestrator helpers used by the figure-extraction pass to prep a source for its multimodal worker.
 
 `score_diff` floor for new `figures/*` pages is ≥1 citation, 0 wikilinks (frontmatter `relates_to` carries linkage), ≥10 words — captions are terse by design.
 
