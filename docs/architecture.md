@@ -1,6 +1,6 @@
 # Architecture and design
 
-This document explains the **why** behind Curiosity Engine. For operational details (commands, settings, script usage), see [`../SKILL.md`](../SKILL.md).
+This document explains the architectural choices for this skill. For operational details (commands, settings, script usage), see [`../SKILL.md`](../SKILL.md).
 
 ## The three-object model
 
@@ -8,7 +8,7 @@ Three objects hold the state of any curiosity-engine workspace.
 
 **Vault** (`vault/`). Raw source files — whatever you dropped in: PDFs, papers, slide decks, web clips, markdown. Each source has a sibling `.extracted.md` with clean text used for search and by the curator. **Append-only.** Once a source is in the vault, the skill never modifies it. That makes the vault a trustworthy provenance layer: every wiki citation points at something unchanged since ingest.
 
-**Wiki** (`wiki/`). Git-tracked markdown. The curator (and you) write pages here with `[[wikilinks]]` and `(vault:path)` citations. Six subdirectories by page type: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`. Each has a conventional shape (see SKILL.md's page-format section). Every accepted edit is a git commit; reversion is always available.
+**Wiki** (`wiki/`). Git-tracked markdown. The curator (and you) write pages here with `[[wikilinks]]` and `(vault:path)` citations. Eight subdirectories by page type: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures`. Each has a conventional shape (see SKILL.md's page-format section). Every accepted edit is a git commit; reversion is always available.
 
 **Curator state** (`.curator/`). Not git-tracked. Per-workspace state: logs, schema, prompt templates, graph database, sweep copy, guard snapshot. This is the curator's operational memory — what it's tried, what's in flight, which scripts to use.
 
@@ -41,12 +41,13 @@ One wave = one commit. Plan → Execute → Evaluate → Stop check. Full specif
 
 **Deterministic planning.** Every wave, the orchestrator reads `epoch_summary.py` output and picks targets by mechanical rules. No reviewer call for planning — planning is selection work over pre-ranked candidates, and reviewer tokens are expensive.
 
-**Three wave modes.**
+**Four wave modes.**
 
 | mode | trigger | what the wave does |
 |---|---|---|
-| **wire** | orphan-rate contribution > 60% of residual composite | Runs a LINK-style propose→classify→apply pass across the whole wiki. Heals inbound-link starvation. |
 | **create** | saturation pivot OR vault frontier exhausted | Creates new pages: evidence 30%, facts 10%, demand promotions 20%, analyses 40% (remainder). |
+| **table-audit** | any entry in `summary.table_citation_risk` has risk > 0.5 (churn × time since last audit > half the audit period) | One opus worker per high-risk class table: checks whether citing evidence/analysis pages need updates as the rows have churned. Findings become repair-mode tasks on the next wave. |
+| **wire** | orphan-rate contribution > 60% of residual composite | Runs a LINK-style propose→classify→apply pass across the whole wiki. Heals inbound-link starvation. |
 | **repair** | otherwise | Edits existing worst-scoring pages + frontier work. |
 
 Quotas within create mode are fixed percentages so evidence, facts, and demand promotions each get a floor per wave; slack rolls only to analyses (the unbounded bucket). Demand promotions send proper-noun stems to `entities/` and abstract stems to `concepts/`.
@@ -78,7 +79,7 @@ Cheap in aggregate, catches things the praise reviewer can't.
 
 ## When the skill struggles
 
-Honest failure modes, in rough order of when you'll hit them:
+Known failure modes, in rough order of when you'll hit them:
 
 - **Curator over-extracts on small corpora.** Below ~10 sources there isn't enough material for cross-source synthesis; CURATE waves produce weak analyses. Ingest more before running long sessions.
 - **Keyword retrieval misses paraphrases.** FTS5 is sharp for exact / stem matches, weak for paraphrased semantic queries. The optional MiniLM+sqlite-vec layer mitigates.

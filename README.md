@@ -1,8 +1,6 @@
 # Curiosity Engine
 
-Drop files into a folder, ask questions, and let an agent keep improving your notes while you sleep.
-
-Curiosity Engine is a Claude Code skill for people who read a lot in a specific domain and want the understanding to compound. You feed sources (papers, PDFs, blog posts, docs) into a vault; an autonomous curator reads them, writes concise interlinked wiki pages, cites every claim, and tends the wiki overnight. A citation-preserving ratchet ensures the wiki only gets better or unchanged, never worse.
+Autonomously and collaboratively organizes and improves personal knowledge bases with you.
 
 Built on top of [Claude Code](https://claude.com/claude-code). The wiki is plain markdown — open it in Obsidian, browse the graph, edit by hand. Everything's git-tracked.
 
@@ -23,14 +21,56 @@ Three objects, three verbs.
                          └──────── you ─────┘
 ```
 
-- **Vault** (`vault/`) — where your sources live. Append-only; never modified after ingest. FTS5 keyword-indexed; optional MiniLM semantic index for fuzzier queries on large corpora.
-- **Wiki** (`wiki/`) — where your understanding lives. Git-tracked markdown with `[[wikilinks]]` and `(vault:path)` citations. Six subdirectories (`sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`) that carry shape — short notes in each.
-- **Curator** — an agent that reads the vault, writes in the wiki, and has an autonomous mode that keeps improving the notes in the background.
+Curiosity Engine ingests documents in many formats and decomposes them into entities, concepts, evidence, facts, tables and figures. It auto-improves the knowledge base structure during its curation run and explores new connections by proposing questions that it answers by writing analyses grounded in the knowledge it has built. It works for a wide variety of types of knowledge, from scientific research, to investment analysis, contract management, accounting, sales and marketing.
+
+Zooming into the curator:
+
+```
+                ┌─────────────────┐
+                │ 🎯 Orchestrator │
+                └────────┬────────┘
+                         │ dispatches per wave
+           ┌─────────┬───┴────┬────────────┐
+           ▼         ▼        ▼            ▼
+       ┌───────┐ ┌────────┐ ┌───────┐ ┌──────────┐
+       │Worker │ │Reviewer│ │ Spot  │ │   Link   │
+       │Sonnet │ │ Opus   │ │auditor│ │proposer +│
+       │writes │ │ batch  │ │ Opus  │ │classifier│
+       │pages +│ │semantic│ │sampled│ │ Opus,    │
+       │figures│ │  gate  │ │adversy│ │fresh ctx │
+       └───┬───┘ └───┬────┘ └───┬───┘ └─────┬────┘
+           │         │          │           │
+           └────┬────┴────┬─────┴──────┬────┘
+                ▼         ▼            ▼
+         score_diff  scrub_check  evolve_guard
+         (citations  (injection   (script-hash
+          · bloat ·   guard)       integrity)
+          floors)
+                │
+                ▼ accept
+      ┌─────────────────────────────────────────────┐
+      │             State — three stores            │
+      ├──────────────┬──────────────┬───────────────┤
+      │ Docs (git)   │ Relational   │ Graph         │
+      │              │              │               │
+      │ vault/       │ vault.db     │ graph.kuzu    │
+      │ wiki/ 8 page │  FTS5 + vec  │  WikiLink     │
+      │   types      │ tables.db    │  Cites        │
+      │ assets/      │  class rows  │  DataRef      │
+      │ .curator/log │              │  Depicts      │
+      └──────┬───────┴──────────────┴───────────────┘
+             │ feedback: epoch_summary · graph queries · FTS5
+             └──────────────▶ Orchestrator
+```
+
+- **Vault** (`vault/`) — append-only store of raw sources; never modified after ingest. FTS5 keyword-indexed; optional MiniLM semantic index for fuzzier queries on large corpora.
+- **Wiki** (`wiki/`) — git-tracked markdown with `[[wikilinks]]` and `(vault:path)` citations. Eight subdirectories by page type: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures` — each with a conventional shape.
+- **Curator** — an agent that reads the vault, writes in the wiki, and improves the notes during curate runs.
 
 Three verbs:
 
 - **`ingest`** — *"add `~/papers/foo.pdf` to the vault"*. The source is copied in, text extracted, indexed.
-- **`query`** — *"what do I know about transformers?"* The curator searches the wiki and vault, answers with citations, ends with a probing follow-up.
+- **`query`** — *"what do I know about transformers?"* The curator searches the wiki and vault, answers with citations, ends with a question to probe further.
 - **`curate`** — *"curate this wiki for an hour"*. The curator runs a plan-execute-evaluate loop, drafts improvements in parallel, gates each through a mechanical check, has a reviewer judge the wave, and commits.
 
 ## Quick start
@@ -54,7 +94,7 @@ The first command runs `setup.sh`, which creates the folder layout, initialises 
 
 ## What makes it different
 
-- **Citations are load-bearing.** Every factual claim cites a vault source. A mechanical gate (`score_diff.py`) rejects any edit that drops a citation or adds one whose source doesn't FTS5-match the claim.
+- **Every claim is cited.** Every factual claim cites a vault source. A mechanical gate (`score_diff.py`) rejects any edit that drops a citation or adds one whose source doesn't FTS5-match the claim.
 - **Wiki structure IS the semantic layer.** Concept and entity pages are the hubs; wikilinks express relationships. No vector DB required — though one can be bolted on for fuzzy fallback on large corpora.
 - **Keep-or-revert ratchet.** Autonomous curator proposes edits; a reviewer grades; accepted edits commit, rejected ones revert. The wiki never regresses.
 - **Hash-guarded scoring.** Scoring scripts are SHA-256 hashed between waves; the curator can't edit them to game its own metrics.
@@ -62,15 +102,15 @@ The first command runs `setup.sh`, which creates the folder layout, initialises 
 
 ## When to use (and when not)
 
-**Reach for this** when:
+**Fits well when:**
 - You're reading 30–300 substantial sources in a domain over weeks or months.
 - You care about provenance — every claim traceable to a vault file.
 - You want cross-source connections surfaced, not just stored.
 - You want the understanding to persist across sessions and compound.
 
-Good fits: personal research, literature reviews, idea gardens, due-diligence analysts, cross-field synthesis.
+Good fits: personal research, literature reviews, research notebooks, due-diligence analysts, cross-field synthesis.
 
-**Reach for something else** when:
+**Doesn't fit when:**
 - You want instant answers from a huge (>1000) doc store → use RAG (LlamaIndex, LangChain).
 - You're working on code → use Claude Code directly on the repo.
 - You need multi-user collaboration → Obsidian sync, Notion, Confluence.
@@ -98,7 +138,7 @@ For vaults above a few hundred sources where keyword search starts missing fuzzy
 |---|---|
 | [Karpathy's LLM-Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) | The wiki as a compounding artefact. |
 | [Karpathy's Autoresearch](https://github.com/karpathy/autoresearch) | Keep-or-revert ratchet with a measurable metric. Git as the ledger. |
-| [MemPalace](https://github.com/milla-jovovich/mempalace) | Store everything verbatim. Don't let AI decide what to forget. |
+| [MemPalace](https://github.com/milla-jovovich/mempalace) | Store source material verbatim; don't distill at ingest. |
 | [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) | Optional companion skill for read/write token compression. |
 
 ## Dependencies
