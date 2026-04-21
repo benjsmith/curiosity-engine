@@ -692,6 +692,14 @@ def cmd_resync_stems(wiki_dir: Path):
         correct = citation_stem(meta).lower()
         if not correct or correct == stub.stem.lower():
             continue
+        # Stem sanity check. parse_source_meta + citation_stem can
+        # produce garbled output when the vault file is corrupt or
+        # partly binary (errors='replace' yields strings full of
+        # U+FFFD and other non-filename-safe chars). Reject anything
+        # that doesn't look like a lowercase kebab-case slug.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,128}", correct):
+            skipped_no_vault.append(stub.name)
+            continue
 
         # Collision-safe target: if `correct` is already taken by some OTHER
         # stub, append -2, -3, ... until unique.
