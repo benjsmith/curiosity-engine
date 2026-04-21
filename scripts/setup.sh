@@ -65,6 +65,23 @@ SKILL_ROOTS=("$SKILL_ROOT_PHYSICAL")
 if [ "$SKILL_ROOT_LOGICAL" != "$SKILL_ROOT_PHYSICAL" ]; then
     SKILL_ROOTS+=("$SKILL_ROOT_LOGICAL")
 fi
+# npx-skills lays the install out as .agents/skills/<name> (physical)
+# with ~/.claude/skills/<name> as a symlink to it. If setup.sh was
+# invoked via the physical path (e.g. `bash ~/.agents/skills/...`),
+# SCRIPT_DIR_LOGICAL and SCRIPT_DIR_PHYSICAL resolve to the same path
+# and the allowlist only gets the physical form — but Claude Code at
+# runtime invokes scripts via the .claude/skills/ logical path, so
+# prefix matching fails and users hit approval prompts. Probe for the
+# sibling form directly and include whichever exists.
+for _alt in "${SKILL_ROOT_PHYSICAL/\/.agents\/skills\//\/.claude\/skills\/}" \
+            "${SKILL_ROOT_PHYSICAL/\/.claude\/skills\//\/.agents\/skills\/}"; do
+    if [ "$_alt" != "$SKILL_ROOT_PHYSICAL" ] && [ -d "$_alt" ]; then
+        case " ${SKILL_ROOTS[*]} " in
+            *" $_alt "*) ;;
+            *) SKILL_ROOTS+=("$_alt") ;;
+        esac
+    fi
+done
 
 # Ensure `uv` is available. The skill's canonical Python invocation is
 # `uv run python3 ...`, which auto-discovers the workspace `.venv`. Without
