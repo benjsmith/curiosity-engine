@@ -6,7 +6,7 @@ this file; don't duplicate prompts there.
 
 ---
 
-## worker (sonnet)
+## worker (worker-model)
 
 > You are a curiosity-engine curator worker. You have one page to improve.
 >
@@ -202,7 +202,7 @@ this file; don't duplicate prompts there.
 
 ---
 
-## batch_reviewer (opus, fresh context)
+## batch_reviewer (reviewer-model, fresh context)
 
 One opus call reviews every edit / new-page from a completed CURATE wave
 and returns a list of verdicts in one round-trip. Replaces the earlier
@@ -262,7 +262,7 @@ orchestrator itself.
 
 ---
 
-## semantic contradiction scan (opus)
+## semantic contradiction scan (reviewer-model)
 
 Run on concept, entity, and fact pages during the evaluate phase of each
 CURATE epoch. Replaces the retired deterministic negation-polarity check.
@@ -296,7 +296,7 @@ to get the cross-linked neighborhood of each page touched in the epoch.
 
 ---
 
-## spot_auditor (opus, fresh context, adversarial)
+## spot_auditor (reviewer-model, fresh context, adversarial)
 
 Used by CURATE Phase 3 on a sampled edit, roughly once every
 `spot_audit_interval` waves (default 20). A fresh opus Agent reads one
@@ -354,7 +354,7 @@ something is wrong and look for it.
 
 ---
 
-## link_proposer (opus)
+## link_proposer (reviewer-model)
 
 Used by LINK. Single reviewer-model call that scans compact page summaries
 for the whole wiki and proposes cross-page `[[wikilinks]]`. Fresh Agent with
@@ -398,7 +398,7 @@ clean context; does NOT see prior CURATE or LINK history.
 
 ---
 
-## link_classifier (opus, fresh context)
+## link_classifier (reviewer-model, fresh context)
 
 Used by LINK. A DIFFERENT Agent from the proposer — must have no memory of
 the proposal call. Receives the proposal list and judges each candidate.
@@ -438,7 +438,7 @@ the proposal call. Receives the proposal list and judges each candidate.
 
 ---
 
-## figure_extractor (sonnet)
+## figure_extractor (worker-model)
 
 > You extract figures from a scientific source document. The PDF has
 > already been rendered to per-page PNGs. Read each page image and

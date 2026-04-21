@@ -21,6 +21,14 @@ _src_dir="$(dirname "$0")"
 # (logical); `cd` followed by `pwd -P` canonicalizes (physical). Deriving
 # one from the other would collapse both to the same value, so each path
 # starts from the original $0 source dir.
+#
+# Portability note. Claude Code's skill loader substitutes `<skill_path>`
+# at invocation time; setup.sh can always derive its own scripts dir from
+# $0. Orchestration prompts that run under other coding-agent CLIs may
+# need CURIOSITY_ENGINE_SCRIPTS_DIR exported in the environment to stand
+# in for `<skill_path>/scripts`. That export is a runtime concern (used
+# by the orchestrator), not a setup-time one — setup.sh itself doesn't
+# depend on it.
 SCRIPT_DIR_LOGICAL="$(cd "$_src_dir" && pwd)"
 SCRIPT_DIR_PHYSICAL="$(cd "$_src_dir" && pwd -P)"
 SKILL_ROOT_LOGICAL="$(dirname "$SCRIPT_DIR_LOGICAL")"
@@ -189,6 +197,12 @@ elif ! cmp -s "$TEMPLATE_DIR/config.json" ".curator/config.json"; then
     echo "  Not auto-refreshing (preserves your worker_model/parallel_workers/"
     echo "  saturation-threshold tuning). Diff against $TEMPLATE_DIR/config.json"
     echo "  to pick up any new keys."
+fi
+# Drop the config.example.json alongside so users can see cross-vendor
+# variants (Anthropic default, Gemini, OpenAI, Ollama fully-local, mixed).
+# Always refresh — it's a reference file, never user-tuned.
+if [ -f "$TEMPLATE_DIR/config.example.json" ]; then
+    cp "$TEMPLATE_DIR/config.example.json" ".curator/config.example.json"
 fi
 
 # Initialize auto-generated curator state

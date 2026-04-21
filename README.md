@@ -2,7 +2,7 @@
 
 Autonomously and collaboratively organizes and improves personal knowledge bases with you.
 
-Built on top of [Claude Code](https://claude.com/claude-code). The wiki is plain markdown — open it in Obsidian, browse the graph, edit by hand. Everything's git-tracked.
+Built for use with frontier coding agents. Primary target is [Claude Code](https://claude.com/claude-code); OpenClaude, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code all work with minor adjustments. Worker and reviewer models are plain strings in `.curator/config.json` — swap Anthropic defaults for Gemini, OpenAI, or a fully-local Ollama endpoint. The wiki is plain markdown — open it in Obsidian, browse the graph, edit by hand. Everything's git-tracked.
 
 ## How it works
 
@@ -92,6 +92,41 @@ claude
 
 The first command runs `setup.sh`, which creates the folder layout, initialises the wiki git repo, drops in a Claude Code settings file that auto-allows safe operations, and optionally installs companion skills.
 
+### Running in other coding-agent CLIs
+
+Same `setup.sh` works; `.claude/settings.json` is skipped or ignored by non-Claude-Code CLIs. Point your CLI at the cloned skill folder and drive it with the same "set up a knowledge base", "add to the vault", "curate" prompts.
+
+- **OpenClaude** — drop the skill into `~/.openclaude/skills/`; skill-path substitution works.
+- **Codex CLI** — clone into a known scripts directory and export `CURIOSITY_ENGINE_SCRIPTS_DIR=<path>/scripts` so prompts without `<skill_path>` substitution still resolve.
+- **GitHub Copilot Chat (VS Code)** — clone anywhere, open the workspace folder in VS Code, and paste the contents of `SKILL.md` into the chat's workspace instructions. The single-chat-window flow works: Copilot runs as the orchestrator, dispatches subagents where supported, and falls back to sequential in-session workers with explicit role-reset prompts where not (see `SKILL.md#single-session-fallback`).
+- **Gemini CLI** — clone anywhere, export `CURIOSITY_ENGINE_SCRIPTS_DIR`, and point `worker_model` / `reviewer_model` at `gemini-2.5-pro` etc.
+
+### Running with different models (incl. fully local via Ollama)
+
+`worker_model` and `reviewer_model` in `.curator/config.json` are plain identifier strings passed to whatever coding-agent CLI is driving the skill. Defaults target Anthropic but nothing in the Python scripts depends on a specific vendor.
+
+See `template/config.example.json` for working variants:
+
+```json
+{
+  "worker_model":   "claude-sonnet-4-6",      // Anthropic (default)
+  "reviewer_model": "claude-opus-4-6",
+
+  "worker_model":   "gemini-2.5-pro",         // Google
+  "reviewer_model": "gemini-2.5-pro",
+
+  "worker_model":   "gpt-5",                  // OpenAI
+  "reviewer_model": "gpt-5",
+
+  "worker_model":   "ollama/llama3.1:70b",    // Fully local via Ollama
+  "reviewer_model": "ollama/qwen2.5:72b"
+}
+```
+
+**Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` the models above, edit `.curator/config.json` to match. Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers).
+
+**Enterprise notes.** No code sends wiki/vault content anywhere except to the model API your CLI drives; swap to Ollama for fully on-prem. PyPI access is required at setup time; HuggingFace egress is required only if you opt into semantic search (can be pre-staged via `HF_HOME`).
+
 ## What makes it different
 
 - **Every claim is cited.** Every factual claim cites a vault source. A mechanical gate (`score_diff.py`) rejects any edit that drops a citation or adds one whose source doesn't FTS5-match the claim.
@@ -149,7 +184,7 @@ For vaults above a few hundred sources where keyword search starts missing fuzzy
 - **[sentence-transformers](https://sbert.net/)** + **[sqlite-vec](https://github.com/asg017/sqlite-vec)** (optional) — semantic vault search. ~200MB model.
 - **[JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)** (optional) — read/write compression.
 - **git** — the wiki is a git repo.
-- **Claude Code** — this is a skill, not a standalone CLI.
+- **A frontier coding-agent CLI with file-tool + subagent-dispatch support** — this is a skill, not a standalone CLI. Claude Code is the primary target; OpenClaude, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code work with the adjustments noted under Quick start.
 
 ## License
 
