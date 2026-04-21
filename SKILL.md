@@ -272,6 +272,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 2. **Gather.** `uv run python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON (aggregate scores, dimension distributions, vault frontier, connection candidates, saturation signal, recent log). Also: `uv run python3 <skill_path>/scripts/sweep.py concept-candidates wiki` for demand-ranked missing-concept stems.
 3. **Pick wave mode.** Exactly one of:
    - **create** — if `summary.saturation.action == "pivot_to_exploration"` OR `summary.vault_frontier.uncited_count < 5`. First-level pool has thinned; time to generate new material.
+   - **table-audit** — else if any entry in `summary.table_citation_risk` has `risk > 0.5` (churn since last audit × time since last audit exceeds half the audit period). Dispatch one opus worker per high-risk table: pass the table's cited rows + current state, ask whether any citing evidence/analysis page needs an update. Findings become repair-wave tasks on the next wave. This prevents evidence from drifting out of sync with rows as tables churn.
    - **wire** — else if `summary.orphan_dominance.ratio > orphan_dominance_threshold` (default 0.6). The `orphan_dominance` field in epoch_summary is pre-computed *excluding* `sources/` pages, so this signal isn't skewed by source stubs being definitionally orphaned until wired in.
    - **repair** — otherwise. Editorial + frontier work remains; most pages are under-sourced or under-linked.
 4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode.
@@ -375,6 +376,24 @@ Semantic contradiction scanning is no longer per-wave — it's expensive and mos
 - **Saturation does NOT stop the loop.** Phase 1 re-picks mode every wave; saturation automatically shifts the next wave to create mode.
 
 **Process-level restart.** Each wave can be a fresh process invocation with clean context. All state lives in `.curator/log.md`, `.curator/.epoch_plan.md`, and `.curator/.guard.snapshot` — no cross-wave memory needed. Useful for very long runs.
+
+### Conversational row capture
+
+When the user volunteers a fact that maps onto an existing class table's row (a closed deal, a patient status change, a contract renewal), the agent captures it inline rather than appending prose:
+
+1. **Detect** the mapping. Phrases like "we just closed BigCo for £450k", "Mrs Wright started atorvastatin", "MSA with Globex expires 2027-03" each correspond to a row insert or update. Check `tables.py list` if uncertain which tables exist.
+
+2. **Minimal ask**. If required fields are ambiguous, ask ONE short question ("BigCo renewal or new deal? stage Won?"). Avoid multi-turn interrogation — one follow-up maximum for straightforward cases.
+
+3. **Batch mode.** If the user signals multiple updates ("a few things to update") or provides several facts in one message, switch to batch mode: gather all proposed rows, present as a single confirm, insert atomically once approved.
+
+4. **Confirm inline.** Restate the proposed payload in one line and wait for OK: *"→ `deals` insert: id=BIGCO-2026-R2, stage=Won, acv_gbp=450000, customer_ref=bigco. Confirm?"*
+
+5. **Insert** with `tables.py insert <table> '{...}'`. Provenance is `log:<timestamp>-<shortid>` pointing at the log entry written in the next step.
+
+6. **Log** a concise entry under `## conversational-captures` in `.curator/log.md` — table, row id, user intent, decision, timestamp. This entry IS the provenance referenced in step 5.
+
+Do not ask about every field or have long back-and-forth per row; batch updates when the user signals multiple, keep questions proportional to genuine ambiguity, capture the exchange in the log so it's auditable.
 
 ### CONTRADICTION — "scan contradictions", "check contradictions"
 

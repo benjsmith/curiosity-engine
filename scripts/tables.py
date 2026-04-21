@@ -184,7 +184,29 @@ def _connect() -> sqlite3.Connection:
             synced_at TEXT NOT NULL
         )
     """)
+    # Audit log: tracks how many rows have changed since the last
+    # citation-consistency audit, and when the audit last ran. Feeds
+    # into epoch_summary's table_citation_risk metric so CURATE can
+    # schedule audit waves adaptively.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS _audit_log (
+            table_name TEXT PRIMARY KEY,
+            last_audit_at TEXT,
+            row_changes_since_last INTEGER NOT NULL DEFAULT 0,
+            audit_period_days INTEGER NOT NULL DEFAULT 30
+        )
+    """)
     return conn
+
+
+def _bump_change_counter(conn, table_name: str) -> None:
+    """Record a row change for audit-risk tracking."""
+    conn.execute("""
+        INSERT INTO _audit_log (table_name, row_changes_since_last, audit_period_days)
+        VALUES (?, 1, 30)
+        ON CONFLICT(table_name) DO UPDATE SET
+            row_changes_since_last = row_changes_since_last + 1
+    """, (table_name,))
 
 
 _PROVENANCE_RE = re.compile(r"^(vault:|log:)\S+$")
@@ -367,6 +389,7 @@ def cmd_insert(name: str, payload_json: str) -> int:
         conn.close()
         print(json.dumps({"error": f"insert conflict: {e}"}))
         return 2
+    _bump_change_counter(conn, name)
     conn.commit()
     row_id = payload.get(pk) if pk else None
     conn.close()
@@ -426,6 +449,8 @@ def cmd_update(name: str, row_id: str, payload_json: str) -> int:
     sql = f'UPDATE "{name}" SET {set_fragment} WHERE "{pk}" = ?'
     cur = conn.execute(sql, values + [row_id])
     changed = cur.rowcount
+    if changed:
+        _bump_change_counter(conn, name)
     conn.commit()
     conn.close()
     print(json.dumps({"table": name, "status": "updated" if changed else "not_found",
@@ -535,10 +560,150 @@ def cmd_list() -> int:
     return 0
 
 
+_TABLE_CITATION_SCAN_RE = re.compile(
+    r"\(table:([a-zA-Z_][a-zA-Z0-9_]*)#id=([^)]+)\)"
+)
+
+
+def cmd_audit(wiki_dir: Path, name: Optional[str]) -> int:
+    """Verify (table:<name>#id=<id>) citations across the wiki.
+
+    For each citation found in non-source wiki pages, check that the
+    referenced row still exists. Report stale citations. Update the
+    `_audit_log` for the audited tables so `table_citation_risk`
+    resets.
+    """
+    if not wiki_dir.exists():
+        print(json.dumps({"error": f"wiki_dir not found: {wiki_dir}"}))
+        return 2
+    conn = _connect()
+    # Gather all (wiki_page, table, row_id) citations.
+    citations = []
+    for page in wiki_dir.rglob("*.md"):
+        rel = str(page.relative_to(wiki_dir))
+        if rel.startswith("sources/") or page.is_symlink():
+            continue
+        try:
+            text = page.read_text()
+        except OSError:
+            continue
+        for m in _TABLE_CITATION_SCAN_RE.finditer(text):
+            t = m.group(1)
+            rid = m.group(2)
+            if name is None or t == name:
+                citations.append({"page": rel, "table": t, "row_id": rid})
+
+    # Load PK columns for each table once.
+    pk_by_table = {}
+    for cit in citations:
+        t = cit["table"]
+        if t in pk_by_table:
+            continue
+        schema_info = _load_table_schema(conn, t)
+        if not schema_info:
+            pk_by_table[t] = None
+            continue
+        schema, _ = schema_info
+        cols = _normalize_columns(schema)
+        pk_by_table[t] = _primary_key_col(cols)
+
+    stale = []
+    valid = 0
+    for cit in citations:
+        pk = pk_by_table.get(cit["table"])
+        if pk is None:
+            stale.append({**cit, "reason": "table not synced"})
+            continue
+        try:
+            row = conn.execute(
+                f'SELECT 1 FROM "{cit["table"]}" WHERE "{pk}" = ? LIMIT 1',
+                (cit["row_id"],)
+            ).fetchone()
+        except sqlite3.Error as e:
+            stale.append({**cit, "reason": f"sql error: {e}"})
+            continue
+        if row is None:
+            stale.append({**cit, "reason": "row not found"})
+        else:
+            valid += 1
+
+    # Reset audit counters for tables we actually audited.
+    audited_tables = set(c["table"] for c in citations)
+    if name:
+        audited_tables.add(name)
+    now = datetime.now(timezone.utc).isoformat()
+    for t in audited_tables:
+        conn.execute("""
+            INSERT INTO _audit_log (table_name, last_audit_at, row_changes_since_last, audit_period_days)
+            VALUES (?, ?, 0, 30)
+            ON CONFLICT(table_name) DO UPDATE SET
+                last_audit_at = excluded.last_audit_at,
+                row_changes_since_last = 0
+        """, (t, now))
+    conn.commit()
+    conn.close()
+
+    print(json.dumps({
+        "wiki_dir": str(wiki_dir),
+        "table_filter": name,
+        "citations_scanned": len(citations),
+        "valid": valid,
+        "stale_count": len(stale),
+        "stale": stale,
+        "audited_tables": sorted(audited_tables),
+    }, indent=2))
+    return 0 if not stale else 1
+
+
+def cmd_risk() -> int:
+    """Emit a per-table risk score for table_citation_risk telemetry."""
+    if not DB_PATH.exists():
+        print(json.dumps({"tables": []}))
+        return 0
+    conn = _connect()
+    meta_rows = conn.execute("""
+        SELECT m.table_name, m.last_audit_at, m.row_changes_since_last,
+               m.audit_period_days
+        FROM _audit_log m
+    """).fetchall()
+    report = []
+    for table_name, last_audit, changes, period_days in meta_rows:
+        try:
+            total = conn.execute(
+                f'SELECT COUNT(*) FROM "{table_name}"'
+            ).fetchone()[0]
+        except sqlite3.Error:
+            total = 0
+        churn = changes / max(1, total)
+        if last_audit:
+            delta = (datetime.now(timezone.utc)
+                      - datetime.fromisoformat(last_audit)).total_seconds()
+            days_since = delta / 86400.0
+        else:
+            days_since = float(period_days or 30)
+        time_factor = min(1.0, days_since / max(1, period_days or 30))
+        risk = min(1.0, churn * time_factor)
+        report.append({
+            "table": table_name,
+            "total_rows": total,
+            "row_changes_since_last_audit": changes,
+            "churn_rate": round(churn, 3),
+            "days_since_last_audit": round(days_since, 1),
+            "audit_period_days": period_days,
+            "risk": round(risk, 3),
+        })
+    conn.close()
+    print(json.dumps({"tables": report}, indent=2))
+    return 0
+
+
 def cmd_rebuild(name: str) -> int:
-    """Phase 3 feature — stub returns an informative message for now."""
-    print(json.dumps({"error": "rebuild not implemented in Phase 1",
-                      "hint": "coming in Phase 3 (conversational capture + audit)"}))
+    """Phase 4 feature — stub returns an informative message for now."""
+    print(json.dumps({"error": "rebuild not implemented",
+                      "hint": "full rebuild-from-provenance lands in Phase 4 "
+                               "(governance + migrations). For now, insert "
+                               "rows via `tables.py insert` or reconstruct "
+                               "manually from the provenance record."}))
     return 2
 
 
@@ -573,7 +738,15 @@ def main() -> int:
 
     sub.add_parser("list", help="list all tables")
 
-    p_rebuild = sub.add_parser("rebuild", help="rebuild table from vault+log")
+    p_audit = sub.add_parser("audit",
+                               help="verify (table:X#id=Y) citations across wiki")
+    p_audit.add_argument("wiki", type=Path)
+    p_audit.add_argument("--table", default=None,
+                          help="audit only this table (default: all)")
+
+    sub.add_parser("risk", help="per-table citation-risk report")
+
+    p_rebuild = sub.add_parser("rebuild", help="rebuild table from vault+log (Phase 4)")
     p_rebuild.add_argument("table")
 
     args = ap.parse_args()
@@ -589,6 +762,10 @@ def main() -> int:
         return cmd_schema(args.table)
     if args.cmd == "list":
         return cmd_list()
+    if args.cmd == "audit":
+        return cmd_audit(args.wiki, args.table)
+    if args.cmd == "risk":
+        return cmd_risk()
     if args.cmd == "rebuild":
         return cmd_rebuild(args.table)
     ap.print_usage()

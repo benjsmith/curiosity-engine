@@ -18,6 +18,7 @@ import re
 import sqlite3
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -277,6 +278,62 @@ def orphan_dominance(results: list) -> dict:
     }
 
 
+def table_citation_risk(wiki_dir: Path) -> dict:
+    """Per-table citation staleness risk, read from .curator/tables.db.
+
+    Mirrors the logic of `tables.py risk` in-process so the orchestrator
+    gets this signal in the same JSON pass as everything else. Empty
+    dict when tables.db doesn't exist (no class tables yet).
+    """
+    db_path = wiki_dir.parent / ".curator" / "tables.db"
+    if not db_path.exists():
+        return {}
+    try:
+        import sqlite3 as _s3
+    except ImportError:
+        return {}
+    try:
+        conn = _s3.connect(str(db_path))
+    except _s3.Error:
+        return {}
+    try:
+        audit_rows = conn.execute("""
+            SELECT table_name, last_audit_at, row_changes_since_last,
+                   audit_period_days FROM _audit_log
+        """).fetchall()
+    except _s3.Error:
+        conn.close()
+        return {}
+    out = {}
+    for name, last_audit, changes, period in audit_rows:
+        try:
+            total = conn.execute(
+                f'SELECT COUNT(*) FROM "{name}"'
+            ).fetchone()[0]
+        except _s3.Error:
+            total = 0
+        churn = changes / max(1, total)
+        if last_audit:
+            try:
+                delta = (datetime.now(timezone.utc)
+                          - datetime.fromisoformat(last_audit)).total_seconds()
+                days_since = delta / 86400.0
+            except ValueError:
+                days_since = float(period or 30)
+        else:
+            days_since = float(period or 30)
+        time_factor = min(1.0, days_since / max(1, period or 30))
+        risk = min(1.0, churn * time_factor)
+        out[name] = {
+            "total_rows": total,
+            "changes_since_audit": changes,
+            "days_since_audit": round(days_since, 1),
+            "risk": round(risk, 3),
+        }
+    conn.close()
+    return out
+
+
 def _format_frontier(vf) -> dict:
     uncited, total, uncited_count = vf
     return {
@@ -420,6 +477,7 @@ def main():
         "connection_candidates": connection_candidates(wiki_dir),
         "saturation": saturation_check(wiki_dir),
         "orphan_dominance": orphan_dominance(results),
+        "table_citation_risk": table_citation_risk(wiki_dir),
         "wave_scope": wave_scope(wiki_dir, non_source, scope_threshold),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
     }
