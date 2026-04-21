@@ -136,6 +136,7 @@ Read `.curator/schema.md` before any operation.
   "saturation_rate_threshold": 0.005,
   "saturation_consecutive_waves": 2,
   "orphan_dominance_threshold": 0.6,
+  "figure_extract_min_citers": 2,
   "spot_audit_interval": 20,
   "embedding_enabled": false,
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
@@ -150,6 +151,7 @@ Read `.curator/schema.md` before any operation.
 - **wallclock_max_hours** — hard stop on the outer loop.
 - **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
 - **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
+- **figure_extract_min_citers** — minimum `distinct_citers` on a `figure-candidates` entry for figure-extract mode to fire (default 2). Raise to 3+ if the wiki has many low-demand PDF sources you don't want auto-extracted. Set to 0 to disable figure-extract mode entirely.
 - **spot_audit_interval** — every Nth wave (default 20), Phase 3 dispatches a single-page adversarial spot auditor against a random accepted edit. Set to 0 to disable. Catches subtle source misrepresentation the praise-mode batch reviewer doesn't flag.
 - **embedding_enabled** / **embedding_model** — opt-in semantic vault search. When `true`, `vault_index.py` computes an embedding alongside every FTS5 row (stored in sqlite-vec), and `vault_search.py --mode hybrid` merges FTS5 + cosine rankings via RRF. Default model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim, ~80MB). Install the deps (`uv pip install sentence-transformers sqlite-vec`) before flipping `embedding_enabled` to true. Setup prompts for this at bootstrap time.
 - **cluster_scope_threshold** — when non-source wiki pages exceed this count, `epoch_summary.py` returns a `wave_scope` field (worst-scoring page + its 2-hop wikilink neighborhood). Phase 1 restricts **repair-mode** target selection to that scope; create and wire modes stay global. Default 500 pages; set to 0 to disable cluster scoping entirely.
@@ -283,6 +285,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 3. **Pick wave mode.** Exactly one of:
    - **create** — if `summary.saturation.action == "pivot_to_exploration"` OR `summary.vault_frontier.uncited_count < 5`. First-level pool has thinned; time to generate new material.
    - **table-audit** — else if any entry in `summary.table_citation_risk` has `risk > 0.5` (churn since last audit × time since last audit exceeds half the audit period). Dispatch one opus worker per high-risk table: pass the table's cited rows + current state, ask whether any citing evidence/analysis page needs an update. Findings become repair-wave tasks on the next wave. This prevents evidence from drifting out of sync with rows as tables churn.
+   - **figure-extract** — else if `uv run python3 <skill_path>/scripts/sweep.py figure-candidates wiki` returns any candidate with `distinct_citers >= figure_extract_min_citers` (default 2). Dispatch one sonnet `figure_extractor` Agent per top-K candidate source: each worker reads the source's pre-rendered PNGs (produced up-front via `figures.py render-all`) and returns figure specs. Orchestrator creates `wiki/figures/fig-<stem>.md` per spec, then calls `figures.py mark-extracted` on each processed extraction so the source drops off the candidate list next wave. See Phase 2 for the full protocol.
    - **wire** — else if `summary.orphan_dominance.ratio > orphan_dominance_threshold` (default 0.6). The `orphan_dominance` field in epoch_summary is pre-computed *excluding* `sources/` pages, so this signal isn't skewed by source stubs being definitionally orphaned until wired in.
    - **repair** — otherwise. Editorial + frontier work remains; most pages are under-sourced or under-linked.
 4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode.
@@ -312,6 +315,16 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 **Phase 2 — Execute.**
 
 *Wire-mode wave:* run LINK as documented above; skip to Phase 3.
+
+*Figure-extract-mode wave:*
+
+1. **Select sources.** Read the top `parallel_workers` candidates from the `figure-candidates` JSON (sorted by `distinct_citers` desc). One source per worker slot.
+2. **Pre-render pages.** For each selected source, run `uv run python3 <skill_path>/scripts/figures.py render-all <vault_pdf> --wiki wiki`. Idempotent — skipped when the pages are already in `assets/figures/`. Keeps the multimodal worker input deterministic.
+3. **Dispatch workers.** Dispatch one fresh-context sonnet Agent per source with the `figure_extractor` template in `.curator/prompts.md`, passing the source path + absolute paths of the rendered PNGs. Each worker returns `{"source": "<path>", "figures": [{figure_number, page, caption_first_line, brief_description, concepts_illustrated, suggested_stem}, ...]}`.
+4. **Create figure pages.** For each returned spec, build the figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <source-stem>-p<N>.png`, `source_path`, `source_page`, `extraction_method: pdf_page_render`, `sources: [<extracted_md>]`, `relates_to: []`. Body: `![[../assets/figures/<asset>]]` + caption + `(vault:<extracted_md>)` citation. Validate each via `score_diff.py --new-page` (figures floor). Scrub-check via `scrub_check.py --mode wiki`.
+5. **Mark processed.** For each source that was passed through the worker (regardless of whether figures were produced — empty returns also count), call `uv run python3 <skill_path>/scripts/figures.py mark-extracted <vault_extracted_md>`. The `figures_extracted: <ISO>` flag drops the source from `figure-candidates` next wave.
+6. **Batch reviewer** optional — figures have short structured captions; the mechanical gate + scrub check catch most issues. Skip the opus reviewer for figure-extract waves unless a spec returned unusually long captions (>300 chars) or the wave produced >5 figure pages.
+7. **Commit.** `git -C wiki add -A && git -C wiki commit -m "figure-extract: N figures across M sources"` and rebuild the graph (figures participate in `Depicts` edges).
 
 *Create- and repair-mode waves:*
 
