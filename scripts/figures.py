@@ -14,9 +14,12 @@ Subcommands:
       `<source-stem>-p<N>.png` so multiple figures sharing a page
       share the same asset file.
 
-  check <wiki_dir>
-      For each wiki/figures/*.md, verify its asset exists. JSON
-      report with {ok, missing_extracted, missing_created}.
+  check <wiki_dir> [--purge]
+      For each wiki/figures/*.md, verify its asset exists. Also
+      report PNGs in assets/figures/ that no figure page references
+      — typical leftovers from render-all. --purge deletes them;
+      without --purge they are listed as unreferenced_pngs for a
+      dry-run view.
 
   regen <wiki_dir>
       Run check; for each extracted figure whose asset is missing,
@@ -269,9 +272,12 @@ def cmd_check(args) -> int:
     wiki_dir = Path(args.wiki).resolve()
     assets_dir = _assets_dir(wiki_dir)
     ok, missing_extracted, missing_created = [], [], []
+    referenced_assets = set()
     for md, fm in _iter_figure_pages(wiki_dir):
         asset = fm.get("asset", "")
         origin = fm.get("origin", "")
+        if asset:
+            referenced_assets.add(asset)
         if not asset:
             missing_extracted.append({
                 "page": str(md.relative_to(wiki_dir.parent)),
@@ -295,13 +301,38 @@ def cmd_check(args) -> int:
         else:
             missing_extracted.append(entry)
 
+    # Unreferenced page-render PNGs left over from render-all. Hidden
+    # files (.DS_Store and friends) are ignored so macOS index files
+    # don't show up as candidates for purging.
+    unreferenced = []
+    if assets_dir.is_dir():
+        for f in sorted(assets_dir.iterdir()):
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            if f.name in referenced_assets:
+                continue
+            unreferenced.append(f.name)
+
+    purged = []
+    if args.purge:
+        for name in unreferenced:
+            try:
+                (assets_dir / name).unlink()
+                purged.append(name)
+            except OSError:
+                pass
+
     result = {
         "ok": len(missing_extracted) == 0 and len(missing_created) == 0,
         "count_ok": len(ok),
         "count_missing_extracted": len(missing_extracted),
         "count_missing_created": len(missing_created),
+        "count_unreferenced_pngs": len(unreferenced),
+        "count_purged": len(purged),
         "missing_extracted": missing_extracted,
         "missing_created": missing_created,
+        "unreferenced_pngs": unreferenced,
+        "purged": purged,
     }
     print(json.dumps(result))
     return 0 if result["ok"] else 1
@@ -464,6 +495,8 @@ def main(argv: Optional[list] = None) -> int:
 
     ap_check = sub.add_parser("check", help="verify all figure assets exist")
     ap_check.add_argument("wiki", help="path to wiki directory")
+    ap_check.add_argument("--purge", action="store_true",
+                           help="delete PNGs under assets/figures/ that no figure page references")
     ap_check.set_defaults(func=cmd_check)
 
     ap_regen = sub.add_parser("regen",
