@@ -665,11 +665,26 @@ def cmd_resync_stems(wiki_dir: Path):
             # Last-resort fallback: scan body for `(vault:X.extracted.md)`
             # citations, which source stubs always carry at least once.
             srcs = [m.group(1) for m in CITATION_RE.finditer(body)]
+        # parse_source_meta expects a text file. Prefer .extracted.md
+        # entries over raw binaries (some stubs reference .pdf directly
+        # in vault/raw/ when ingest landed them there without a sibling
+        # extraction). Falls back to the raw list if no text entry is
+        # available — parse_source_meta tolerates binaries via
+        # errors='replace' but produces garbage metadata from them, so
+        # preferring text paths keeps stems stable.
+        text_srcs = [s for s in srcs if s.endswith(".extracted.md")]
+        if text_srcs:
+            srcs = text_srcs
         if not srcs:
             skipped_no_vault.append(stub.name)
             continue
         vault_file = vault_dir / srcs[0]
         if not vault_file.exists() or not vault_file.is_file():
+            skipped_no_vault.append(stub.name)
+            continue
+        # If the only available source is binary, skip the stub rather
+        # than rename it to a hash of garbled decoded bytes.
+        if not srcs[0].endswith(".extracted.md"):
             skipped_no_vault.append(stub.name)
             continue
 

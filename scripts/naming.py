@@ -324,7 +324,13 @@ def parse_source_meta(vault_path: Path) -> dict:
       4. First ``# Heading`` in body (no parenthetical) → simple notes.
       5. Filename stem → last resort.
     """
-    text = vault_path.read_text()
+    # Tolerate non-UTF-8 content — source stubs occasionally point at a
+    # binary (e.g. a PDF directly in vault/raw/ without a corresponding
+    # .extracted.md). read_text() defaults to strict UTF-8 and would
+    # raise UnicodeDecodeError; `errors='replace'` gives us a best-effort
+    # decode so the frontmatter-first fallback chain can still run. For a
+    # binary file the chain will fall through to the filename-stem branch.
+    text = vault_path.read_text(errors="replace")
     outer_fm, body = read_frontmatter(text)
     # local_ingest wraps the source's own frontmatter inside a FETCHED
     # CONTENT block. Merge it in so title/source_url/date surface — inner
