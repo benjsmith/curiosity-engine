@@ -907,6 +907,17 @@ def cmd_figure_candidates(wiki_dir: Path, min_inbound: int = 2,
         pdf_abs = vault_dir / pdf_rel
         if not pdf_abs.exists():
             continue
+        # Skip sources where the figure-extraction pass has already run
+        # (may have produced zero figures legitimately). Without this
+        # filter, every cited-but-empty source re-surfaces every wave.
+        ext_abs = vault_dir / vault_path
+        if ext_abs.exists():
+            try:
+                fm, _ = read_frontmatter(ext_abs.read_text())
+            except Exception:
+                fm = {}
+            if fm.get("figures_extracted"):
+                continue
         candidates.append({
             "vault_extraction": vault_path,
             "vault_pdf": pdf_rel,
@@ -915,6 +926,38 @@ def cmd_figure_candidates(wiki_dir: Path, min_inbound: int = 2,
         })
     candidates.sort(key=lambda c: (-c["distinct_citers"], c["vault_extraction"]))
     print(json.dumps({"candidates": candidates[:limit]}, indent=2))
+
+
+def cmd_pending_figures(wiki_dir: Path) -> None:
+    """List PDF vault extractions with no figures_extracted flag.
+
+    Completion signal (distinct from demand). Useful for `where has
+    the figure-extraction pass not yet run?`. Source-level — does not
+    check whether any downstream figure pages were actually created.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    queue = []
+    if not vault_dir.exists():
+        print(json.dumps({"queue": [], "count": 0,
+                          "note": "no vault/ directory"}))
+        return
+    for ext in sorted(vault_dir.glob("*.extracted.md")):
+        pdf = ext.with_suffix("")  # strip .md → leaves .extracted
+        pdf = pdf.with_suffix("")  # strip .extracted → stem
+        pdf = pdf.with_suffix(".pdf")
+        if not pdf.exists():
+            continue
+        try:
+            fm, _ = read_frontmatter(ext.read_text())
+        except Exception:
+            fm = {}
+        if fm.get("figures_extracted"):
+            continue
+        queue.append({
+            "extracted": ext.name,
+            "pdf": pdf.name,
+        })
+    print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
 
 
 def cmd_pending_multimodal(wiki_dir: Path) -> None:
@@ -1068,7 +1111,7 @@ def main():
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
         "evidence-candidates", "figure-candidates",
-        "pending-multimodal",
+        "pending-multimodal", "pending-figures",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     ap.add_argument("--min-inbound", type=int, default=3,
@@ -1117,6 +1160,8 @@ def main():
         cmd_figure_candidates(wiki_dir,
                                 min_inbound=(args.min_inbound if args.min_inbound != 3 else 2),
                                 limit=args.limit)
+    elif args.command == "pending-figures":
+        cmd_pending_figures(wiki_dir)
     elif args.command == "pending-multimodal":
         cmd_pending_multimodal(wiki_dir)
 

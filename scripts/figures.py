@@ -26,6 +26,12 @@ Subcommands:
   list <wiki_dir>
       Enumerate figure pages with their asset reference and origin.
 
+  mark-extracted <extraction_md_path> [--timestamp ISO]
+      Write `figures_extracted: <ISO>` into the extraction's
+      frontmatter. Idempotent — overwrites an existing field. Called
+      by the CURATE orchestrator at the end of the figure-extraction
+      pass (regardless of whether any figures were produced).
+
   pages <source_path>
       Report page count and per-page rendered-asset names for a
       PDF. Used by the CURATE orchestrator to decide how many pages
@@ -371,6 +377,51 @@ def cmd_regen(args) -> int:
     return 0 if result["ok"] else 1
 
 
+def cmd_mark_extracted(args) -> int:
+    """Write figures_extracted: <ISO> into the extraction's frontmatter.
+
+    Operates on the outer frontmatter block (the provenance block
+    written by local_ingest.py). Preserves the inner FETCHED CONTENT
+    block verbatim. Fails loudly on files without a leading --- fence.
+    """
+    import datetime
+    path = Path(args.path).resolve()
+    if not path.exists() or not path.is_file():
+        print(json.dumps({"ok": False, "error": f"file not found: {path}"}))
+        return 1
+    text = path.read_text()
+    if not text.startswith("---"):
+        print(json.dumps({"ok": False,
+                          "error": f"no frontmatter in {path}"}))
+        return 1
+    end = text.find("\n---", 3)
+    if end == -1:
+        print(json.dumps({"ok": False,
+                          "error": f"unterminated frontmatter in {path}"}))
+        return 1
+    fm_block = text[3:end].strip()
+    body = text[end + 4:]
+    ts = args.timestamp or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines = fm_block.split("\n") if fm_block else []
+    found = False
+    for i, ln in enumerate(lines):
+        stripped = ln.lstrip()
+        if stripped.startswith("figures_extracted:"):
+            indent = ln[: len(ln) - len(stripped)]
+            lines[i] = f"{indent}figures_extracted: {ts}"
+            found = True
+            break
+    if not found:
+        lines.append(f"figures_extracted: {ts}")
+    new_fm = "\n".join(lines)
+    new_text = f"---\n{new_fm}\n---{body}"
+    path.write_text(new_text)
+    print(json.dumps({"ok": True, "path": str(path),
+                        "figures_extracted": ts,
+                        "updated": found, "added": not found}))
+    return 0
+
+
 def cmd_list(args) -> int:
     wiki_dir = Path(args.wiki).resolve()
     assets_dir = _assets_dir(wiki_dir)
@@ -424,6 +475,13 @@ def main(argv: Optional[list] = None) -> int:
     ap_list = sub.add_parser("list", help="enumerate figure pages")
     ap_list.add_argument("wiki", help="path to wiki directory")
     ap_list.set_defaults(func=cmd_list)
+
+    ap_mark = sub.add_parser("mark-extracted",
+                                help="write figures_extracted: <ISO> to an extraction's frontmatter")
+    ap_mark.add_argument("path", help="path to the .extracted.md file")
+    ap_mark.add_argument("--timestamp", default=None,
+                          help="override timestamp (default: now UTC)")
+    ap_mark.set_defaults(func=cmd_mark_extracted)
 
     ap_pages = sub.add_parser("pages", help="report page count for a PDF")
     ap_pages.add_argument("source", help="path to source PDF")

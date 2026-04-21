@@ -65,6 +65,12 @@ ALLOWED_FM_KEYS = frozenset({
     # `relates_to` is the reverse-index of pages the figure depicts.
     "asset", "origin", "source_page", "source_analysis",
     "extraction_method", "page_region", "relates_to",
+    # Figure-extraction completion flag (on vault extraction stubs).
+    # ISO timestamp set by `figures.py mark-extracted` when the
+    # multimodal figure-extraction pass has run against the source —
+    # regardless of whether any figures were produced. Absence means
+    # pending work; presence suppresses re-extraction.
+    "figures_extracted",
 })
 
 TYPE_PREFIX = {
