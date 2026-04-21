@@ -722,6 +722,82 @@ def cmd_resync_stems(wiki_dir: Path):
     }, indent=2))
 
 
+def cmd_resync_prefixes(wiki_dir: Path):
+    """Rename pages in `wiki/tables/` and `wiki/figures/` so their
+    filename stems carry the type's prefix (`tbl-` / `fig-`), then
+    rewrite inbound wikilinks across the wiki.
+
+    Idempotent — pages already carrying the correct prefix are left
+    alone. Mirrors the resync-stems convention: one commit-worthy
+    migration that re-derives state from `naming.STEM_PREFIX`.
+    """
+    from naming import STEM_PREFIX
+
+    subdir_for_type = {
+        "summary-table": "tables",
+        "figure": "figures",
+    }
+    renames = []
+
+    for page_type, subdir in subdir_for_type.items():
+        prefix = STEM_PREFIX.get(page_type, "")
+        if not prefix:
+            continue
+        target_dir = wiki_dir / subdir
+        if not target_dir.is_dir():
+            continue
+        existing_stems = {p.stem.lower() for p in target_dir.glob("*.md")}
+        for page in sorted(target_dir.glob("*.md")):
+            stem = page.stem
+            if stem.startswith(prefix):
+                continue
+            # Read frontmatter to confirm the page is actually of the
+            # expected type. Protects against accidentally renaming
+            # unrelated files a human dropped into the subdir.
+            try:
+                fm, _ = read_frontmatter(page.read_text())
+            except Exception:
+                fm = {}
+            if fm.get("type") != page_type:
+                continue
+            new_stem = f"{prefix}{stem}"
+            # Collision-safe target.
+            candidate = new_stem
+            n = 2
+            while candidate.lower() in existing_stems and candidate != stem:
+                candidate = f"{new_stem}-{n}"
+                n += 1
+            new_path = target_dir / f"{candidate}.md"
+            page.rename(new_path)
+            existing_stems.discard(stem.lower())
+            existing_stems.add(candidate.lower())
+            renames.append((stem, candidate))
+
+    pages_touched = []
+    if renames:
+        rename_map = {old: new for old, new in renames}
+        pattern = re.compile(
+            r"\[\[(" + "|".join(re.escape(o) for o in rename_map) + r")(\|[^\]]*)?\]\]"
+        )
+
+        def _sub(m):
+            return f"[[{rename_map[m.group(1)]}{m.group(2) or ''}]]"
+
+        for page in wiki_pages(wiki_dir):
+            text = page.read_text()
+            new_text = pattern.sub(_sub, text)
+            if new_text != text:
+                page.write_text(new_text)
+                pages_touched.append(str(page.relative_to(wiki_dir)))
+
+    print(json.dumps({
+        "renames": len(renames),
+        "rename_pairs": [{"old": o, "new": n} for o, n in renames],
+        "pages_touched": len(pages_touched),
+        "pages_touched_paths": pages_touched,
+    }, indent=2))
+
+
 def cmd_evidence_candidates(wiki_dir: Path, min_inbound: int = 3,
                              limit: int = 20) -> None:
     """Rank vault sources by reuse demand with no existing evidence anchor.
@@ -920,7 +996,8 @@ def main():
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
         "fix-spaced-wikilinks", "fix-orphan-root-files",
-        "scan-references", "resync-stems", "concept-candidates",
+        "scan-references", "resync-stems", "resync-prefixes",
+        "concept-candidates",
         "evidence-candidates", "pending-multimodal",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
@@ -958,6 +1035,8 @@ def main():
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":
         cmd_resync_stems(wiki_dir)
+    elif args.command == "resync-prefixes":
+        cmd_resync_prefixes(wiki_dir)
     elif args.command == "concept-candidates":
         cmd_concept_candidates(wiki_dir, min_inbound=args.min_inbound,
                                 limit=args.limit)
