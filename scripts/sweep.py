@@ -848,6 +848,75 @@ def cmd_evidence_candidates(wiki_dir: Path, min_inbound: int = 3,
     print(json.dumps({"candidates": candidates[:limit]}, indent=2))
 
 
+def cmd_figure_candidates(wiki_dir: Path, min_inbound: int = 2,
+                            limit: int = 20) -> None:
+    """Rank PDF vault sources by reuse demand with no existing figure pages.
+
+    Demand signal for figures, symmetric with evidence-candidates but
+    with a looser inbound threshold (default 2, not 3) — a single
+    strong source referenced by two concept/evidence pages often has
+    at least one visually-anchored fact worth extracting, whereas
+    evidence anchors justify a higher bar.
+
+    "Has figure pages" = any wiki/figures/*.md whose `sources:`
+    frontmatter includes the vault extraction path. Only PDFs are
+    surfaced: the binary must live beside the extraction so
+    figures.py render-all has something to render.
+    """
+    from naming import CITATION_RE
+
+    pages = wiki_pages(wiki_dir)
+    vault_dir = wiki_dir.parent / "vault"
+
+    figure_covered = set()
+    fig_dir = wiki_dir / "figures"
+    if fig_dir.is_dir():
+        for fp in fig_dir.glob("*.md"):
+            try:
+                fm, _ = read_frontmatter(fp.read_text())
+            except Exception:
+                continue
+            if fm.get("type") != "figure":
+                continue
+            srcs = fm.get("sources", [])
+            if isinstance(srcs, str):
+                srcs = [srcs]
+            for s in srcs:
+                figure_covered.add(s.strip())
+
+    demand = defaultdict(set)
+    for p in pages:
+        rel = str(p.relative_to(wiki_dir))
+        if rel.startswith("sources/") or rel.startswith("figures/"):
+            continue
+        text = p.read_text()
+        for m in CITATION_RE.finditer(text):
+            demand[m.group(1).strip()].add(rel)
+
+    candidates = []
+    for vault_path, citing_pages in demand.items():
+        if len(citing_pages) < min_inbound:
+            continue
+        if vault_path in figure_covered:
+            continue
+        # Only PDFs — derive the binary path from the extraction path
+        # by stripping `.extracted.md` and checking for a sibling `.pdf`.
+        if not vault_path.endswith(".extracted.md"):
+            continue
+        pdf_rel = vault_path[: -len(".extracted.md")] + ".pdf"
+        pdf_abs = vault_dir / pdf_rel
+        if not pdf_abs.exists():
+            continue
+        candidates.append({
+            "vault_extraction": vault_path,
+            "vault_pdf": pdf_rel,
+            "distinct_citers": len(citing_pages),
+            "citing_pages": sorted(citing_pages)[:10],
+        })
+    candidates.sort(key=lambda c: (-c["distinct_citers"], c["vault_extraction"]))
+    print(json.dumps({"candidates": candidates[:limit]}, indent=2))
+
+
 def cmd_pending_multimodal(wiki_dir: Path) -> None:
     """List vault extractions flagged for multimodal upgrade.
 
@@ -998,7 +1067,8 @@ def main():
         "fix-spaced-wikilinks", "fix-orphan-root-files",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
-        "evidence-candidates", "pending-multimodal",
+        "evidence-candidates", "figure-candidates",
+        "pending-multimodal",
     ])
     ap.add_argument("wiki", nargs="?", default="wiki")
     ap.add_argument("--min-inbound", type=int, default=3,
@@ -1043,6 +1113,10 @@ def main():
     elif args.command == "evidence-candidates":
         cmd_evidence_candidates(wiki_dir, min_inbound=args.min_inbound,
                                  limit=args.limit)
+    elif args.command == "figure-candidates":
+        cmd_figure_candidates(wiki_dir,
+                                min_inbound=(args.min_inbound if args.min_inbound != 3 else 2),
+                                limit=args.limit)
     elif args.command == "pending-multimodal":
         cmd_pending_multimodal(wiki_dir)
 
