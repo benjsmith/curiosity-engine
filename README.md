@@ -92,13 +92,21 @@ claude
 
 The first command runs `setup.sh`, which creates the folder layout, initialises the wiki git repo, drops in a Claude Code settings file that auto-allows safe operations, and optionally installs companion skills.
 
+**Backing up the wiki** (optional but recommended). The `wiki/` folder is its own git repository, independent of the workspace. Push it to GitHub / GitLab / internal to back it up and sync across machines:
+
+```bash
+cd my-research/wiki
+git remote add origin git@github.com:<you>/<repo>.git
+git push -u origin main
+```
+
 ### Running in other coding-agent CLIs
 
 Same `setup.sh` works; `.claude/settings.json` is skipped or ignored by non-Claude-Code CLIs. Point your CLI at the cloned skill folder and drive it with the same "set up a knowledge base", "add to the vault", "curate" prompts.
 
 - **OpenClaude** — drop the skill into `~/.openclaude/skills/`; skill-path substitution works.
 - **Codex CLI** — clone into a known scripts directory and export `CURIOSITY_ENGINE_SCRIPTS_DIR=<path>/scripts` so prompts without `<skill_path>` substitution still resolve.
-- **GitHub Copilot Chat (VS Code)** — clone anywhere, open the workspace folder in VS Code, and paste the contents of `SKILL.md` into the chat's workspace instructions. The single-chat-window flow works: Copilot runs as the orchestrator, dispatches subagents where supported, and falls back to sequential in-session workers with explicit role-reset prompts where not (see `SKILL.md#single-session-fallback`).
+- **GitHub Copilot Chat (VS Code)** — clone anywhere, open the workspace folder in VS Code, and paste the contents of `SKILL.md` into the chat's workspace instructions. The single-chat-window flow works: Copilot runs as the orchestrator, dispatches subagents where supported, and falls back to sequential in-session workers with explicit role-reset prompts where not (see `SKILL.md#single-session-fallback`). To avoid per-command approval prompts, open VS Code's settings for the chat/agent feature and allow the bash + file tools at the workspace level — the commands that need allowing are listed in `.claude/settings.json`'s `permissions.allow` array after `setup.sh` runs; translate them into the per-workspace allowlist your VS Code version exposes.
 - **Gemini CLI** — clone anywhere, export `CURIOSITY_ENGINE_SCRIPTS_DIR`, and point `worker_model` / `reviewer_model` at `gemini-2.5-pro` etc.
 
 ### Running with different models (incl. fully local via Ollama)
@@ -126,6 +134,13 @@ See `template/config.example.json` for working variants:
 **Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` the models above, edit `.curator/config.json` to match. Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers).
 
 **Enterprise notes.** No code sends wiki/vault content anywhere except to the model API your CLI drives; swap to Ollama for fully on-prem. PyPI access is required at setup time; HuggingFace egress is required only if you opt into semantic search (can be pre-staged via `HF_HOME`).
+
+### Deployment notes
+
+- **Disk footprint.** Rough guide: `vault/` ≈ the size of your source PDFs (~50 MB per 100 academic papers). `vault.db` adds ~10–30% for FTS5 indexing. Semantic embeddings (opt-in) add ~0.5 MB per indexed line — ~200 MB for a 100-source vault. `assets/figures/` at 150 DPI is ~0.3–0.6 MB per rendered page; figure extraction typically renders 5–20 pages per source. Budget a few GB for a 100-source knowledge base with semantic search + figures on.
+- **Backup & restore.** `wiki/` is a git repo — push it wherever you back up code. `vault/` holds your raw sources — back it up like any data folder; re-ingest is expensive (it's what you pay the curator to do). `vault.db`, `graph.kuzu`, and `assets/figures/` are all derived and auto-regenerate from vault + wiki on the next `setup.sh` / `graph.py rebuild` / `figures.py regen` run. The one non-regeneratable store is `.curator/tables.db` (class-entity row data is source-of-truth in SQLite, not derivable from git-tracked files) — back it up separately if you've used class tables.
+- **Rendering outside Obsidian.** Wiki figure and summary-table pages use Obsidian's `![[asset.png]]` transclusion syntax, which renders inline in Obsidian but shows as literal text in GitHub and generic markdown viewers. The underlying data is still there; it just looks worse until opened in Obsidian.
+- **No-network / air-gapped install.** `setup.sh` uses `curl … | sh` to install `uv` when missing. For environments where that's blocked, pre-install uv via `pip install uv` first and re-run `setup.sh` — it'll detect the existing uv and skip the curl step. Same applies to pypdfium2 / Pillow / kuzu / pyyaml — pre-populate a PyPI mirror and `pip install` them; setup.sh uses `uv pip install` which respects `UV_INDEX_URL` / `PIP_INDEX_URL` for internal mirrors.
 
 ## What makes it different
 
