@@ -33,6 +33,7 @@ Outputs one JSON line to stdout. Exit code always 0 on well-formed input.
 import argparse
 import json
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -218,7 +219,6 @@ def verify_new_citations(old_text: str, new_text: str,
             if vp in added:
                 line_map.setdefault(vp, line)
 
-    import sqlite3
     suspects = []
     try:
         conn = sqlite3.connect(str(vault_db))
@@ -369,6 +369,14 @@ def main():
                            f"{sorted(set(bad))[:3]} — use [[kebab-case|Display]]")
                 result.update({"accept": False, "reason": reason,
                                 "bad_wikilinks": sorted(set(bad))})
+        if accept and args.tables_db:
+            table_suspects = verify_table_citations("", new_text, Path(args.tables_db))
+            if table_suspects:
+                accept = False
+                reason = ("suspect table citations: "
+                           + ", ".join(s["citation"] for s in table_suspects))
+                result.update({"accept": False, "reason": reason,
+                                "table_suspects": table_suspects})
         if accept and write:
             page.parent.mkdir(parents=True, exist_ok=True)
             page.write_text(new_text)
