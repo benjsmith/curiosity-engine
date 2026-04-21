@@ -400,9 +400,16 @@ def cmd_fix_source_stubs(wiki_dir: Path, cited_only: bool = False):
         if not summary:
             summary = f"Source extraction for {display}. (vault:{extracted.name})"
 
+        # Title starts with a bracketed prefix like [src]. YAML reads
+        # unquoted `title: [src] Foo` as a flow sequence, which PyYAML
+        # (and therefore Obsidian's frontmatter renderer) rejects. Quote
+        # the value so it parses as a string. Escape any embedded
+        # double quotes by downgrading to single quotes — acceptable
+        # fidelity loss for a wiki title.
+        title_quoted = '"' + title.replace('"', "'") + '"'
         stub = (
             f"---\n"
-            f"title: {title}\n"
+            f"title: {title_quoted}\n"
             f"type: source\n"
             f"created: {fm.get('date', '2026-04-12')}\n"
             f"updated: 2026-04-12\n"
@@ -701,14 +708,24 @@ def cmd_resync_stems(wiki_dir: Path):
             skipped_no_vault.append(stub.name)
             continue
 
-        # Collision-safe target: if `correct` is already taken by some OTHER
-        # stub, append -2, -3, ... until unique.
+        # Collision-safe target. First try a meaningful suffix drawn
+        # from the vault filename (e.g. two generic "Internal Legal
+        # Opinion" stubs become internal-legal-opinion-data-residency
+        # and internal-legal-opinion-acquisition-greentech instead of
+        # -2 and -3). Fall back to numeric `-N` if no distinctive
+        # tokens are available.
         new_stem = correct
         if new_stem in current_stems - {stub.stem.lower()}:
-            n = 2
-            while f"{new_stem}-{n}" in current_stems:
-                n += 1
-            new_stem = f"{new_stem}-{n}"
+            suffix = _differentiate_stem(correct, vault_file)
+            if suffix:
+                candidate = f"{correct}-{suffix}"
+                if candidate not in current_stems - {stub.stem.lower()}:
+                    new_stem = candidate
+            if new_stem in current_stems - {stub.stem.lower()}:
+                n = 2
+                while f"{new_stem}-{n}" in current_stems:
+                    n += 1
+                new_stem = f"{new_stem}-{n}"
 
         new_path = sources_dir / f"{new_stem}.md"
         stub.rename(new_path)
@@ -743,6 +760,112 @@ def cmd_resync_stems(wiki_dir: Path):
         "pages_touched_paths": pages_touched,
         "skipped_no_vault": skipped_no_vault,
     }, indent=2))
+
+
+_TITLE_BRACKET_RE = re.compile(
+    r"^(title:\s*)(\[[A-Za-z]+\][^\n]*?)\s*$", re.MULTILINE
+)
+
+
+def cmd_fix_frontmatter_quotes(wiki_dir: Path):
+    """Quote YAML title values that start with [src]/[con]/[ent] etc.
+
+    Unquoted `title: [src] Foo` is read by strict YAML parsers
+    (including Obsidian's) as a flow sequence `[src]` followed by
+    trailing junk, which fails the whole frontmatter block. Quoting
+    makes it parse as a string. Idempotent — already-quoted titles
+    are skipped by the regex.
+    """
+    touched = []
+    for p in wiki_pages(wiki_dir):
+        text = p.read_text()
+        if not text.startswith("---\n"):
+            continue
+        fm_end = text.find("\n---\n", 4)
+        if fm_end == -1:
+            continue
+        fm_block = text[:fm_end]
+        def _quote(m):
+            value = m.group(2).replace('"', "'")
+            return f'{m.group(1)}"{value}"'
+        new_fm = _TITLE_BRACKET_RE.sub(_quote, fm_block)
+        if new_fm == fm_block:
+            continue
+        new_text = new_fm + text[fm_end:]
+        p.write_text(new_text)
+        touched.append(str(p.relative_to(wiki_dir)))
+    print(json.dumps({"touched": len(touched),
+                        "paths": touched[:20]}, indent=2))
+
+
+def cmd_dedupe_self_citations(wiki_dir: Path):
+    """Remove duplicate `(vault:X)` citations on source stubs only.
+
+    A source stub is definitionally about one vault source and should
+    cite that source once, at the end of the stub. When a stub has
+    the same `(vault:path)` citation appearing multiple times (a
+    pattern observed after upstream ingest passes), keep only the
+    last occurrence. Other page types (evidence/analysis/concept/
+    etc.) are left alone — repeat citations on those pages are
+    often deliberate (same source supports multiple claims).
+    """
+    from naming import CITATION_RE as _cite_re
+    sources_dir = wiki_dir / "sources"
+    if not sources_dir.is_dir():
+        print(json.dumps({"touched": 0, "note": "no sources/ dir"}))
+        return
+    touched = []
+    for p in sorted(sources_dir.glob("*.md")):
+        text = p.read_text()
+        matches = list(_cite_re.finditer(text))
+        if len(matches) < 2:
+            continue
+        from collections import defaultdict
+        by_path = defaultdict(list)
+        for m in matches:
+            by_path[m.group(1)].append(m.span())
+        to_remove = []
+        for path, spans in by_path.items():
+            if len(spans) > 1:
+                to_remove.extend(spans[:-1])
+        if not to_remove:
+            continue
+        to_remove.sort(reverse=True)
+        new_text = text
+        for start, end in to_remove:
+            # Swallow one preceding space if present so we don't leave
+            # a double-space behind after removal.
+            lead = start - 1 if start > 0 and new_text[start - 1] == " " else start
+            new_text = new_text[:lead] + new_text[end:]
+        if new_text != text:
+            p.write_text(new_text)
+            touched.append(str(p.relative_to(wiki_dir)))
+    print(json.dumps({"touched": len(touched),
+                        "paths": touched[:20]}, indent=2))
+
+
+def _differentiate_stem(base_stem: str, vault_file) -> str:
+    """Extract distinctive suffix tokens from a vault filename.
+
+    When citation_stem produces the same stem for two different
+    sources (generic titles like "Internal Legal Opinion"), fall
+    back to the vault filename for disambiguation. Returns a short
+    suffix to append, or "" if no distinguishing tokens are left.
+    """
+    from naming import extract_topic
+    raw_stem = vault_file.stem.replace(".extracted", "")
+    raw_topic = extract_topic(raw_stem)
+    # extract_topic may still leave trailing ".md" on the string for
+    # some vault naming conventions. Strip it.
+    if raw_topic.endswith(".md"):
+        raw_topic = raw_topic[:-3]
+    raw_tokens = [t for t in raw_topic.split("-") if t]
+    base_tokens = set(base_stem.split("-"))
+    extras = [t for t in raw_tokens
+              if t not in base_tokens and not t.isdigit() and len(t) > 1]
+    if not extras:
+        return ""
+    return "-".join(extras[:2])
 
 
 def cmd_resync_prefixes(wiki_dir: Path):
@@ -1131,6 +1254,7 @@ def main():
     ap.add_argument("command", choices=[
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
         "fix-spaced-wikilinks", "fix-orphan-root-files",
+        "fix-frontmatter-quotes", "dedupe-self-citations",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
         "evidence-candidates", "figure-candidates",
@@ -1167,6 +1291,10 @@ def main():
         cmd_fix_spaced_wikilinks(wiki_dir)
     elif args.command == "fix-orphan-root-files":
         cmd_fix_orphan_root_files(wiki_dir)
+    elif args.command == "fix-frontmatter-quotes":
+        cmd_fix_frontmatter_quotes(wiki_dir)
+    elif args.command == "dedupe-self-citations":
+        cmd_dedupe_self_citations(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":

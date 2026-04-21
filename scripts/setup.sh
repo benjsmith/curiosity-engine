@@ -563,6 +563,8 @@ if [ -d wiki/.git ]; then
     else
         echo ""
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
+        uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
+        uv run python3 "$SCRIPT_DIR/sweep.py" dedupe-self-citations wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" resync-stems wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" resync-prefixes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-index wiki >/dev/null
