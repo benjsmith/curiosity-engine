@@ -408,7 +408,13 @@ def parse_source_meta(vault_path: Path) -> dict:
             author_str = re.sub(r"\b(19|20)\d{2}\b", "", paren)
             author_str = author_str.replace("et al.", "").replace(",", "").strip()
             if author_str:
-                meta["author"] = author_str.split()[0]
+                first_word = author_str.split()[0]
+                # Only accept candidates that look like a real name:
+                # start with a letter, allow internal apostrophes/periods/
+                # hyphens. Rejects junk like "-26" that's left over when a
+                # year range like "(2025-26)" has the year stripped out.
+                if re.match(r"^[A-Za-z][A-Za-z.'-]*$", first_word):
+                    meta["author"] = first_word
             meta["topic"] = _topic_from_title(title_part)
         else:
             meta["full_title"] = header
@@ -424,6 +430,17 @@ def parse_source_meta(vault_path: Path) -> dict:
     return meta
 
 
+def _sanitize_stem_part(s: str) -> str:
+    """Lowercase a stem fragment, squash non-alphanumeric runs to single
+    hyphens, and strip leading/trailing hyphens. Protects against
+    filename-unsafe characters leaking into citation stems — e.g. a
+    title with an em-dash, a value like `-26` that slipped past the
+    metadata validators, or a parenthesized citation body.
+    """
+    s = re.sub(r"[^a-z0-9]+", "-", (s or "").lower())
+    return s.strip("-")
+
+
 def citation_stem(meta: dict) -> str:
     """Build a citation-style filename stem from parsed metadata.
 
@@ -435,16 +452,29 @@ def citation_stem(meta: dict) -> str:
     scan by author, then year, then disambiguate by topic. This also
     groups a single author's stubs alphabetically on disk, which is
     useful when the same author has many papers in the vault.
+
+    Each part is sanitized individually so a junk fragment (non-letter
+    leading char, em-dash, parenthetical) can't produce a stem that
+    starts with a hyphen or contains filename-unsafe characters. Empty
+    parts after sanitization are dropped.
     """
     parts = []
     if meta.get("author"):
-        parts.append(meta["author"].lower())
+        p = _sanitize_stem_part(meta["author"])
+        if p:
+            parts.append(p)
     elif meta.get("origin"):
-        parts.append(meta["origin"].lower())
+        p = _sanitize_stem_part(meta["origin"])
+        if p:
+            parts.append(p)
     if meta.get("year"):
-        parts.append(meta["year"])
+        p = _sanitize_stem_part(meta["year"])
+        if p:
+            parts.append(p)
     if meta.get("topic"):
-        parts.append(meta["topic"])
+        p = _sanitize_stem_part(meta["topic"])
+        if p:
+            parts.append(p)
     return "-".join(parts)
 
 
