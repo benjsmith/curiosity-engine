@@ -40,6 +40,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from naming import WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
 
 CITATION_RAW_RE = re.compile(r"\(vault:[^)]+\)")
+# Table citation forms:
+#   (table:<name>#id=<id>)       single-row citation
+#   (table:<name>?query=<slug>)  pinned query citation (Phase 2)
+TABLE_CITATION_RE = re.compile(r"\(table:([a-zA-Z_][a-zA-Z0-9_]*)(?:#id=([^)]+)|\?query=([^)]+))\)")
 
 # FTS5 reserved tokens. If a claim word matches one of these (case-insensitive),
 # the raw query would be parsed as an operator and blow up with a syntax error.
@@ -97,8 +101,78 @@ def body_tokens(text: str) -> int:
 
 
 def citation_count(text: str) -> int:
-    """Count individual (vault:...) citations across the entire text."""
-    return len(CITATION_RAW_RE.findall(text))
+    """Count citations of any recognised form across the text.
+
+    Counts both `(vault:...)` and `(table:name#id=X)` / `(table:name?query=X)`.
+    Dropping a citation of either form should trip the citation-loss gate.
+    """
+    return len(CITATION_RAW_RE.findall(text)) + len(TABLE_CITATION_RE.findall(text))
+
+
+def _table_citations(text: str) -> list:
+    """Return table citations as (table, kind, value) tuples.
+
+    kind = 'id' for row citations, 'query' for pinned-query citations.
+    """
+    out = []
+    for m in TABLE_CITATION_RE.finditer(text):
+        table_name = m.group(1)
+        row_id = m.group(2)
+        query = m.group(3)
+        if row_id is not None:
+            out.append((table_name, "id", row_id))
+        elif query is not None:
+            out.append((table_name, "query", query))
+    return out
+
+
+def verify_table_citations(old_text: str, new_text: str,
+                              tables_db: Path) -> list:
+    """For each newly-added table-row citation, verify the row exists.
+
+    Only row-id citations are verified (Phase 1); pinned-query citations
+    are verified in later phases when the query registry is populated.
+    Returns a list of suspect citations (empty = all OK).
+    """
+    if not tables_db.exists():
+        return []
+    old_cits = set(_table_citations(old_text))
+    new_cits = set(_table_citations(new_text))
+    added = new_cits - old_cits
+    if not added:
+        return []
+    suspects = []
+    try:
+        conn = sqlite3.connect(str(tables_db))
+    except sqlite3.Error as e:
+        return [{"citation": f"table:{t}#id={v}", "error": str(e)}
+                 for (t, k, v) in added if k == "id"]
+    # Quick existence check: load set of (table, row_id) for any referenced
+    # table. Skip tables not present in the DB — they'd be reported as
+    # missing, which is the right error.
+    for (table_name, kind, value) in added:
+        if kind != "id":
+            continue
+        try:
+            # Primary key column must be named — extract from PRAGMA.
+            pragma = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+            pk_col = next((r[1] for r in pragma if r[5]), None)
+            if pk_col is None:
+                suspects.append({"citation": f"table:{table_name}#id={value}",
+                                  "problem": f"table {table_name} not found or has no PK"})
+                continue
+            row = conn.execute(
+                f'SELECT 1 FROM "{table_name}" WHERE "{pk_col}" = ? LIMIT 1',
+                (value,)
+            ).fetchone()
+            if row is None:
+                suspects.append({"citation": f"table:{table_name}#id={value}",
+                                  "problem": "row not found"})
+        except sqlite3.Error as e:
+            suspects.append({"citation": f"table:{table_name}#id={value}",
+                              "error": str(e)})
+    conn.close()
+    return suspects
 
 
 def _citations_set(text: str) -> set:
@@ -261,6 +335,8 @@ def main():
                     help="Return verdict without writing the file.")
     ap.add_argument("--vault-db", default=None,
                     help="Path to vault.db for citation verification.")
+    ap.add_argument("--tables-db", default=None,
+                    help="Path to tables.db for (table:X#id=Y) citation verification.")
     args = ap.parse_args()
 
     page = Path(args.page)
@@ -320,6 +396,15 @@ def main():
             accept = False
             reason = f"suspect citations: {', '.join(s['citation'] for s in suspects)}"
             result.update({"accept": False, "reason": reason, "suspects": suspects})
+
+    if accept and args.tables_db:
+        table_suspects = verify_table_citations(old_text, new_text, Path(args.tables_db))
+        if table_suspects:
+            accept = False
+            reason = ("suspect table citations: "
+                       + ", ".join(s["citation"] for s in table_suspects))
+            result.update({"accept": False, "reason": reason,
+                            "table_suspects": table_suspects})
 
     if accept:
         before_bad = set(_bad_wikilink_targets(old_text))

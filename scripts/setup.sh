@@ -76,6 +76,13 @@ if ! uv run --no-project python3 -c "import pypdf" >/dev/null 2>&1; then
     echo "  Installing pypdf (PDF text extraction) into .venv ..."
     uv pip install pypdf
 fi
+# PyYAML: used by tables.py to parse class-entity table schemas from
+# entity-page frontmatter. Lightweight (pure-Python, ~300KB) and the
+# pinnacle of standard in the Python world.
+if ! uv run --no-project python3 -c "import yaml" >/dev/null 2>&1; then
+    echo "  Installing PyYAML (class-table schema parser) into .venv ..."
+    uv pip install pyyaml
+fi
 
 # Working directory layout:
 #   vault/                 raw sources
@@ -281,6 +288,7 @@ EOF
       "Bash(uv run python3 $root/scripts/sweep.py:*)",
       "Bash(uv run python3 $root/scripts/epoch_summary.py:*)",
       "Bash(uv run python3 $root/scripts/graph.py:*)",
+      "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
 EOF
     done

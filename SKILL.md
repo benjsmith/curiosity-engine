@@ -57,7 +57,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `date ...`
 
@@ -101,6 +101,21 @@ This creates the full project structure, initializes git in the wiki, creates th
 - YAML frontmatter: title, type, created, updated, sources
 - `[[wikilinks]]` between pages, `(vault:path)` source citations
 - `.curator/index.md` catalogs all pages; `.curator/log.md` records all operations; `.curator/schema.md` is your operating protocol
+
+**Class tables** (`.curator/tables.db`) — SQLite store for entities whose instances are data (deals, patients, contracts, matters). Optional and emergent — only exists once an entity page declares a `table:` frontmatter block. Distinct from `vault/vault.db` (FTS5 index over raw sources) and `.curator/graph.kuzu` (WikiLink / Cites / relationship edges); each layer has a clear role.
+- Schema source of truth is the entity page's frontmatter. Evolves via the normal wiki ratchet (edit page → score_diff + reviewer → `tables.py sync` applies ALTER).
+- Rows live in SQLite only; every row records provenance (`vault:path` or `log:entry-id`) so the database is deterministically rebuildable from the git-tracked corpus.
+- Evidence and analyses cite rows via `(table:<name>#id=<id>)`, verified at commit time by score_diff.
+- Relationships (columns typed `wikilink` or `ref`) also populate kuzu edges, so `graph.py` queries traverse both wiki-page links AND typed-data links.
+- Agent surface: `tables.py {sync, insert, update, query, schema, list}`. DDL is only reachable via the `sync` subcommand, which reads the entity MD — no direct DDL path exists.
+
+**Three storage layers, distinct responsibilities** — don't confuse them:
+
+| layer | file | technology | role |
+|---|---|---|---|
+| vault index | `vault/vault.db` | SQLite FTS5 (+ sqlite-vec) | full-text + semantic search over source extractions |
+| graph | `.curator/graph.kuzu` | kuzu property graph | WikiLink / Cites / typed-data-reference edges |
+| class tables | `.curator/tables.db` | SQLite standard tables | entity-class instance data with schema from entity pages |
 
 Read `.curator/schema.md` before any operation.
 
@@ -376,7 +391,7 @@ On-demand semantic contradiction scan. Previously ran inside every CURATE epoch;
 
 CURATE cannot edit any skill script at runtime. All scripts that score, gate, evaluate, parse structure, or perform sweep operations are hash-guarded by `evolve_guard.sh`. A snapshot is taken at the start of every wave and rechecked at end; any drift aborts the wave and reverts.
 
-- **Hash-guarded (all skill scripts):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`, `sweep.py`, `evolve_guard.sh` itself. Edits land in the skill source (git-tracked upstream), not inside a workspace — no agent-editable code path exists.
+- **Hash-guarded (all skill scripts):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`, `sweep.py`, `tables.py`, `evolve_guard.sh` itself. Edits land in the skill source (git-tracked upstream), not inside a workspace — no agent-editable code path exists.
 - **Human-edited (per-workspace):** `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json`. CURATE must not edit these during a run.
 - **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates. Script improvement ideas land under `## improvement-suggestions` as prose notes — no agent-generated code enters the execution path.
 - **Fresh-context rule:** the reviewer MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
