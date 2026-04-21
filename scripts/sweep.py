@@ -701,10 +701,19 @@ def cmd_resync_stems(wiki_dir: Path):
             continue
         # Stem sanity check. parse_source_meta + citation_stem can
         # produce garbled output when the vault file is corrupt or
-        # partly binary (errors='replace' yields strings full of
-        # U+FFFD and other non-filename-safe chars). Reject anything
-        # that doesn't look like a lowercase kebab-case slug.
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,128}", correct):
+        # partly binary (errors='replace' produces strings full of
+        # U+FFFD that _sanitize_stem_part turns into long streams of
+        # short hyphen-separated tokens). Reject:
+        #  - anything that isn't lowercase kebab-case
+        #  - >7 hyphen segments (real stems are typically 3-5)
+        #  - more than half the segments being length-1 (garbage from
+        #    single-character U+FFFD sequences)
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,80}", correct):
+            skipped_no_vault.append(stub.name)
+            continue
+        _segments = correct.split("-")
+        _short = sum(1 for s in _segments if len(s) <= 1)
+        if len(_segments) > 8 or (_short >= 3 and _short * 2 > len(_segments)):
             skipped_no_vault.append(stub.name)
             continue
 
