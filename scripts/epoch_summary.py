@@ -199,22 +199,38 @@ def saturation_check(wiki_dir: Path, threshold: float = 0.005,
                       consecutive: int = 2) -> dict:
     """Parse recent wave logs and detect editorial saturation.
 
-    Reads rate_per_accept from the last N curate-wave blocks in
-    .curator/log.md. Returns a structured signal the orchestrator can
-    branch on without judgment calls. Defaults (0.005 over 2 waves)
-    are loose on purpose: the CURATE loop pivots to create mode
-    aggressively rather than grind editorial for diminishing returns.
+    Prefers `rate_per_accept_existing` (rate computed only over edits to
+    pages that existed pre-wave) over `rate_per_accept` (rate over all
+    accepts including new pages). Reason: a pure create-mode wave that
+    adds N new pages mechanically has near-zero editorial rate because
+    the new pages didn't exist to improve — but the overall rate metric
+    would flag them as saturated. That misfires the saturation pivot
+    INTO a wave type we're already in. The existing-edits rate filters
+    out that noise. Pure create waves where no existing edits happened
+    write "n/a" and are skipped from the saturation signal entirely.
+
+    Falls back to `rate_per_accept` when `rate_per_accept_existing` is
+    absent (older logs written before this field existed).
     """
     log_path = wiki_dir.parent / ".curator" / "log.md"
     if not log_path.exists():
         return {"saturated": False, "epochs_checked": 0, "rates": []}
 
     text = _tail_bytes(log_path)
+
+    # Prefer rate_per_accept_existing; numbers only, so "n/a" waves are
+    # naturally excluded.
     rates = [float(m) for m in re.findall(
-        r"^rate_per_accept:\s*([\d.]+)", text, re.MULTILINE)]
+        r"^rate_per_accept_existing:\s*([-\d.]+)", text, re.MULTILINE)]
+    source_field = "rate_per_accept_existing"
+    if not rates:
+        rates = [float(m) for m in re.findall(
+            r"^rate_per_accept:\s*([-\d.]+)", text, re.MULTILINE)]
+        source_field = "rate_per_accept"
 
     if len(rates) < consecutive:
-        return {"saturated": False, "epochs_checked": len(rates), "rates": rates}
+        return {"saturated": False, "epochs_checked": len(rates),
+                "rates": rates, "source_field": source_field}
 
     recent = rates[-consecutive:]
     saturated = all(r < threshold for r in recent)
@@ -225,7 +241,39 @@ def saturation_check(wiki_dir: Path, threshold: float = 0.005,
         "threshold": threshold,
         "required_consecutive": consecutive,
         "recent_rates": recent,
+        "source_field": source_field,
         "action": "pivot_to_exploration" if saturated else "continue_editorial",
+    }
+
+
+def orphan_dominance(results: list) -> dict:
+    """Fraction of non-source composite debt coming from orphan_rate.
+
+    Used by Phase 1 mode-pick: if this ratio exceeds
+    `orphan_dominance_threshold` (default 0.6), fire wire mode. Source
+    stubs are definitionally orphans until wired into concepts/entities,
+    so including them over-weights the orphan signal and suppresses
+    wire-mode from firing when it should. This computation excludes
+    sources/ — making the signal the orchestrator reads consistent with
+    SKILL.md's prose spec ("across non-source pages").
+
+    Composite = 0.25 × (crossref + orphan + unsourced + vault_coverage),
+    so orphan's contribution to composite is 0.25 × orphan. Summed
+    across non-source pages, orphan_sum / composite_sum is the share of
+    the wiki's total composite debt caused by inbound-link starvation.
+    """
+    non_source = [r for r in results if not r["page"].startswith("sources/")]
+    if not non_source:
+        return {"ratio": 0.0, "orphan_sum": 0.0, "composite_sum": 0.0,
+                "non_source_pages": 0}
+    orphan_sum = sum(r["scores"]["orphan_rate"] * 0.25 for r in non_source)
+    composite_sum = sum(r["scores"]["composite"] for r in non_source)
+    ratio = orphan_sum / composite_sum if composite_sum > 0 else 0.0
+    return {
+        "ratio": round(ratio, 3),
+        "orphan_sum": round(orphan_sum, 3),
+        "composite_sum": round(composite_sum, 3),
+        "non_source_pages": len(non_source),
     }
 
 
@@ -371,6 +419,7 @@ def main():
         "vault_frontier": _format_frontier(vault_frontier(wiki_dir, pages_text)),
         "connection_candidates": connection_candidates(wiki_dir),
         "saturation": saturation_check(wiki_dir),
+        "orphan_dominance": orphan_dominance(results),
         "wave_scope": wave_scope(wiki_dir, non_source, scope_threshold),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
     }

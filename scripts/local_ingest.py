@@ -53,6 +53,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Chain-import vault_index so newly-ingested files land in the FTS5 (and
+# optional embedding) index in the same process, without the caller
+# needing a separate --rebuild. Library-safe: no stdout side effects.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from vault_index import index_file_result as _vault_index_add
+except ImportError:
+    _vault_index_add = None
+
 DEFAULT_EXTS = {".md", ".txt", ".rst", ".html", ".htm", ".json", ".yaml",
                  ".yml", ".org", ".pdf"}
 # Raw-size cap: 50 MB. Real scientific PDFs with figures can approach this;
@@ -264,6 +273,18 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
         )
         extracted_path.write_text(frontmatter + body)
 
+        # Chain to vault_index so FTS5 (and embeddings if enabled) sees the
+        # new source immediately. Previously callers had to `--rebuild`
+        # manually, and the orchestrator spent round-trips on empty
+        # vault_search results in the meantime.
+        indexed = None
+        if _vault_index_add is not None:
+            try:
+                title_guess = path.stem
+                indexed = _vault_index_add(str(extracted_path), title_guess)
+            except Exception as e:
+                indexed = {"status": "error", "error": str(e)}
+
         result.update({
             "ok": True,
             "kept": str(kept_path),
@@ -277,6 +298,7 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
             "has_tables": has_tables,
             "sha256": sha[:12],
             "moved": is_drop,
+            "indexed": indexed.get("status") if isinstance(indexed, dict) else None,
         })
         return result
     except Exception as e:

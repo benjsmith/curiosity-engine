@@ -167,12 +167,18 @@ def _find_original(extracted: Path) -> str:
     return ""
 
 
-def index_file(path_str, title):
+def index_file_result(path_str, title):
+    """Index one file, returning a result dict. No stdout side effects, no exits.
+
+    Library-safe wrapper so local_ingest.py (and other callers) can chain to
+    indexing without subprocess overhead or output munging. Returns
+    {status: "error"|"unchanged"|"indexed"|"updated", ...details} with
+    status="error" on missing file instead of sys.exit.
+    """
     init_db()
     p = Path(path_str)
     if not p.exists():
-        print(json.dumps({"error": f"{p} not found"}))
-        sys.exit(1)
+        return {"path": path_str, "status": "error", "error": "not found"}
     text = p.read_text()
     rel = str(p.relative_to(Path("vault"))) if str(p).startswith("vault") else str(p)
     sha = file_sha256(p)
@@ -181,7 +187,6 @@ def index_file(path_str, title):
     c = sqlite3.connect(str(DB))
     c.execute("PRAGMA journal_mode=WAL")
 
-    # Lazy-load embedder only if enabled; first call downloads the model.
     embedder = None
     if _embedding_enabled():
         model, vec_mod, model_name, dim = _load_embedder()
@@ -193,8 +198,7 @@ def index_file(path_str, title):
     ).fetchone()
     if existing and existing[0] == sha:
         c.close()
-        print(json.dumps({"path": rel, "status": "unchanged", "sha256": sha[:12]}))
-        return
+        return {"path": rel, "status": "unchanged", "sha256": sha[:12]}
 
     if existing:
         c.execute("DELETE FROM sources WHERE path = ?", (rel,))
@@ -216,6 +220,15 @@ def index_file(path_str, title):
     out = {"path": rel, "status": status, "sha256": sha[:12], "chars": len(text)}
     if embedder is not None:
         out["embedded"] = True
+    return out
+
+
+def index_file(path_str, title):
+    """CLI wrapper: calls index_file_result, prints the result, exits on error."""
+    out = index_file_result(path_str, title)
+    if out.get("status") == "error":
+        print(json.dumps({"error": out.get("error", "unknown")}))
+        sys.exit(1)
     print(json.dumps(out))
 
 

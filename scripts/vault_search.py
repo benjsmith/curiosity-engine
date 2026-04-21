@@ -85,13 +85,13 @@ def _load_embedder_for_search():
     return SentenceTransformer(model_name), sqlite_vec
 
 
-def _fts5_search(conn, query: str, limit: int, include_text: bool) -> list:
-    query = _sanitize_fts(query)
+def _fts5_query(conn, fts_expr: str, limit: int, include_text: bool) -> list:
+    """Run one FTS5 query, return rows as dicts. Internal helper."""
     if include_text:
         rows = conn.execute(
             "SELECT path, title, source_path, date, body, bm25(sources) as rank "
             "FROM sources WHERE sources MATCH ? ORDER BY rank LIMIT ?",
-            (query, limit),
+            (fts_expr, limit),
         ).fetchall()
         return [{"path": r[0], "title": r[1], "source_path": r[2],
                  "date": r[3], "text": r[4], "rank": round(r[5], 4)} for r in rows]
@@ -100,10 +100,53 @@ def _fts5_search(conn, query: str, limit: int, include_text: bool) -> list:
         "snippet(sources, 2, '>>>', '<<<', '...', 40) as snippet, "
         "bm25(sources) as rank "
         "FROM sources WHERE sources MATCH ? ORDER BY rank LIMIT ?",
-        (query, limit),
+        (fts_expr, limit),
     ).fetchall()
     return [{"path": r[0], "title": r[1], "source_path": r[2],
              "date": r[3], "snippet": r[4], "rank": round(r[5], 4)} for r in rows]
+
+
+def _tokenize(raw_query: str) -> list:
+    """Extract quoted phrases and bare words from a query."""
+    return re.findall(r'"[^"]*"|\S+', raw_query)
+
+
+def _sanitize_token(tok: str) -> str:
+    """Per-token version of _sanitize_fts so we can compose OR/AND ourselves."""
+    if tok.startswith('"'):
+        return tok
+    if "-" in tok or tok.upper() in _FTS5_RESERVED or re.fullmatch(r"\w+:", tok):
+        return '"' + tok.replace('"', "") + '"'
+    return tok
+
+
+def _fts5_search(conn, query: str, limit: int, include_text: bool) -> list:
+    """FTS5 search with automatic OR fallback on zero-hit AND queries.
+
+    FTS5's implicit AND on space-separated tokens is strict — a query like
+    'investment committee riftlabs due diligence memo' returns zero hits
+    when no single document contains every token, even if every token is
+    present in the corpus. Users read that as "nothing found" when the
+    right answer is "close match, loosen your query".
+
+    Strategy: run the AND query first. If it returns rows, done. If empty
+    AND the query has multiple tokens, retry with OR between them and
+    mark every result with `downgraded: true` so the caller knows the
+    relaxation happened.
+    """
+    tokens = _tokenize(query)
+    if not tokens:
+        return []
+    sanitized = [_sanitize_token(t) for t in tokens]
+    and_expr = " ".join(sanitized)
+    results = _fts5_query(conn, and_expr, limit, include_text)
+    if results or len(sanitized) < 2:
+        return results
+    or_expr = " OR ".join(sanitized)
+    results = _fts5_query(conn, or_expr, limit, include_text)
+    for r in results:
+        r["downgraded"] = True
+    return results
 
 
 def _semantic_search(conn, model, sqlite_vec_mod, query: str,

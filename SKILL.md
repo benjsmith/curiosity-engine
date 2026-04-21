@@ -257,7 +257,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 2. **Gather.** `uv run python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON (aggregate scores, dimension distributions, vault frontier, connection candidates, saturation signal, recent log). Also: `uv run python3 <skill_path>/scripts/sweep.py concept-candidates wiki` for demand-ranked missing-concept stems.
 3. **Pick wave mode.** Exactly one of:
    - **create** — if `summary.saturation.action == "pivot_to_exploration"` OR `summary.vault_frontier.uncited_count < 5`. First-level pool has thinned; time to generate new material.
-   - **wire** — else if summed orphan_rate contributions across non-source pages exceed `orphan_dominance_threshold` (default 0.6) of the summed composite. If most debt is inbound-link starvation, wiring is more productive than rewriting prose.
+   - **wire** — else if `summary.orphan_dominance.ratio > orphan_dominance_threshold` (default 0.6). The `orphan_dominance` field in epoch_summary is pre-computed *excluding* `sources/` pages, so this signal isn't skewed by source stubs being definitionally orphaned until wired in.
    - **repair** — otherwise. Editorial + frontier work remains; most pages are under-sourced or under-linked.
 4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode.
 
@@ -268,7 +268,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    - **Evidence — up to 30%** of slots (3 of 10). Candidates come from `sweep.py evidence-candidates wiki`: vault sources cited by ≥3 distinct non-source wiki pages with no existing `evidence/*.md` anchored to them — the wiki is re-referencing the source across contexts without a consolidated anchor. Write the new `evidence/<stem>.md` in the canonical shape *method → result → interpretation → (optional) downstream influence*, and it becomes the shared anchor existing pages can link to via `[[<stem>]]`. Falls back to `vault_frontier` (zero-citation sources) when the demand list is empty; flows slack to analyses when both buckets are dry.
    - **Facts — up to 10%** of slots (1 of 10). One atomic numerical anchor per slot → new `facts/<stem>.md` (architectural hyperparameters, scaling exponents, benchmark scores, hyperparameter defaults). **Single-sentence test applies**: if explaining the finding takes more than one sentence, route to evidence instead. Cap is deliberate — facts are cheap to produce and low-information per page; 1 per wave keeps the anchor-citation layer growing without drowning out evidence/analyses.
    - **Demand promotions — up to 20%** of slots (2 of 10). Demand-ranked missing stems with ≥3 distinct inbound references (from `sweep.py concept-candidates`). Capped because one promotion auto-resolves multiple `[[stem]]` references in a single commit (high per-commit multiplier), so two per wave is enough. **Subdirectory choice is explicit in the brief**: if the stem is a proper noun (model family, organization, framework, benchmark, person) → `entities/<stem>.md`; if it's an abstract term (algorithm, method, architectural pattern, phenomenon) → `concepts/<stem>.md`. The demand signal alone doesn't distinguish entity-vs-concept; the worker does, guided by the stem itself. Worker brief must include the N referencing pages' names and the top 3–5 vault sources from `vault_search "<stem>"`.
-   - **Analyses — remainder** (40% baseline, up to `parallel_workers` when other buckets exhaust). Multi-source synthesis (≥3 vault sources) with a required `## Open questions and next steps` section — hypotheses, experiments, source requests, adjacent concepts.
+   - **Analyses — remainder** (40% baseline, up to `parallel_workers` when other buckets exhaust). Multi-source synthesis (≥3 vault sources) with a required `## Open questions and next steps` section — hypotheses, experiments, source requests, adjacent concepts. Analyses can be **empirical** (e.g., *Chinchilla scaling*, *Kaplan exponents* — drawing findings across multiple data-producing sources) OR **normative** (e.g., *audit-as-cross-domain-practice* synthesising clinical audit + procurement tender + lab safety; *templates-as-organisational-memory* synthesising clause libraries + checklists + board-minute templates). Both shapes fit here — don't restrict to empirical-only.
 
    **Slack rolls to analyses only**, never to the capped buckets. If evidence has only 1 uncited source left, the other 2 evidence slots flow to analyses — analyses is the unbounded bucket that always absorbs extra work. Preserves the demand-promotion cap and the fact-suppression cap.
 
@@ -322,7 +322,11 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 
 1. **Integrity check.** `bash <skill_path>/scripts/evolve_guard.sh check .curator/.guard.snapshot`. Drift = abort + revert.
 2. **Rebuild graph if structural.** If any page was created or any wikilink changed (always true in wire mode; often true in create mode), run `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`. The rebuild is idempotent and short-circuits when the graph is already current.
-3. **Measure.** `rate_per_accept = (start_score − end_score) / max(accepts, 1)`. Record `delta_per_wave`, `elapsed_seconds`.
+3. **Measure.** Compute two rates:
+   - `rate_per_accept = (start_score − end_score) / max(accepts, 1)` — overall rate, all accepts.
+   - `rate_per_accept_existing = (start_score_existing − end_score_existing) / max(existing_edits, 1)` — rate computed over PRE-EXISTING pages only, using only accepts that edited (not created) a page. If `existing_edits == 0` (pure create-mode wave), write `n/a` for this field; `saturation_check` skips those waves, which is the point — pure expansion waves mechanically have near-zero editorial rate but we don't want that to re-fire the saturation pivot we're already responding to.
+
+   Also record `delta_per_wave`, `elapsed_seconds`, `existing_edits`, `new_pages`.
 4. **Spot audit (sampled).** When `wave_number % spot_audit_interval == 0` (default 20), pick one accepted edit from this wave at random and dispatch a fresh-context opus Agent with the `spot_auditor` template in `.curator/prompts.md`. Pass the page text and its cited vault sources' full extractions. If the verdict is `inaccuracy`, append the finding (claim, cited_source, source_passage, problem) under `## spot-audit-findings` in `.curator/log.md` — human-review territory, not auto-reverted because the batch reviewer already passed the edit. If `clean` or the wave has no accepts, no log entry. Skip entirely if `spot_audit_interval` is 0. Adversarial and cheap: one extra opus call per ~20 waves catches subtle source misrepresentation the praise-mode batch reviewer misses.
 5. **Improvement suggestions (optional, prose only).** If during this wave the curator observed a clear opportunity to improve a skill script — a missing sweep rule that could have caught something concrete, a lint dimension producing misleading signal on a specific page, a brief-composition pattern that consistently failed — append a note under `## improvement-suggestions` in `.curator/log.md`. Format: one-line symptom, one-line proposal, the observed evidence (page paths, counts, quoted text). The curator does NOT edit skill scripts; all are hash-guarded. Suggestions exist for the human maintainer to evaluate and apply via the skill source. Skip entirely when no observation warrants it — noise-free suggestions beat pro-forma ones.
 6. **Wave log.** Append to `.curator/log.md`:
@@ -332,8 +336,11 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    start_score: X.XXX
    end_score: X.XXX
    rate_per_accept: X.XXXXX
+   rate_per_accept_existing: X.XXXXX | n/a
    elapsed_seconds: X
    accepted: M (mode-specific breakdown — concepts/evidence/analyses or editorial/frontier or links_applied)
+   existing_edits: X
+   new_pages: Y
    rejected: R
    flagged_for_human: F
    suspect_citations: N

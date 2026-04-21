@@ -184,7 +184,14 @@ _GENERIC_HEADINGS = {
 
 
 def _topic_from_title(title: str) -> str:
-    words = [w for w in title.split() if w.lower() not in _TITLE_STOP]
+    # Normalise unicode dashes to plain hyphen before splitting. Em-dash
+    # and en-dash as standalone separators otherwise survive as bare
+    # "—" / "–" tokens, producing garbled stems like `sources/case-brief-—.md`.
+    # Also filter any token that becomes pure punctuation after
+    # normalisation — stop-word filtering alone doesn't catch these.
+    t = title.replace("\u2014", "-").replace("\u2013", "-").replace("\u2012", "-")
+    words = [w for w in t.split() if w.lower() not in _TITLE_STOP]
+    words = [w for w in words if any(c.isalnum() for c in w)]
     return "-".join(w.lower() for w in words[:3])
 
 

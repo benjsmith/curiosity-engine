@@ -98,7 +98,19 @@ this file; don't duplicate prompts there.
 >   or exploring a connection. Written at `lite` level, not `ultra`.
 >   Analyses are the primary channel once the editorial/frontier pool
 >   saturates — they should be prolific, multi-directional, and
->   explicitly forward-looking. Expectations:
+>   explicitly forward-looking. Two shapes are both welcome:
+>   - **Empirical synthesis**: findings drawn from multiple data-
+>     producing sources. Examples: *Chinchilla scaling law*, *Kaplan
+>     exponents*, comparison of benchmark results across papers.
+>   - **Normative synthesis**: shared patterns, frames, or failure
+>     modes surfaced across templates, policies, playbooks, or
+>     procedures from different domains. Examples: *audit-as-cross-
+>     domain-practice* synthesising clinical audit + statutory audit
+>     + procurement tender + lab safety; *templates-as-organisational-
+>     memory* synthesising clause libraries + checklists + board-
+>     minute templates across legal / healthcare / science / sales.
+>   Both forms qualify — don't restrict to empirical-only.
+>   Expectations:
 >     - Draw on ≥3 distinct vault sources. Cite each.
 >     - Use your own model knowledge to propose adjacent directions
 >       NOT present in the vault. The wiki is a shared artefact with
@@ -155,8 +167,14 @@ this file; don't duplicate prompts there.
 > - Preserve every existing `(vault:...)` citation. Never drop a citation.
 > - Every NEW factual claim must have a `(vault:...)` citation from the
 >   vault material provided in this brief.
+> - Citation syntax is EXACTLY `(vault:path/to/source.extracted.md)`.
+>   Never use any of these non-standard forms: `^[vault:...]`,
+>   `^vault:...`, `[[vault:...]]`, ``` `(vault:...)` ``` (backticked),
+>   `<vault:...>`. Only the parenthesised `(vault:...)` form is
+>   accepted — `score_diff` + post-ingest counters reject the others.
 > - All `[[wikilinks]]` must be hyphen-case (e.g. `[[deep-learning]]` not
->   `[[Deep Learning]]`).
+>   `[[Deep Learning]]`). `score_diff` rejects edits that add any
+>   wikilink target with a space or uppercase letter.
 > - Do not add raw URLs anywhere in the page body.
 > - Write `%` for percentages. Never write `%%` in prose — Obsidian renders
 >   `%%…%%` as a hidden comment and silently eats everything between.
