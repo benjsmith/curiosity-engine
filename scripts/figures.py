@@ -26,6 +26,17 @@ Subcommands:
   list <wiki_dir>
       Enumerate figure pages with their asset reference and origin.
 
+  pages <source_path>
+      Report page count and per-page rendered-asset names for a
+      PDF. Used by the CURATE orchestrator to decide how many pages
+      to feed into a multimodal figure-extractor worker.
+
+  render-all <source_path> --wiki <wiki_dir> [--dpi 150]
+      Render every page of a PDF into assets/figures/<stem>-pN.png,
+      one per page. Idempotent — existing PNGs are skipped. Used as
+      the pre-processing step before dispatching a figure-extractor
+      worker so all pages are available as PNGs.
+
 All subcommands emit one JSON line on stdout. Exit code reflects
 whether the requested work succeeded (0 = ok; 1 = argument/format
 error; 2 = external tool failure, e.g. pypdfium2 missing).
@@ -100,6 +111,92 @@ def _render_pdf_page(pdf_path: Path, page: int, out_png: Path,
         pil_image.save(str(out_png), format="PNG")
     finally:
         pdf.close()
+
+
+def _pdf_page_count(pdf_path: Path) -> int:
+    try:
+        import pypdfium2 as pdfium  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "pypdfium2 not installed — run `uv pip install pypdfium2`"
+        ) from exc
+    doc = pdfium.PdfDocument(str(pdf_path))
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
+def cmd_pages(args) -> int:
+    source = Path(args.source).resolve()
+    if not source.exists():
+        print(json.dumps({"ok": False, "error": f"source not found: {source}"}))
+        return 1
+    if source.suffix.lower() != ".pdf":
+        print(json.dumps({"ok": False, "error": f"only .pdf sources supported: {source}"}))
+        return 1
+    try:
+        n = _pdf_page_count(source)
+    except RuntimeError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    pages = [{"page": i, "asset": _default_asset_name(source, i)}
+             for i in range(1, n + 1)]
+    print(json.dumps({"ok": True, "source": str(source),
+                       "page_count": n, "pages": pages}))
+    return 0
+
+
+def cmd_render_all(args) -> int:
+    source = Path(args.source).resolve()
+    if not source.exists():
+        print(json.dumps({"ok": False, "error": f"source not found: {source}"}))
+        return 1
+    if source.suffix.lower() != ".pdf":
+        print(json.dumps({"ok": False, "error": f"only .pdf sources supported: {source}"}))
+        return 1
+
+    wiki_dir = Path(args.wiki).resolve() if args.wiki else None
+    assets_dir = _assets_dir(wiki_dir) if wiki_dir else Path(args.assets_dir).resolve()
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        n = _pdf_page_count(source)
+    except RuntimeError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+
+    rendered, skipped, failed = [], [], []
+    for page in range(1, n + 1):
+        asset_name = _default_asset_name(source, page)
+        out_png = assets_dir / asset_name
+        if out_png.exists() and not args.force:
+            skipped.append(asset_name)
+            continue
+        try:
+            _render_pdf_page(source, page, out_png, args.dpi)
+            rendered.append(asset_name)
+        except RuntimeError as exc:
+            failed.append({"page": page, "error": str(exc)})
+
+    pages_out = [{"page": i,
+                   "asset": _default_asset_name(source, i),
+                   "asset_path": str(assets_dir / _default_asset_name(source, i))}
+                  for i in range(1, n + 1)]
+    result = {
+        "ok": not failed,
+        "source": str(source),
+        "page_count": n,
+        "count_rendered": len(rendered),
+        "count_skipped": len(skipped),
+        "count_failed": len(failed),
+        "rendered": rendered,
+        "skipped": skipped,
+        "failed": failed,
+        "pages": pages_out,
+    }
+    print(json.dumps(result))
+    return 0 if result["ok"] else 2
 
 
 def cmd_extract(args) -> int:
@@ -328,10 +425,30 @@ def main(argv: Optional[list] = None) -> int:
     ap_list.add_argument("wiki", help="path to wiki directory")
     ap_list.set_defaults(func=cmd_list)
 
+    ap_pages = sub.add_parser("pages", help="report page count for a PDF")
+    ap_pages.add_argument("source", help="path to source PDF")
+    ap_pages.set_defaults(func=cmd_pages)
+
+    ap_render_all = sub.add_parser("render-all",
+                                      help="render every page of a PDF")
+    ap_render_all.add_argument("source", help="path to source PDF")
+    ap_render_all.add_argument("--wiki", default=None,
+                                help="wiki dir; assets go in sibling assets/figures/")
+    ap_render_all.add_argument("--assets-dir", default=None,
+                                help="override assets dir (if --wiki not given)")
+    ap_render_all.add_argument("--dpi", type=int, default=DEFAULT_DPI)
+    ap_render_all.add_argument("--force", action="store_true",
+                                help="re-render even if page asset already exists")
+    ap_render_all.set_defaults(func=cmd_render_all)
+
     args = ap.parse_args(argv)
     if args.cmd == "extract" and not args.wiki and not args.assets_dir:
         print(json.dumps({"ok": False,
                           "error": "extract needs --wiki or --assets-dir"}))
+        return 1
+    if args.cmd == "render-all" and not args.wiki and not args.assets_dir:
+        print(json.dumps({"ok": False,
+                          "error": "render-all needs --wiki or --assets-dir"}))
         return 1
     return args.func(args)
 
