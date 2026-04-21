@@ -91,6 +91,49 @@ if ! command -v uv >/dev/null 2>&1; then
     esac
 fi
 
+# Detect .venv drift. When the user upgrades system Python, the existing
+# .venv is still bound to the old interpreter — if that interpreter is
+# gone, the venv is silently broken; if it's still there, rerunning
+# setup.sh would otherwise no-op (the `if [ ! -d .venv ]` guard below
+# skips recreation). Catch both cases. Silent when no drift.
+_rebuild_venv=0
+_drift_reason=""
+if [ -d .venv ]; then
+    if ! .venv/bin/python3 --version >/dev/null 2>&1; then
+        _rebuild_venv=1
+        _drift_reason="old interpreter missing (Python likely upgraded since last setup)"
+    elif [ -f .venv/pyvenv.cfg ]; then
+        _venv_py=$(grep -E "^version[[:space:]]*=" .venv/pyvenv.cfg | head -1 | sed 's/^version[[:space:]]*=[[:space:]]*//' | tr -d ' ')
+        _venv_mm=$(echo "$_venv_py" | cut -d. -f1,2)
+        _cur_mm="${_py_major}.${_py_minor}"
+        if [ -n "$_venv_mm" ] && [ "$_venv_mm" != "$_cur_mm" ]; then
+            _drift_reason=".venv is on Python $_venv_py; current python3 is $_py_version"
+            if [ -t 0 ] && [ -t 1 ]; then
+                echo ""
+                echo "  $_drift_reason"
+                printf "  Rebuild .venv on Python $_py_version? [y/N] "
+                read -r _reply_rebuild || _reply_rebuild="n"
+                case "$_reply_rebuild" in
+                    y|Y|yes|YES) _rebuild_venv=1 ;;
+                esac
+            else
+                # Non-interactive: surface the drift but keep the existing
+                # venv. Rebuilding without confirmation risks surprising
+                # users who deliberately pinned the venv to a different
+                # Python. To rebuild: `rm -rf .venv && ./setup.sh`.
+                echo ""
+                echo "  NOTE: $_drift_reason"
+                echo "        Keeping existing venv (non-interactive)."
+                echo "        Rebuild manually: rm -rf .venv && rerun setup.sh"
+            fi
+        fi
+    fi
+fi
+if [ "$_rebuild_venv" = "1" ]; then
+    echo "  Removing old .venv and rebuilding on Python $_py_version ($_drift_reason) ..."
+    rm -rf .venv
+fi
+
 # Create workspace venv + install kuzu. `uv run` from the workspace root
 # auto-discovers `./.venv` — no activation needed. kuzu backs graph.py,
 # lint_scores.py, and epoch_summary.py.
