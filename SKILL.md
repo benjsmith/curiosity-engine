@@ -467,7 +467,7 @@ Level selection comes from `.curator/config.json`:
 
 ```markdown
 ---
-title: [con] Page Title
+title: "[con] Page Title"
 type: entity | concept | source | analysis | evidence | fact | summary-table
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -477,7 +477,11 @@ sources: [path/to/source.extracted.md]
 Concise factual prose. [[cross-references]]. (vault:source/path) citations.
 ```
 
-The `title` prefix tag (`[con]`, `[ent]`, `[ana]`, `[src]`, `[evi]`, `[fact]`, `[tbl]`, `[fig]`) comes from `naming.TYPE_PREFIX`. Evidence pages capture a single source-backed observation, fact pages a single atomic claim. Both emerge via CURATE reads — INGEST only creates `sources/`, `entities/`, `concepts/` pages. Filenames in `wiki/tables/` and `wiki/figures/` carry their type's stem prefix (`tbl-`, `fig-`) from `naming.STEM_PREFIX` so Obsidian's quick-switcher groups them cleanly.
+The `title` prefix tag (`[con]`, `[ent]`, `[ana]`, `[src]`, `[evi]`, `[fact]`, `[tbl]`, `[fig]`) comes from `naming.TYPE_PREFIX`. **Always wrap the title value in double quotes** — strict YAML readers (PyYAML, Obsidian) parse an unquoted `[con]` as the start of a flow sequence and reject the frontmatter block entirely. The skill's own hand-rolled reader tolerates unquoted titles, but external tools do not.
+
+Evidence pages capture a single source-backed observation, fact pages a single atomic claim. Both emerge via CURATE reads — INGEST only creates `sources/`, `entities/`, `concepts/` pages. Filenames in `wiki/tables/` and `wiki/figures/` carry their type's stem prefix (`tbl-`, `fig-`) from `naming.STEM_PREFIX` so Obsidian's quick-switcher groups them cleanly.
+
+The `(vault:path)` construct in prose is the skill's citation DSL — recognised by `score_diff`, `lint_scores`, graph build, and the rest of the pipeline. It is **not** a clickable markdown link; Obsidian renders it as literal text in parentheses. That's by design: the marker stays parseable for the mechanical gates across arbitrary renderers. To navigate to the source manually in Obsidian, open the `vault/` directory alongside the wiki as part of the workspace vault.
 
 ### Summary tables (`wiki/tables/`)
 
@@ -485,7 +489,7 @@ Small, readable tables that encapsulate a comparison, cross-section, or top-N vi
 
 ```markdown
 ---
-title: [tbl] Top Deals by ACV — Q2 2026
+title: "[tbl] Top Deals by ACV — Q2 2026"
 type: summary-table
 created: 2026-04-21
 sources: [...]
@@ -511,7 +515,7 @@ Captioned visual artefacts — extracted figures from source PDFs or plots/diagr
 
 ```markdown
 ---
-title: [fig] Attention matrix — layer 6 CLS focus
+title: "[fig] Attention matrix — layer 6 CLS focus"
 type: figure
 created: 2026-04-21
 updated: 2026-04-21

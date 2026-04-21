@@ -45,7 +45,7 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
 ## Page format
 ```
 ---
-title: Page Title
+title: "[con] Page Title"
 type: entity | concept | source | analysis | evidence | fact | summary-table | figure
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -54,6 +54,17 @@ sources: [path/to/source.extracted.md]
 
 Concise prose. [[Wikilinks]]. (vault:path) citations.
 ```
+
+**Quote the title.** Titles start with a bracketed type tag from
+`naming.TYPE_PREFIX` (`[con]`, `[src]`, `[fig]`, ...). Strict YAML
+parsers read an unquoted `[X]` at the start of a value as a flow
+sequence and reject the frontmatter — Obsidian's renderer fails on
+these. Always wrap the title value in double quotes.
+
+`(vault:path)` is the skill's citation DSL, recognised by
+score_diff / lint_scores / graph build. It is not a clickable
+markdown link; it renders as plain parenthesised text in Obsidian
+by design (keeps the marker parseable everywhere).
 
 Pages in `wiki/tables/` and `wiki/figures/` carry stem prefixes
 (`tbl-`, `fig-`) so Obsidian groups them cleanly. Figure pages
