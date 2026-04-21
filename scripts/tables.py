@@ -158,6 +158,10 @@ def _normalize_columns(schema: dict) -> List[dict]:
             "nullable": bool(c.get("nullable", True)),
             "values": c.get("values"),
             "default": c.get("default"),
+            # _alias / alias points at a previous column name so sync can
+            # apply a RENAME COLUMN instead of drop+add. Preserving either
+            # spelling — YAML authors sometimes avoid leading-underscore keys.
+            "_alias": c.get("_alias") or c.get("alias"),
         })
     return out
 
@@ -247,7 +251,24 @@ def _validate_row(payload: dict, columns: List[dict]) -> Tuple[bool, str]:
 
 # ---- subcommands ----
 
-def cmd_sync(entity_path: Path) -> int:
+def cmd_sync(entity_path: Path, confirm_human: bool = False) -> int:
+    """Apply the entity page's `table:` schema to the SQLite table.
+
+    Safe operations (additive) run automatically: create new table,
+    add columns, extend enum values.
+
+    Destructive operations (drop column, remove enum value where rows
+    use it) require `--confirm-human`. Rationale: the wiki ratchet has
+    already approved the intent (schema change is in the entity page,
+    score_diff + reviewer approved it). `--confirm-human` confirms the
+    actual destructive action one more time — the gap between "I
+    approve the idea" and "I understand this will delete data" is
+    where mistakes happen.
+
+    Column renames use an `_alias: <old_name>` annotation. If the
+    alias resolves to an existing live column and the new name doesn't
+    exist, the column is renamed via ALTER TABLE RENAME COLUMN.
+    """
     schema = _load_entity_schema(entity_path)
     if not schema:
         print(json.dumps({"error": f"no `table:` block in {entity_path}"}))
@@ -266,10 +287,11 @@ def cmd_sync(entity_path: Path) -> int:
 
     current_hash = _schema_hash(schema)
     conn = _connect()
-    existing = conn.execute(
-        "SELECT schema_hash FROM _schema_meta WHERE table_name = ?", (name,)
+    prev_row = conn.execute(
+        "SELECT schema_json, schema_hash FROM _schema_meta WHERE table_name = ?",
+        (name,)
     ).fetchone()
-    if existing and existing[0] == current_hash:
+    if prev_row and prev_row[1] == current_hash:
         conn.close()
         print(json.dumps({"table": name, "status": "unchanged",
                           "hash": current_hash}))
@@ -278,7 +300,8 @@ def cmd_sync(entity_path: Path) -> int:
     table_exists = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
     ).fetchone() is not None
-    status = None
+
+    actions = []
     if not table_exists:
         col_defs = []
         for c in columns:
@@ -286,29 +309,113 @@ def cmd_sync(entity_path: Path) -> int:
             pk_frag = " PRIMARY KEY" if c["pk"] else ""
             nn_frag = "" if c["nullable"] else " NOT NULL"
             col_defs.append(f'"{c["name"]}" {sqlite_type}{pk_frag}{nn_frag}')
-        # Provenance + bookkeeping.
         col_defs.append('"_provenance" TEXT NOT NULL')
         col_defs.append('"_inserted_at" TEXT NOT NULL')
         col_defs.append('"_updated_at" TEXT')
         col_defs.append('"_schema_version" TEXT NOT NULL')
         ddl = f'CREATE TABLE "{name}" ({", ".join(col_defs)})'
         conn.execute(ddl)
-        status = "created"
+        actions.append({"op": "create_table"})
     else:
-        # ALTER path — additive only in Phase 1.
-        existing_cols = {row[1] for row in conn.execute(
-            f'PRAGMA table_info("{name}")'
-        )}
+        live_cols = {row[1] for row in conn.execute(f'PRAGMA table_info("{name}")')}
+        declared_names = {c["name"] for c in columns}
+        # 1) Rename path — an alias pointing at an existing live column,
+        #    where the new name isn't live yet.
+        renamed = set()
+        for c in columns:
+            alias = c.get("_alias") or c.get("alias")
+            if alias and alias in live_cols and c["name"] not in live_cols:
+                conn.execute(
+                    f'ALTER TABLE "{name}" RENAME COLUMN "{alias}" TO "{c["name"]}"'
+                )
+                live_cols.discard(alias)
+                live_cols.add(c["name"])
+                renamed.add(c["name"])
+                actions.append({"op": "rename_column",
+                                  "from": alias, "to": c["name"]})
+        # 2) Add path — new columns not in the live table.
         added = []
         for c in columns:
-            if c["name"] in existing_cols:
+            if c["name"] in live_cols:
                 continue
             sqlite_type = _sqlite_type(c["type"])
             conn.execute(
                 f'ALTER TABLE "{name}" ADD COLUMN "{c["name"]}" {sqlite_type}'
             )
             added.append(c["name"])
-        status = "altered" if added else "up_to_date"
+            actions.append({"op": "add_column", "name": c["name"]})
+        # 3) Drop path — columns in the live table but not declared.
+        #    Reserved columns (_provenance, _inserted_at, ...) are
+        #    never dropped regardless of declaration.
+        reserved = {"_provenance", "_inserted_at", "_updated_at", "_schema_version"}
+        user_live_cols = live_cols - reserved
+        to_drop = user_live_cols - declared_names
+        if to_drop and not confirm_human:
+            conn.close()
+            print(json.dumps({
+                "error": "destructive sync blocked",
+                "table": name,
+                "columns_to_drop": sorted(to_drop),
+                "reason": ("columns present in live table but removed from "
+                            "the entity-page schema. Rerun with "
+                            "--confirm-human if you understand this will "
+                            "drop the column and its data."),
+            }))
+            return 2
+        for col in to_drop:
+            conn.execute(f'ALTER TABLE "{name}" DROP COLUMN "{col}"')
+            actions.append({"op": "drop_column", "name": col})
+
+    # 4) Enum narrowing — check each declared enum against the previous
+    #    schema's values. Removing a value used by existing rows
+    #    requires --confirm-human.
+    if prev_row:
+        try:
+            prev_schema = json.loads(prev_row[0])
+        except json.JSONDecodeError:
+            prev_schema = None
+    else:
+        prev_schema = None
+    if prev_schema:
+        prev_cols = {c["name"]: c for c in _normalize_columns(prev_schema)}
+        for c in columns:
+            if c["type"].lower() != "enum":
+                continue
+            prev_c = prev_cols.get(c["name"])
+            if not prev_c or prev_c["type"].lower() != "enum":
+                continue
+            prev_vals = set(prev_c.get("values") or [])
+            new_vals = set(c.get("values") or [])
+            removed_vals = prev_vals - new_vals
+            if not removed_vals:
+                continue
+            if not table_exists:
+                continue
+            placeholders = ",".join("?" * len(removed_vals))
+            try:
+                using = conn.execute(
+                    f'SELECT COUNT(*) FROM "{name}" '
+                    f'WHERE "{c["name"]}" IN ({placeholders})',
+                    list(removed_vals)
+                ).fetchone()[0]
+            except sqlite3.Error:
+                using = 0
+            if using and not confirm_human:
+                conn.close()
+                print(json.dumps({
+                    "error": "enum narrowing blocked",
+                    "table": name,
+                    "column": c["name"],
+                    "removed_values": sorted(removed_vals),
+                    "rows_using_removed_value": using,
+                    "reason": ("enum values removed while rows still use "
+                                "them. Rerun with --confirm-human to proceed, "
+                                "or update those rows first."),
+                }))
+                return 2
+            actions.append({"op": "narrow_enum", "column": c["name"],
+                              "removed_values": sorted(removed_vals),
+                              "rows_affected": using})
 
     conn.execute("""
         INSERT OR REPLACE INTO _schema_meta
@@ -318,10 +425,90 @@ def cmd_sync(entity_path: Path) -> int:
            datetime.now(timezone.utc).isoformat()))
     conn.commit()
     conn.close()
-    out = {"table": name, "status": status, "hash": current_hash,
-           "columns": len(columns)}
-    print(json.dumps(out))
+    if not actions:
+        status = "up_to_date"
+    elif any(a["op"] == "create_table" for a in actions):
+        status = "created"
+    else:
+        status = "altered"
+    print(json.dumps({"table": name, "status": status, "hash": current_hash,
+                       "columns": len(columns), "actions": actions}))
     return 0
+
+
+def cmd_verify(name: Optional[str], wiki_dir: Path) -> int:
+    """Check row provenance integrity.
+
+    For every row in the scoped table(s), verify the `_provenance`
+    points at something that exists:
+      - `vault:<path>` → file must exist under `vault/`
+      - `log:<id>` → accept (log entries are rarely deleted; future
+        tightening could regex-check the log)
+
+    Reports orphan rows (rows whose vault provenance no longer
+    resolves). Does not delete — just reports. A retention-sweep or
+    manual cleanup step is where deletion happens.
+    """
+    conn = _connect()
+    tables = []
+    if name:
+        tables = [name]
+    else:
+        rows = conn.execute("SELECT table_name FROM _schema_meta").fetchall()
+        tables = [r[0] for r in rows]
+    report = []
+    vault_dir = wiki_dir.parent / "vault"
+    for t in tables:
+        try:
+            rows = conn.execute(
+                f'SELECT "_provenance", '
+                f'  (SELECT name FROM pragma_table_info("{t}") WHERE pk=1 LIMIT 1) '
+                f'FROM "{t}"'
+            ).fetchall()
+        except sqlite3.Error:
+            continue
+        # Second column above is a scalar subquery — always the same per row.
+        # Re-run a cleaner version for row_id resolution.
+        try:
+            pragma = conn.execute(f'PRAGMA table_info("{t}")').fetchall()
+            pk = next((r[1] for r in pragma if r[5]), None)
+            if not pk:
+                continue
+            prov_rows = conn.execute(
+                f'SELECT "{pk}", "_provenance" FROM "{t}"'
+            ).fetchall()
+        except sqlite3.Error:
+            continue
+        orphans = []
+        valid = 0
+        for row_id, provenance in prov_rows:
+            if not provenance:
+                orphans.append({"row_id": row_id, "reason": "no provenance"})
+                continue
+            if provenance.startswith("vault:"):
+                p = provenance.split(":", 1)[1]
+                if not (vault_dir / p).exists():
+                    orphans.append({"row_id": row_id,
+                                      "provenance": provenance,
+                                      "reason": "vault file missing"})
+                else:
+                    valid += 1
+            elif provenance.startswith("log:"):
+                # Log entries not individually verified here; accept.
+                valid += 1
+            else:
+                orphans.append({"row_id": row_id,
+                                  "provenance": provenance,
+                                  "reason": "unrecognised provenance prefix"})
+        report.append({
+            "table": t,
+            "total_rows": len(prov_rows),
+            "valid": valid,
+            "orphans": orphans,
+        })
+    conn.close()
+    print(json.dumps({"wiki_dir": str(wiki_dir), "tables": report}, indent=2))
+    return 0 if all(not r["orphans"] for r in report) else 1
 
 
 def _load_table_schema(conn, name: str) -> Optional[Tuple[dict, str]]:
@@ -715,6 +902,9 @@ def main() -> int:
 
     p_sync = sub.add_parser("sync", help="sync schema from entity page")
     p_sync.add_argument("entity_path", type=Path)
+    p_sync.add_argument("--confirm-human", action="store_true",
+                          help="explicitly permit destructive ops (drop column, "
+                               "narrow enum while rows use removed values)")
 
     p_insert = sub.add_parser("insert", help="insert a row")
     p_insert.add_argument("table")
@@ -746,12 +936,16 @@ def main() -> int:
 
     sub.add_parser("risk", help="per-table citation-risk report")
 
-    p_rebuild = sub.add_parser("rebuild", help="rebuild table from vault+log (Phase 4)")
+    p_verify = sub.add_parser("verify", help="check row provenance integrity")
+    p_verify.add_argument("wiki", type=Path)
+    p_verify.add_argument("--table", default=None)
+
+    p_rebuild = sub.add_parser("rebuild", help="rebuild table from vault+log (not yet)")
     p_rebuild.add_argument("table")
 
     args = ap.parse_args()
     if args.cmd == "sync":
-        return cmd_sync(args.entity_path)
+        return cmd_sync(args.entity_path, confirm_human=args.confirm_human)
     if args.cmd == "insert":
         return cmd_insert(args.table, args.payload)
     if args.cmd == "update":
@@ -766,6 +960,8 @@ def main() -> int:
         return cmd_audit(args.wiki, args.table)
     if args.cmd == "risk":
         return cmd_risk()
+    if args.cmd == "verify":
+        return cmd_verify(args.table, args.wiki)
     if args.cmd == "rebuild":
         return cmd_rebuild(args.table)
     ap.print_usage()
