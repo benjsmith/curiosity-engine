@@ -34,7 +34,7 @@ WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
-                      "fact", "summary-table"}
+                      "fact", "summary-table", "figure"}
 
 # Allowlist of frontmatter keys the curator actually reads. Unknown keys are
 # dropped by read_frontmatter so an adversarial source cannot smuggle
@@ -55,6 +55,16 @@ ALLOWED_FM_KEYS = frozenset({
     # PyYAML in tables.py; the other keys annotate summary tables that
     # pin a query or describe their source.
     "table", "source_query", "source_table",
+    # Figure metadata (on wiki/figures/ pages). `asset` names the binary
+    # in assets/figures/; `origin` is extracted|created; `source_page`
+    # pairs with `source_path` for PDF regeneration; `source_analysis`
+    # points at the analysis that produced a created figure;
+    # `extraction_method` records how the asset was produced so
+    # figures.py regen can reproduce it deterministically; `page_region`
+    # is a human hint when a page-render asset hosts multiple figures;
+    # `relates_to` is the reverse-index of pages the figure depicts.
+    "asset", "origin", "source_page", "source_analysis",
+    "extraction_method", "page_region", "relates_to",
 })
 
 TYPE_PREFIX = {
@@ -65,7 +75,35 @@ TYPE_PREFIX = {
     "evidence": "[evi]",
     "fact": "[fact]",
     "summary-table": "[tbl]",
+    "figure": "[fig]",
 }
+
+# Filename stem prefixes for the page types that live in dedicated
+# subdirectories (`wiki/tables/`, `wiki/figures/`). Helps Obsidian
+# quick-switcher group them and disambiguates stems across the wiki.
+STEM_PREFIX = {
+    "summary-table": "tbl-",
+    "figure": "fig-",
+}
+
+
+def _slugify(topic: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", (topic or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug)
+
+
+def prefixed_stem(page_type: str, topic: str) -> str:
+    """Build a filename stem with the type's prefix, if any.
+
+    `summary-table` → `tbl-<slug>`; `figure` → `fig-<slug>`; other
+    types pass through the raw slug unchanged. Idempotent — never
+    double-prefixes when the topic already starts with the prefix.
+    """
+    slug = _slugify(topic)
+    prefix = STEM_PREFIX.get(page_type, "")
+    if prefix and slug.startswith(prefix):
+        return slug
+    return f"{prefix}{slug}" if prefix else slug
 
 
 def read_frontmatter(text: str) -> tuple:

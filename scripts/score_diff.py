@@ -297,12 +297,21 @@ def _floors_for(page: Path) -> dict:
     fact like "Kaplan α_N ≈ 0.076 (Kaplan et al. 2020)" before it
     reached the reviewer. Relaxed floors per directory let those pages
     land while keeping the ratchet for denser analyses/concepts.
+
+    `figures/` pages are captioned media: the body is an Obsidian
+    transclusion + short caption, not prose. Wikilink/concept-linkage
+    lives primarily in frontmatter (`relates_to`), so no wikilink
+    floor. A citation is still required — the caption must name its
+    source — and a minimal word floor catches empty or placeholder
+    pages.
     """
     parts = set(page.parts)
     if "facts" in parts:
         return {"citations": 1, "wikilinks": 1, "words": 30}
     if "evidence" in parts:
         return {"citations": 1, "wikilinks": 1, "words": 50}
+    if "figures" in parts:
+        return {"citations": 1, "wikilinks": 0, "words": 10}
     return {"citations": 2, "wikilinks": 2, "words": 100}
 
 
