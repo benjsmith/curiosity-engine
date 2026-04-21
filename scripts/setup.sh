@@ -3,6 +3,31 @@ set -e
 
 echo "=== Curiosity Engine Setup ==="
 
+# Pre-flight checks. Fail fast with clear messages instead of failing
+# cryptically deep in the script. The three hard requirements: git (the
+# wiki IS a git repo), python3 ≥ 3.9 (scripts use `from __future__ import
+# annotations` + newer typing forms), and a working shell (already here
+# since we're running).
+if ! command -v git >/dev/null 2>&1; then
+    echo "ERROR: git not found on PATH. The wiki is a git repository — install git first:"
+    echo "  macOS:  brew install git  (or xcode-select --install)"
+    echo "  Linux:  apt install git / dnf install git / pacman -S git"
+    echo "  Windows: install Git for Windows, then run this under Git Bash or WSL"
+    exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 not found on PATH. Install Python 3.9 or newer first."
+    exit 1
+fi
+_py_major=$(python3 -c "import sys; print(sys.version_info.major)")
+_py_minor=$(python3 -c "import sys; print(sys.version_info.minor)")
+_py_version="${_py_major}.${_py_minor}"
+if [ "$_py_major" -lt 3 ] || { [ "$_py_major" -eq 3 ] && [ "$_py_minor" -lt 9 ]; }; then
+    echo "ERROR: Python $_py_version found; curiosity-engine needs Python 3.9 or newer."
+    echo "       Upgrade Python (pyenv, asdf, or your distro package manager) and rerun."
+    exit 1
+fi
+
 # Resolve paths. SCRIPT_DIR is the installed skill's scripts/ directory;
 # TEMPLATE_DIR is its sibling template/ — the single source of truth for
 # the wiki and curator skeleton copied into each new workspace.
@@ -421,12 +446,29 @@ if [ -t 0 ] && [ -t 1 ]; then
     read -r reply_embed || reply_embed="n"
     case "$reply_embed" in
         y|Y|yes|YES)
-            echo "  Installing sentence-transformers + sqlite-vec (+ pysqlite3) into .venv ..."
             # pysqlite3 is needed because macOS system Python's sqlite3 is
             # typically compiled without --enable-loadable-sqlite-extensions,
             # which breaks sqlite-vec. pysqlite3 is a drop-in replacement
             # built from source with extensions enabled. No-op on Linux
-            # distros that already have extensions.
+            # distros that already have extensions — but the build needs
+            # a C compiler. Warn early so the failure (if it happens) has
+            # a clear cause in the user's terminal scrollback.
+            _has_cc=0
+            for _c in cc gcc clang; do
+                command -v "$_c" >/dev/null 2>&1 && _has_cc=1 && break
+            done
+            if [ "$_has_cc" -eq 0 ]; then
+                echo ""
+                echo "  WARN: no C compiler (cc/gcc/clang) found on PATH."
+                echo "        pysqlite3 likely needs to build from source and will fail."
+                echo "        Install build tools first:"
+                echo "          macOS:  xcode-select --install"
+                echo "          Debian/Ubuntu:  apt install build-essential"
+                echo "          Fedora/RHEL:    dnf groupinstall 'Development Tools'"
+                echo "        Proceeding anyway — the error below will be the compiler's."
+                echo ""
+            fi
+            echo "  Installing sentence-transformers + sqlite-vec (+ pysqlite3) into .venv ..."
             if uv pip install sentence-transformers sqlite-vec pysqlite3; then
                 # Flip embedding_enabled to true in config.json so vault_index
                 # will compute embeddings on next ingest / --rebuild.

@@ -1,0 +1,12 @@
+# Enforce LF line endings on shell scripts so they execute correctly
+# when the repo is cloned on Windows with the default `autocrlf=true`.
+# Bash scripts with CRLF endings silently fail to run on Unix/WSL.
+*.sh text eol=lf
+
+# Prevent Git's auto-text conversion on known-binary formats.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.kuzu binary
+*.db binary
