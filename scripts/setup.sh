@@ -339,6 +339,7 @@ else
         "Edit(./vault/"                      # post-multimodal-upgrade write
                                               # path for .extracted.md
         "scripts/figures.py"                 # post-figures-feature allowlist
+        "Write(/tmp/"                        # post-curate-scratch allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -427,6 +428,18 @@ EOF
       "Write(./.curator/**)",
       "Edit(./vault/**)",
       "Write(./vault/**)",
+      "Write(/tmp/**)",
+      "Edit(/tmp/**)",
+EOF
+    # Skill-script read access — the orchestrator occasionally re-reads
+    # a hash-guarded script to confirm flag syntax. Safe to allow:
+    # scripts are read-only (hash-guarded) and contain no secrets. One
+    # entry per available skill-root path (physical + logical if they
+    # differ, per the dual-path allowlist logic above).
+    for root in "\${SKILL_ROOTS[@]}"; do
+        printf '      "Read(%s/**)",\n' "\$root" >> .claude/settings.json
+    done
+    cat >> .claude/settings.json <<EOF
       "Bash(date:*)"
     ]
   }
