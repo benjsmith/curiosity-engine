@@ -73,8 +73,18 @@ def _init_schema(conn):
     for stmt in [
         "CREATE NODE TABLE IF NOT EXISTS WikiPage(path STRING, type STRING, title STRING, PRIMARY KEY (path))",
         "CREATE NODE TABLE IF NOT EXISTS VaultSource(path STRING, title STRING, PRIMARY KEY (path))",
+        # DataRow = one row in the class-tables layer. kuzu's node PK
+        # syntax takes a single column; we synthesise a compound key
+        # `key = table_name + ":" + row_id` to uniquely identify a row
+        # while keeping table_name / row_id as queryable properties.
+        "CREATE NODE TABLE IF NOT EXISTS DataRow(key STRING, table_name STRING, row_id STRING, PRIMARY KEY (key))",
         "CREATE REL TABLE IF NOT EXISTS WikiLink(FROM WikiPage TO WikiPage)",
         "CREATE REL TABLE IF NOT EXISTS Cites(FROM WikiPage TO VaultSource)",
+        # DataRef = typed-data reference from a row to a wiki page. The
+        # `column` property records which wikilink-typed column produced
+        # the edge (customer_ref, owner, etc.), so cypher queries can
+        # filter by relationship kind.
+        "CREATE REL TABLE IF NOT EXISTS DataRef(FROM DataRow TO WikiPage, col_name STRING)",
     ]:
         conn.execute(stmt)
 
@@ -174,11 +184,77 @@ def rebuild(wiki_dir: Path, force: bool = False):
                 {"from": rel, "to": vp}
             )
 
+    # Populate DataRow nodes + DataRef edges from tables.db if present.
+    # Wikilink-typed columns become typed edges from the row to the
+    # wiki page it references. Empty/unresolvable refs are skipped.
+    tables_db = wiki_dir.parent / ".curator" / "tables.db"
+    data_rows = 0
+    data_refs = 0
+    if tables_db.exists():
+        try:
+            import sqlite3 as _sqlite3
+        except ImportError:
+            _sqlite3 = None
+        if _sqlite3 is not None:
+            try:
+                tconn = _sqlite3.connect(str(tables_db))
+                tconn.execute("PRAGMA journal_mode=WAL")
+                meta = tconn.execute(
+                    "SELECT table_name, schema_json FROM _schema_meta"
+                ).fetchall()
+                for table_name, schema_json in meta:
+                    try:
+                        schema = json.loads(schema_json)
+                    except json.JSONDecodeError:
+                        continue
+                    cols = schema.get("columns", [])
+                    pk = next((c["name"] for c in cols
+                                if isinstance(c, dict) and c.get("pk")), None)
+                    wikilink_cols = [c["name"] for c in cols
+                                       if isinstance(c, dict)
+                                       and c.get("type", "").lower() in ("wikilink", "ref")]
+                    if not pk:
+                        continue
+                    select_cols = ", ".join(f'"{c}"' for c in [pk] + wikilink_cols)
+                    try:
+                        rows = tconn.execute(
+                            f'SELECT {select_cols} FROM "{table_name}"'
+                        ).fetchall()
+                    except _sqlite3.Error:
+                        continue
+                    for row in rows:
+                        row_id = str(row[0])
+                        key = f"{table_name}:{row_id}"
+                        conn.execute(
+                            "CREATE (:DataRow {key: $k, table_name: $t, row_id: $i})",
+                            {"k": key, "t": table_name, "i": row_id}
+                        )
+                        data_rows += 1
+                        for i, col_name in enumerate(wikilink_cols, start=1):
+                            target_stem = row[i]
+                            if not target_stem:
+                                continue
+                            target_path = page_stems.get(str(target_stem).lower())
+                            if not target_path:
+                                continue
+                            conn.execute(
+                                "MATCH (a:DataRow), (b:WikiPage) "
+                                "WHERE a.key = $k AND b.path = $p "
+                                "CREATE (a)-[:DataRef {col_name: $c}]->(b)",
+                                {"k": key, "p": target_path, "c": col_name}
+                            )
+                            data_refs += 1
+                tconn.close()
+            except _sqlite3.Error:
+                pass
+
     stats = {
         "pages": len(page_data),
         "vault_sources": len(vault_sources),
         "wikilinks": sum(len(d[3]) for d in page_data),
         "citations": sum(len(d[4]) for d in page_data),
+        "data_rows": data_rows,
+        "data_refs": data_refs,
     }
     print(json.dumps({"status": "rebuilt", **stats}))
 

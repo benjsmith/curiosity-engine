@@ -33,7 +33,8 @@ SKIP_FILES = {"index.md", "log.md", "schema.md"}
 WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
 
-FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence", "fact"}
+FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
+                      "fact", "summary-table"}
 
 # Allowlist of frontmatter keys the curator actually reads. Unknown keys are
 # dropped by read_frontmatter so an adversarial source cannot smuggle
@@ -49,6 +50,11 @@ ALLOWED_FM_KEYS = frozenset({
     # the standard arXiv/paper form; `author` (singular) is used by blog/
     # email-style sources. Both are allowed.
     "author", "authors", "from", "date", "subject",
+    # Class-table schema (on entity pages) and summary-table metadata
+    # (on wiki/tables/ pages). `table` is a nested mapping parsed via
+    # PyYAML in tables.py; the other keys annotate summary tables that
+    # pin a query or describe their source.
+    "table", "source_query", "source_table",
 })
 
 TYPE_PREFIX = {
@@ -58,6 +64,7 @@ TYPE_PREFIX = {
     "source": "[src]",
     "evidence": "[evi]",
     "fact": "[fact]",
+    "summary-table": "[tbl]",
 }
 
 

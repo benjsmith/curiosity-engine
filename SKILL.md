@@ -430,7 +430,7 @@ Level selection comes from `.curator/config.json`:
 ```markdown
 ---
 title: [con] Page Title
-type: entity | concept | source | analysis | evidence | fact
+type: entity | concept | source | analysis | evidence | fact | summary-table
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 sources: [path/to/source.extracted.md]
@@ -439,7 +439,33 @@ sources: [path/to/source.extracted.md]
 Concise factual prose. [[cross-references]]. (vault:source/path) citations.
 ```
 
-The `title` prefix tag (`[con]`, `[ent]`, `[ana]`, `[src]`, `[evi]`, `[fact]`) comes from `naming.TYPE_PREFIX`. Evidence pages capture a single source-backed observation, fact pages a single atomic claim. Both emerge via CURATE reads — INGEST only creates `sources/`, `entities/`, `concepts/` pages.
+The `title` prefix tag (`[con]`, `[ent]`, `[ana]`, `[src]`, `[evi]`, `[fact]`, `[tbl]`) comes from `naming.TYPE_PREFIX`. Evidence pages capture a single source-backed observation, fact pages a single atomic claim. Both emerge via CURATE reads — INGEST only creates `sources/`, `entities/`, `concepts/` pages.
+
+### Summary tables (`wiki/tables/`)
+
+Small, readable tables that encapsulate a comparison, cross-section, or top-N view — not the unbounded row storage of class tables. Sit alongside analyses as a compact table-shaped finding. Glanceable in Obsidian.
+
+```markdown
+---
+title: [tbl] Top Deals by ACV — Q2 2026
+type: summary-table
+created: 2026-04-21
+sources: [...]
+source_table: deals             # optional; names the class table this draws from
+source_query: "SELECT id, stage, acv_gbp FROM deals WHERE stage IN ('Proposal','Negotiation') ORDER BY acv_gbp DESC LIMIT 10"
+---
+
+One sentence framing the table's purpose.
+
+| id | stage | acv_gbp | notes |
+|---|---|---:|---|
+| [[bigco-2026-r1]] | Proposal | 450,000 | late-stage upsell |
+...
+
+Cite the table itself via `(table:deals?query=top-deals-q2-2026)` if used by another page as a pinned result.
+```
+
+When to produce one: a comparison table across sources ("benchmark X across 5 papers"), a top-N slice of a class table ("deals over £500k this quarter"), or a cross-section summary. When NOT to: if the table has >50 rows it should be a class table (SQLite) with the summary-table becoming a query-pinned view of it. Summary tables follow the same wikilink + citation conventions as analyses.
 
 ## CLAUDE.md mirror
 

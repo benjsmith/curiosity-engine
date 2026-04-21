@@ -91,9 +91,9 @@ fi
 #   .curator/              curator state, NOT tracked by wiki's git
 #   CLAUDE.md              workspace instructions (mirrors SKILL.md)
 #   .claude/settings.json  auto-allow permissions
-mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts}
+mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables}
 touch vault/.gitkeep vault/raw/.gitkeep
-for d in sources entities concepts analyses evidence facts; do
+for d in sources entities concepts analyses evidence facts tables; do
     touch "wiki/$d/.gitkeep"
 done
 mkdir -p .curator
