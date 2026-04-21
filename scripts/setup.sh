@@ -83,6 +83,19 @@ if ! uv run --no-project python3 -c "import yaml" >/dev/null 2>&1; then
     echo "  Installing PyYAML (class-table schema parser) into .venv ..."
     uv pip install pyyaml
 fi
+# pypdfium2 + Pillow: pypdfium2 renders PDF pages as bitmaps for
+# figures.py extract/regen; Pillow is its standard companion for
+# PIL-format output. Installed unconditionally — both are small
+# (~5 MB combined) and required for any figure page whose origin
+# is `extracted`.
+if ! uv run --no-project python3 -c "import pypdfium2" >/dev/null 2>&1; then
+    echo "  Installing pypdfium2 (PDF page rendering) into .venv ..."
+    uv pip install pypdfium2
+fi
+if ! uv run --no-project python3 -c "import PIL" >/dev/null 2>&1; then
+    echo "  Installing Pillow (PNG encoding for pypdfium2) into .venv ..."
+    uv pip install Pillow
+fi
 
 # Working directory layout:
 #   vault/                 raw sources
@@ -91,12 +104,25 @@ fi
 #   .curator/              curator state, NOT tracked by wiki's git
 #   CLAUDE.md              workspace instructions (mirrors SKILL.md)
 #   .claude/settings.json  auto-allow permissions
-mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables}
+mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables,figures}
 touch vault/.gitkeep vault/raw/.gitkeep
-for d in sources entities concepts analyses evidence facts tables; do
+for d in sources entities concepts analyses evidence facts tables figures; do
     touch "wiki/$d/.gitkeep"
 done
 mkdir -p .curator
+
+# Workspace-level assets directory. Sits alongside vault/ and wiki/.
+# Deliberately OUTSIDE the wiki git scope — figure binaries are not
+# tracked; figures.py regenerates them from vault sources on demand.
+# If the workspace root itself is a git repo (uncommon — the wiki repo
+# is the usual setup), add /assets/ to its .gitignore so the binaries
+# don't leak into that repo either.
+mkdir -p assets/figures
+touch assets/.gitkeep assets/figures/.gitkeep
+if [ -d .git ] && ! grep -qE "^/?assets(/|$)" .gitignore 2>/dev/null; then
+    printf '\n# Figure assets — regenerated from vault sources by figures.py\n/assets/\n' >> .gitignore
+    echo "  Added /assets/ to workspace-root .gitignore"
+fi
 
 # Refresh markdown templates that drift as the skill evolves. The skill
 # periodically adds new operations, prompt spec updates, or allowlist-
@@ -213,6 +239,7 @@ else
                                               # only had the physical path
         "Edit(./vault/"                      # post-multimodal-upgrade write
                                               # path for .extracted.md
+        "scripts/figures.py"                 # post-figures-feature allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -289,6 +316,7 @@ EOF
       "Bash(uv run python3 $root/scripts/epoch_summary.py:*)",
       "Bash(uv run python3 $root/scripts/graph.py:*)",
       "Bash(uv run python3 $root/scripts/tables.py:*)",
+      "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
 EOF
     done
@@ -439,6 +467,11 @@ if [ -d wiki/.git ]; then
         uv run python3 "$SCRIPT_DIR/sweep.py" resync-stems wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-index wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/graph.py" rebuild wiki >/dev/null
+        # Regenerate any figure assets missing from assets/figures/ (first
+        # clone, or the folder was cleaned). Deterministic from vault
+        # sources; created-origin figures cannot be auto-regenerated and
+        # are surfaced by figures.py check for human review.
+        uv run python3 "$SCRIPT_DIR/figures.py" regen wiki >/dev/null 2>&1 || true
         echo "  Migration pass complete. Review with: git -C wiki diff --stat"
         # If resync renamed anything, there are now unstaged changes — we
         # intentionally leave them unstaged so the user inspects + commits

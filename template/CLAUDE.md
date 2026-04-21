@@ -12,11 +12,17 @@ file from the template.
   - `vault/raw/` — drop folder. User drops files here; `local_ingest.py`
     extracts, moves originals to `vault/`, removes from drop folder.
 - `wiki/` — git-tracked markdown content. Subdirs: `sources/`, `entities/`,
-  `concepts/`, `analyses/`, `evidence/`, `facts/`.
+  `concepts/`, `analyses/`, `evidence/`, `facts/`, `tables/`, `figures/`.
+- `assets/` — workspace-level binary assets, NOT git-tracked.
+  - `assets/figures/` — PNGs referenced by `wiki/figures/*.md`. Rebuilt
+    deterministically from vault PDFs by `figures.py regen wiki`. A fresh
+    clone re-materialises this folder on the first setup.sh run.
 - `.curator/` — curator state, not git-tracked.
   - `schema.md`, `prompts.md`, `config.json` — human-edited.
   - `graph.kuzu` — kuzu property graph (WikiPage/VaultSource nodes,
     WikiLink/Cites edges). Rebuilt via `graph.py rebuild wiki`.
+  - `tables.db` — SQLite class-entity tables (schema declared on entity
+    pages). Populated by `tables.py`; rows cite vault/log provenance.
   - `log.md`, `index.md`, `.epoch_plan.md`, `.guard.snapshot` — auto.
     Improvement ideas for skill scripts land in `log.md` under
     `## improvement-suggestions` — prose only, no agent-generated code
@@ -52,8 +58,9 @@ bash commands allowed:
    `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the
    workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve.
    Covers sweep.py, graph.py, lint_scores.py, score_diff.py,
-   epoch_summary.py, scrub_check.py, vault_index.py, vault_search.py,
-   local_ingest.py — all hash-guarded skill scripts.
+   epoch_summary.py, scrub_check.py, naming.py, tables.py, figures.py,
+   vault_index.py, vault_search.py, local_ingest.py — all hash-guarded
+   skill scripts.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `date ...`
 

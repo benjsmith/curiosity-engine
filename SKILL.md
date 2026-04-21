@@ -57,7 +57,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `date ...`
 
@@ -116,6 +116,8 @@ This creates the full project structure, initializes git in the wiki, creates th
 | vault index | `vault/vault.db` | SQLite FTS5 (+ sqlite-vec) | full-text + semantic search over source extractions |
 | graph | `.curator/graph.kuzu` | kuzu property graph | WikiLink / Cites / typed-data-reference edges |
 | class tables | `.curator/tables.db` | SQLite standard tables | entity-class instance data with schema from entity pages |
+
+**Assets** (`assets/figures/`) — Binary files (PNGs) for `wiki/figures/*.md` pages. Sits alongside `vault/` and `wiki/` at workspace root; NOT git-tracked. Figure pages record `source_path` + `source_page` in frontmatter so `figures.py regen` rebuilds any missing asset deterministically from its vault source. A fresh clone re-materialises the assets folder on the first setup.sh run.
 
 Read `.curator/schema.md` before any operation.
 
@@ -410,7 +412,7 @@ On-demand semantic contradiction scan. Previously ran inside every CURATE epoch;
 
 CURATE cannot edit any skill script at runtime. All scripts that score, gate, evaluate, parse structure, or perform sweep operations are hash-guarded by `evolve_guard.sh`. A snapshot is taken at the start of every wave and rechecked at end; any drift aborts the wave and reverts.
 
-- **Hash-guarded (all skill scripts):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`, `sweep.py`, `tables.py`, `evolve_guard.sh` itself. Edits land in the skill source (git-tracked upstream), not inside a workspace — no agent-editable code path exists.
+- **Hash-guarded (all skill scripts):** `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `graph.py`, `sweep.py`, `tables.py`, `figures.py`, `evolve_guard.sh` itself. Edits land in the skill source (git-tracked upstream), not inside a workspace — no agent-editable code path exists.
 - **Human-edited (per-workspace):** `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json`. CURATE must not edit these during a run.
 - **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates. Script improvement ideas land under `## improvement-suggestions` as prose notes — no agent-generated code enters the execution path.
 - **Fresh-context rule:** the reviewer MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
@@ -458,7 +460,7 @@ sources: [path/to/source.extracted.md]
 Concise factual prose. [[cross-references]]. (vault:source/path) citations.
 ```
 
-The `title` prefix tag (`[con]`, `[ent]`, `[ana]`, `[src]`, `[evi]`, `[fact]`, `[tbl]`) comes from `naming.TYPE_PREFIX`. Evidence pages capture a single source-backed observation, fact pages a single atomic claim. Both emerge via CURATE reads — INGEST only creates `sources/`, `entities/`, `concepts/` pages.
+The `title` prefix tag (`[con]`, `[ent]`, `[ana]`, `[src]`, `[evi]`, `[fact]`, `[tbl]`, `[fig]`) comes from `naming.TYPE_PREFIX`. Evidence pages capture a single source-backed observation, fact pages a single atomic claim. Both emerge via CURATE reads — INGEST only creates `sources/`, `entities/`, `concepts/` pages. Filenames in `wiki/tables/` and `wiki/figures/` carry their type's stem prefix (`tbl-`, `fig-`) from `naming.STEM_PREFIX` so Obsidian's quick-switcher groups them cleanly.
 
 ### Summary tables (`wiki/tables/`)
 
@@ -485,6 +487,40 @@ Cite the table itself via `(table:deals?query=top-deals-q2-2026)` if used by ano
 ```
 
 When to produce one: a comparison table across sources ("benchmark X across 5 papers"), a top-N slice of a class table ("deals over £500k this quarter"), or a cross-section summary. When NOT to: if the table has >50 rows it should be a class table (SQLite) with the summary-table becoming a query-pinned view of it. Summary tables follow the same wikilink + citation conventions as analyses.
+
+### Figures (`wiki/figures/`)
+
+Captioned visual artefacts — extracted figures from source PDFs or plots/diagrams created during analyses. Each figure is a first-class wiki page wrapping a binary asset that lives in `assets/figures/` (workspace-level, NOT git-tracked). The frontmatter carries enough provenance to regenerate the asset deterministically from its source.
+
+```markdown
+---
+title: [fig] Attention matrix — layer 6 CLS focus
+type: figure
+created: 2026-04-21
+updated: 2026-04-21
+origin: extracted                 # extracted | created
+asset: attention-p3.png           # filename under assets/figures/
+source_path: vault/papers/attention.pdf
+source_page: 3
+extraction_method: pdf_page_render
+page_region: "top half"           # optional; disambiguates when 2+ figures share an asset
+sources: [papers/attention.extracted.md]
+relates_to: [concepts/attention-mechanism.md, evidence/attention-layer-6.md]
+---
+
+![[../assets/figures/attention-p3.png]]
+
+*[[attention-mechanism|Self-attention]] weights at layer 6. `[CLS]` focuses on subject-noun positions (vault:papers/attention.extracted.md).*
+```
+
+Two origins:
+
+- **`extracted`** — a page of a source PDF, rendered by `figures.py extract` at 150 DPI. Emerge on the same multimodal pass used for source text upgrades (`sweep.py pending-multimodal` + multimodal read); when the worker notices a relevant figure, it returns the figure spec alongside the text edit and the orchestrator post-processes. When two figures share a source page, both figure pages point at the same asset file and disambiguate via `page_region`; referring pages always link the specific figure page (`[[fig-attention-matrix-3a]]`), never the raw PNG, so no binary duplicates.
+- **`created`** — a plot or diagram authored during an analysis. `source_analysis` names the analysis page that produced it. Cannot be auto-regenerated; a missing asset surfaces via `figures.py check` for human review.
+
+Integrity + regen: `uv run python3 <skill_path>/scripts/figures.py check wiki` lists any figure whose asset is missing. `regen` rebuilds `extracted` assets from vault sources; `created` figures are listed, not regenerated. Setup.sh runs `regen` at the end of every bootstrap so a fresh clone materialises its asset folder automatically. Bash surface: `figures.py {extract, check, regen, list}`.
+
+`score_diff` floor for new `figures/*` pages is ≥1 citation, 0 wikilinks (frontmatter `relates_to` carries linkage), ≥10 words — captions are terse by design.
 
 ## CLAUDE.md mirror
 

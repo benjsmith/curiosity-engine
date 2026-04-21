@@ -26,10 +26,18 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
   Read files directly — you see PDFs, images, docs natively.
   Drop folder: `vault/raw/` — user drops files here for bulk ingest.
 - **Wiki** (`wiki/`): git-tracked markdown content. Pages only.
-  Subdirs: `sources/`, `entities/`, `concepts/`, `analyses/`, `evidence/`, `facts/`.
+  Subdirs: `sources/`, `entities/`, `concepts/`, `analyses/`, `evidence/`,
+  `facts/`, `tables/`, `figures/`.
 - **Graph** (`.curator/graph.kuzu`): kuzu property graph tracking WikiPage
   and VaultSource nodes, WikiLink and Cites edges. Rebuild after any
   structural wiki change via `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
+- **Class tables** (`.curator/tables.db`): SQLite instance data for entity
+  pages that declare a `table:` frontmatter block. Rows cite vault/log
+  provenance. Agent surface: `tables.py {sync, insert, update, query,
+  schema, list}`.
+- **Assets** (`assets/figures/`): binary PNGs for `wiki/figures/*.md`
+  pages. Workspace-level, NOT git-tracked. Rebuilt from vault PDFs by
+  `figures.py regen wiki`.
 - **Curator state** (`.curator/`): not git-tracked. Operating protocol,
   prompts, config, log, auto-generated index, sweep copy, guard snapshot,
   epoch plan, graph.
@@ -38,7 +46,7 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
 ```
 ---
 title: Page Title
-type: entity | concept | source | analysis | evidence | fact
+type: entity | concept | source | analysis | evidence | fact | summary-table | figure
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 sources: [path/to/source.extracted.md]
@@ -46,6 +54,12 @@ sources: [path/to/source.extracted.md]
 
 Concise prose. [[Wikilinks]]. (vault:path) citations.
 ```
+
+Pages in `wiki/tables/` and `wiki/figures/` carry stem prefixes
+(`tbl-`, `fig-`) so Obsidian groups them cleanly. Figure pages
+additionally record `asset`, `origin`, `source_page`,
+`extraction_method`, and `relates_to` so `figures.py regen` can
+rebuild a missing asset deterministically from its vault source.
 
 ## Rules
 - If caveman is installed, write at the configured level: ultra for most page
@@ -75,8 +89,9 @@ not by the mechanical gate.
   human-edited. CURATE must not edit them during a run.
 - ALL skill scripts are hash-guarded by evolve_guard.sh: `lint_scores.py`,
   `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`,
-  `graph.py`, `sweep.py`, `evolve_guard.sh` itself. The curator has NO
-  agent-editable code path. Improvement ideas land as prose notes under
-  `## improvement-suggestions` in `.curator/log.md` for the human
-  maintainer to evaluate and apply via the skill source.
+  `graph.py`, `sweep.py`, `tables.py`, `figures.py`, `evolve_guard.sh`
+  itself. The curator has NO agent-editable code path. Improvement ideas
+  land as prose notes under `## improvement-suggestions` in
+  `.curator/log.md` for the human maintainer to evaluate and apply via
+  the skill source.
 - `.curator/log.md` is append-only. Never rewrite history to inflate rates.

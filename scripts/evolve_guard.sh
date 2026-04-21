@@ -31,6 +31,7 @@ GUARDED=(
     "$SCRIPT_DIR/graph.py"
     "$SCRIPT_DIR/sweep.py"
     "$SCRIPT_DIR/tables.py"
+    "$SCRIPT_DIR/figures.py"
 )
 
 sha256_cmd() {
