@@ -85,6 +85,13 @@ def _init_schema(conn):
         # the edge (customer_ref, owner, etc.), so cypher queries can
         # filter by relationship kind.
         "CREATE REL TABLE IF NOT EXISTS DataRef(FROM DataRow TO WikiPage, col_name STRING)",
+        # Depicts = a figure page depicts / illustrates a subject page.
+        # Populated from the figure's `relates_to:` frontmatter list.
+        # Distinct from WikiLink because the relationship direction is
+        # semantic (fig depicts subject) and doesn't depend on body
+        # prose containing a [[wikilink]]. Queries like "what figures
+        # illustrate this concept?" traverse Depicts in reverse.
+        "CREATE REL TABLE IF NOT EXISTS Depicts(FROM WikiPage TO WikiPage)",
     ]:
         conn.execute(stmt)
 
@@ -146,7 +153,21 @@ def rebuild(wiki_dir: Path, force: bool = False):
             citations.add(vp)
             vault_sources.add(vp)
 
-        page_data.append((rel, page_type, title, links, citations))
+        # relates_to on figure pages becomes Depicts edges. Entries may
+        # be full wiki-relative paths (concepts/foo.md) or bare stems
+        # (foo) — resolve both at rebuild time against page_stems.
+        depicts = set()
+        if page_type == "figure":
+            rel_to = fm.get("relates_to", [])
+            if isinstance(rel_to, str):
+                rel_to = [rel_to]
+            for target in rel_to:
+                t = str(target).strip()
+                if not t:
+                    continue
+                depicts.add(t)
+
+        page_data.append((rel, page_type, title, links, citations, depicts))
 
     page_paths = {d[0] for d in page_data}
     page_stems = {}
@@ -154,7 +175,7 @@ def rebuild(wiki_dir: Path, force: bool = False):
         stem = Path(d[0]).stem.lower()
         page_stems[stem] = d[0]
 
-    for rel, page_type, title, _, _ in page_data:
+    for rel, page_type, title, _, _, _ in page_data:
         conn.execute(
             "CREATE (:WikiPage {path: $p, type: $t, title: $ti})",
             {"p": rel, "t": page_type, "ti": title}
@@ -166,7 +187,8 @@ def rebuild(wiki_dir: Path, force: bool = False):
             {"p": vp, "t": vp}
         )
 
-    for rel, _, _, links, citations in page_data:
+    depicts_edges = 0
+    for rel, _, _, links, citations, depicts in page_data:
         for target in links:
             target_path = page_stems.get(target)
             if target_path and target_path != rel:
@@ -183,6 +205,22 @@ def rebuild(wiki_dir: Path, force: bool = False):
                 "CREATE (a)-[:Cites]->(b)",
                 {"from": rel, "to": vp}
             )
+        for target in depicts:
+            target_path = None
+            if target in page_paths:
+                target_path = target
+            else:
+                # Try stem match (case-insensitive, strip directory).
+                stem = Path(target).stem.lower()
+                target_path = page_stems.get(stem)
+            if target_path and target_path != rel:
+                conn.execute(
+                    "MATCH (a:WikiPage), (b:WikiPage) "
+                    "WHERE a.path = $from AND b.path = $to "
+                    "CREATE (a)-[:Depicts]->(b)",
+                    {"from": rel, "to": target_path}
+                )
+                depicts_edges += 1
 
     # Populate DataRow nodes + DataRef edges from tables.db if present.
     # Wikilink-typed columns become typed edges from the row to the
@@ -255,6 +293,7 @@ def rebuild(wiki_dir: Path, force: bool = False):
         "citations": sum(len(d[4]) for d in page_data),
         "data_rows": data_rows,
         "data_refs": data_refs,
+        "depicts_edges": depicts_edges,
     }
     print(json.dumps({"status": "rebuilt", **stats}))
 
