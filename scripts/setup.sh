@@ -73,8 +73,15 @@ fi
 # runtime invokes scripts via the .claude/skills/ logical path, so
 # prefix matching fails and users hit approval prompts. Probe for the
 # sibling form directly and include whichever exists.
-for _alt in "${SKILL_ROOT_PHYSICAL/\/.agents\/skills\//\/.claude\/skills\/}" \
-            "${SKILL_ROOT_PHYSICAL/\/.claude\/skills\//\/.agents\/skills\/}"; do
+#
+# Use variables for the patterns: bash parameter substitution treats
+# `\/` in the replacement string as a literal `\/` (preserving the
+# backslash), which would give `/Users/foo\/.claude\/...` and break
+# the `-d` check. Variable interpolation sidesteps the escape problem.
+_agents_seg=".agents/skills"
+_claude_seg=".claude/skills"
+for _alt in "${SKILL_ROOT_PHYSICAL/$_agents_seg/$_claude_seg}" \
+            "${SKILL_ROOT_PHYSICAL/$_claude_seg/$_agents_seg}"; do
     if [ "$_alt" != "$SKILL_ROOT_PHYSICAL" ] && [ -d "$_alt" ]; then
         case " ${SKILL_ROOTS[*]} " in
             *" $_alt "*) ;;
@@ -447,6 +454,13 @@ else
     if [ -z "$missing_canary" ] && grep -qF ".curator/sweep.py:*" .claude/settings.json; then
         missing_canary=".curator/sweep.py (stale: workspace-sweep allowlist from pre-hash-guard era)"
     fi
+    # Indicator of the pre-fix allowlist generator that had two bugs:
+    # (a) literal `$root` in the Read entry (variable never expanded),
+    # and (b) `\/` escape behaviour in path substitution that hid the
+    # sibling .claude/skills/ ↔ .agents/skills/ form. Both emit together.
+    if [ -z "$missing_canary" ] && grep -qF 'Read($root/**)' .claude/settings.json; then
+        missing_canary='Read($root/**) (stale: broken variable-expansion in pre-fix allowlist generator)'
+    fi
     if [ -n "$missing_canary" ]; then
         echo "  Existing .claude/settings.json is missing canonical allowlist"
         echo "  entry matching: $missing_canary"
@@ -532,8 +546,8 @@ EOF
     # scripts are read-only (hash-guarded) and contain no secrets. One
     # entry per available skill-root path (physical + logical if they
     # differ, per the dual-path allowlist logic above).
-    for root in "\${SKILL_ROOTS[@]}"; do
-        printf '      "Read(%s/**)",\n' "\$root" >> .claude/settings.json
+    for root in "${SKILL_ROOTS[@]}"; do
+        printf '      "Read(%s/**)",\n' "$root" >> .claude/settings.json
     done
     cat >> .claude/settings.json <<EOF
       "Bash(date:*)"
