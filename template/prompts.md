@@ -199,6 +199,18 @@ this file; don't duplicate prompts there.
 > proper noun or abstract) with normal fan-out and review. Do NOT populate this for non-analysis tasks; do NOT return
 > a concept instead of the analysis — the analysis must still be
 > delivered.
+>
+> Optional for analyses/ new-page tasks only: you may also include
+> `"spawn_table": {"stem": "hyphen-case-name", "title": "Human readable
+> title", "rationale": "one line why a table is clearer than prose",
+> "columns": ["col1", "col2", ...], "sources": ["path/to/a.extracted.md",
+> ...]}`. One at most per analysis. Use ONLY when the analysis
+> enumerates ≥3 parallel entities/measurements across ≥2 attributes —
+> the canonical case where a table is genuinely clearer than prose.
+> Skip for narrative / conceptual synthesis that doesn't decompose
+> naturally into rows + columns. The orchestrator harvests into the
+> NEXT wave's summary-table bucket (create mode); a
+> `summary_table_builder` worker writes `wiki/tables/tbl-<stem>.md`.
 
 ---
 
@@ -488,3 +500,78 @@ the proposal call. Receives the proposal list and judges each candidate.
 > ```
 > {"source": "<SOURCE_PATH>", "figures": [{...}, ...]}
 > ```
+
+---
+
+## summary_table_builder (worker-model)
+
+> You write a summary-table page for the curiosity-engine wiki. A
+> summary table is a small, glanceable comparison / cross-section /
+> top-N slice in markdown — not relational data (that's the class-
+> tables layer).
+>
+> Spec (from a harvested `spawn_table` queue entry):
+> ```
+> stem:      <kebab-slug>
+> title:     <human-readable title>
+> rationale: <why the source analysis flagged this as a table>
+> columns:   [<col1>, <col2>, ...]
+> sources:   [<vault/path/to/source.extracted.md>, ...]
+> ```
+>
+> Vault search results for each listed source (for citations):
+> ```
+> <VAULT_SNIPPETS>
+> ```
+>
+> Task: produce a complete `wiki/tables/tbl-<stem>.md` page. Target
+> filename: `wiki/tables/tbl-<stem>.md` — the orchestrator adds the
+> `tbl-` prefix via `naming.prefixed_stem`; you may return either
+> form in the `page` field (normalised downstream).
+>
+> Page structure:
+> ```
+> ---
+> title: "[tbl] <title>"
+> type: summary-table
+> created: YYYY-MM-DD
+> updated: YYYY-MM-DD
+> sources: [<vault-path-1>, <vault-path-2>, ...]
+> ---
+>
+> One sentence framing the table's purpose and scope.
+>
+> | <col1> | <col2> | ... | source |
+> |---|---|---|---|
+> | [[entity-a]] | value | ... | (vault:path/to/source.extracted.md) |
+> | [[entity-b]] | value | ... | (vault:path/to/source.extracted.md) |
+>
+> Optional: a short `## methodology` note if values were normalised or any
+> assumptions were made.
+> ```
+>
+> Rules:
+> - Every row must be traceable to a vault source. Either a dedicated
+>   source column (preferred when sources differ per row) or a
+>   single `(vault:...)` citation beneath the table (when all rows
+>   come from the same source).
+> - ≤50 rows. If more rows fit the concept, the right data structure
+>   is a class table (entity-page `table:` frontmatter). Flag this
+>   in your `reason` field as `route-to-class-table: <entity-page>`.
+> - Cells may contain `[[wikilinks]]` to entity/concept pages but
+>   keep cell content terse — one value or a short phrase per cell.
+> - Wrap the title value in double quotes (per the frontmatter
+>   quoting rule).
+> - Numbers should include units in the column header, not each cell
+>   (e.g. column `training loss (log-10)`, not each cell `-1.2 log-10`).
+>
+> Return exactly one JSON object:
+> ```
+> {"page": "wiki/tables/tbl-<stem>.md", "new_text": "<full page>", "reason": "<one line>"}
+> ```
+>
+> Invoke no tools. If the spec turns out to be a poor fit for a
+> summary table (fewer than 3 rows in practice, or rows aren't
+> comparable across the proposed columns), return the page with a
+> `reason` field starting `skip:` and an empty-body table — the
+> orchestrator will drop it.

@@ -312,6 +312,14 @@ def _floors_for(page: Path) -> dict:
         return {"citations": 1, "wikilinks": 1, "words": 50}
     if "figures" in parts:
         return {"citations": 1, "wikilinks": 0, "words": 10}
+    if "tables" in parts:
+        # Summary tables carry structured rows, not prose — frontmatter +
+        # short framing sentence + the markdown table. Wikilinks typically
+        # live inside table cells (entity refs, source stubs); citations
+        # pin the data to its vault sources. Floor: >=1 citation, 0
+        # wikilinks required (cells carry them naturally), >=10 words of
+        # framing prose so we don't accept an empty table scaffold.
+        return {"citations": 1, "wikilinks": 0, "words": 10}
     return {"citations": 2, "wikilinks": 2, "words": 100}
 
 
