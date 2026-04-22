@@ -51,22 +51,70 @@ elif [ -d content ]; then
 fi
 ln -s "$WIKI_ABS" content
 
+# Resolve a free port for the serve modes. Prefer 8080 (Quartz default).
+# When it's already in use: interactive mode asks whether to kill the
+# holder or pick a free port; non-interactive mode auto-picks a free port.
+_pick_port() {
+    local start_port="${1:-8080}"
+    local port="$start_port"
+    if lsof -ti:"$port" >/dev/null 2>&1; then
+        local holder
+        holder="$(lsof -ti:"$port" | head -1)"
+        local holder_cmd
+        holder_cmd="$(ps -p "$holder" -o comm= 2>/dev/null | tr -d ' ')"
+        if [ -t 0 ] && [ -t 1 ]; then
+            echo "Port $port is in use (pid $holder${holder_cmd:+ — $holder_cmd})." >&2
+            echo "  [1] kill the existing process and reuse $port" >&2
+            echo "  [2] serve on an auto-selected free port" >&2
+            echo "  [3] cancel" >&2
+            printf "Choice [1/2/3]: " >&2
+            local reply
+            read -r reply || reply=3
+            case "$reply" in
+                1)
+                    kill "$holder" 2>/dev/null
+                    # Give the OS a moment to release the socket.
+                    sleep 1
+                    ;;
+                2)
+                    while lsof -ti:"$port" >/dev/null 2>&1; do
+                        port=$((port + 1))
+                    done
+                    ;;
+                *)
+                    echo "cancelled." >&2
+                    return 1
+                    ;;
+            esac
+        else
+            # Non-interactive — auto-pick a free port, announce it.
+            while lsof -ti:"$port" >/dev/null 2>&1; do
+                port=$((port + 1))
+            done
+            echo "Port $start_port in use; auto-selected $port." >&2
+        fi
+    fi
+    echo "$port"
+}
+
 cmd="${1:-serve}"
 case "$cmd" in
     build)
         npx quartz build
         ;;
     serve)
-        echo "Quartz serving $WIKI_ABS at http://localhost:8080"
+        _port="$(_pick_port 8080)" || exit 1
+        echo "Quartz serving $WIKI_ABS at http://localhost:$_port"
         echo "(Ctrl+C to stop; the curator's writes will appear on the next build)"
-        npx quartz build --serve
+        npx quartz build --serve --port "$_port"
         ;;
     open)
-        echo "Quartz serving $WIKI_ABS at http://localhost:8080"
-        (sleep 4 && (command -v open >/dev/null && open http://localhost:8080 || \
-                     command -v xdg-open >/dev/null && xdg-open http://localhost:8080 || \
-                     echo "(open http://localhost:8080 manually)")) &
-        npx quartz build --serve
+        _port="$(_pick_port 8080)" || exit 1
+        echo "Quartz serving $WIKI_ABS at http://localhost:$_port"
+        (sleep 4 && (command -v open >/dev/null && open "http://localhost:$_port" || \
+                     command -v xdg-open >/dev/null && xdg-open "http://localhost:$_port" || \
+                     echo "(open http://localhost:$_port manually)")) &
+        npx quartz build --serve --port "$_port"
         ;;
     *)
         echo "Usage: quartz.sh {build|serve|open}" >&2

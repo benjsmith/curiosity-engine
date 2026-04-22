@@ -186,7 +186,7 @@ INGEST stays lean. Evidence and fact pages emerge later, via CURATE reads.
 11. **Figure-extraction pass (PDFs only, Sonnet-driven).** When the source is a PDF and the ingested wiki page gained ≥1 `[[wikilink]]` inbound from existing wiki material (or the user explicitly asks), extract its figures:
     1. Render every page: `uv run python3 <skill_path>/scripts/figures.py render-all <vault_pdf_path> --wiki wiki`. Idempotent — no-op on rerun.
     2. Dispatch ONE fresh-context **sonnet** Agent with the `figure_extractor` template in `.curator/prompts.md`. Give it the source path + the list of rendered PNG paths. It returns `{"source": "...", "figures": [{figure_number, page, caption_first_line, brief_description, concepts_illustrated, suggested_stem}, ...]}`.
-    3. For each figure spec, build a figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <source-stem>-p<N>.png`, `source_path: <vault_pdf_path>`, `source_page: <N>`, `extraction_method: pdf_page_render`, `sources: [<extracted_md_path>]`, `relates_to: []` (filled as the wiki grows). Body: `![[../assets/figures/<asset>]]` + one-paragraph caption citing the extraction (`(vault:<extracted_md>)`).
+    3. For each figure spec, build a figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <basename>.png`, `source_path: <vault_pdf_path>`, `source_page: <N>`, `extraction_method: pdf_page_render`, `sources: [<extracted_md_path>]`, `relates_to: []` (filled as the wiki grows). Body MUST contain the image embed AND an inline `[[<source-stub-stem>]]` wikilink to the source stub (stem from `naming.citation_stem(parse_source_meta(extraction))`) — see step 4 in the figure-extract wave's execute phase below for the canonical body template.
     4. Validate each page via `score_diff.py --new-page` (figures floor: ≥1 citation, 0 wikilinks, ≥10 words).
     5. The rendered page PNGs that no figure spec pointed at stay in `assets/figures/` — unreferenced-page GC is a later hygiene pass (see `figures.py check`); cost is trivial.
 12. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
@@ -328,7 +328,14 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 1. **Select sources.** Read the top `parallel_workers` candidates from the `figure-candidates` JSON (sorted by `distinct_citers` desc). One source per worker slot.
 2. **Pre-render pages.** For each selected source, run `uv run python3 <skill_path>/scripts/figures.py render-all <vault_pdf> --wiki wiki`. Idempotent — skipped when the pages are already in `assets/figures/`. Keeps the multimodal worker input deterministic.
 3. **Dispatch workers.** Dispatch one fresh-context sonnet Agent per source with the `figure_extractor` template in `.curator/prompts.md`, passing the source path + absolute paths of the rendered PNGs. Each worker returns `{"source": "<path>", "figures": [{figure_number, page, caption_first_line, brief_description, concepts_illustrated, suggested_stem}, ...]}`.
-4. **Create figure pages.** For each returned spec, build the figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <source-stem>-p<N>.png`, `source_path`, `source_page`, `extraction_method: pdf_page_render`, `sources: [<extracted_md>]`, `relates_to: []`. Body: `![[../assets/figures/<asset>]]` + caption + `(vault:<extracted_md>)` citation. Validate each via `score_diff.py --new-page` (figures floor). Scrub-check via `scrub_check.py --mode wiki`.
+4. **Create figure pages.** For each returned spec, build the figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <basename>.png`, `source_path`, `source_page`, `extraction_method: pdf_page_render`, `sources: [<extracted_md>]`, `relates_to: []`. Body MUST include:
+   - The image embed. Obsidian mode: `![[figures/_assets/<basename>.png]]` (path-form works in both Obsidian and Quartz). VS Code mode: `![<basename>.png](_assets/<basename>.png)`.
+   - An explicit `[[<source-stub-stem>]]` wikilink to the vault-source stub. Compute the stem via `naming.citation_stem(parse_source_meta(vault_extraction_path))` — this is the same canonical stem `fix-source-stubs` assigns, so the link always resolves to `wiki/sources/<stem>.md`. If the stub doesn't exist yet, the link still lands; the next `fix-source-stubs` run backfills it.
+   - The canonical caption sentence, the `[[<source-stem>]]` wikilink, and a closing `(vault:<extracted_md>)` citation.
+
+   Template: `<caption> — from [[<source-stem>]] (vault:<extracted_md>).`
+
+   Validate each via `score_diff.py --new-page` (figures floor). Scrub-check via `scrub_check.py --mode wiki`.
 5. **Mark processed.** For each source that was passed through the worker (regardless of whether figures were produced — empty returns also count), call `uv run python3 <skill_path>/scripts/figures.py mark-extracted <vault_extracted_md>`. The `figures_extracted: <ISO>` flag drops the source from `figure-candidates` next wave.
 6. **Batch reviewer** optional — figures have short structured captions; the mechanical gate + scrub check catch most issues. Skip the opus reviewer for figure-extract waves unless a spec returned unusually long captions (>300 chars) or the wave produced >5 figure pages.
 7. **Commit.** `git -C wiki add -A && git -C wiki commit -m "figure-extract: N figures across M sources"` and rebuild the graph (figures participate in `Depicts` edges).
@@ -615,12 +622,14 @@ sources: [papers/attention.extracted.md]
 relates_to: [concepts/attention-mechanism.md, evidence/attention-layer-6.md]
 ---
 
-![[attention-p3.png]]
+![[figures/_assets/attention-p3.png]]
 
-*[[attention-mechanism|Self-attention]] weights at layer 6. `[CLS]` focuses on subject-noun positions (vault:papers/attention.extracted.md).*
+*[[attention-mechanism|Self-attention]] weights at layer 6. `[CLS]` focuses on subject-noun positions — from [[vaswani-2017-attention]] (vault:papers/attention.extracted.md).*
 ```
 
-The Obsidian-form embed `![[attention-p3.png]]` uses filename-resolution — Obsidian finds the asset at `wiki/figures/_assets/` because the timestamp-prefixed filenames are unique across the vault. VS Code mode (via `wiki_viewer_mode: "vscode"`) rewrites to `![attention-p3.png](_assets/attention-p3.png)` — a relative path from the figure page that renders in VS Code's built-in markdown preview, Quartz, GitHub, and other standard renderers.
+The Obsidian-form embed uses the wiki-root-relative path `![[figures/_assets/<file>]]` so the asset resolves cleanly in both Obsidian (vault-root-relative) and Quartz (content-root-relative). VS Code mode (via `wiki_viewer_mode: "vscode"`) rewrites to `![<file>](_assets/<file>)` — a file-relative path that renders in VS Code's built-in markdown preview, GitHub web UI, and other standard markdown viewers.
+
+The `[[<source-stub-stem>]]` wikilink in the body is mandatory on every figure page: it's a mechanical action by the orchestrator when the figure is created, derived from `naming.citation_stem(parse_source_meta(<extracted_md>))`. Always resolves to `wiki/sources/<stem>.md` — the source stub backfill pass keeps the target alive.
 
 Two origins:
 

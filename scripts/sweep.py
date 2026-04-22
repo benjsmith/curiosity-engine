@@ -906,29 +906,98 @@ def cmd_convert_image_embeds(wiki_dir: Path, target: str):
                 return f"![{basename}](_assets/{basename})"
             new_text = _OBSIDIAN_EMBED_RE.sub(obs_to_vs, text)
         else:  # obsidian
+            # Obsidian mode uses the wiki-root-relative path form
+            # `![[figures/_assets/<filename>.png]]`. Both Obsidian and
+            # Quartz resolve this reliably; filename-only works in
+            # Obsidian via its filename index but Quartz's wikilink
+            # transformer can miss it when a bare filename isn't in
+            # the content tree at the top level.
             def vs_to_obs(m):
                 path = m.group(2)
                 if not _is_figure_asset_ref(path):
                     return m.group(0)
                 basename = Path(path).name
-                return f"![[{basename}]]"
+                return f"![[figures/_assets/{basename}]]"
             new_text = _VSCODE_EMBED_RE.sub(vs_to_obs, text)
-            # Also collapse any residual path-form Obsidian embeds to
-            # filename-only so that a mixed state converges.
-            def obs_path_to_filename(m):
+            # Collapse any mixed-state Obsidian embeds (bare filename
+            # or legacy `../assets/figures/` path) to the canonical
+            # `figures/_assets/<filename>` path-form.
+            def obs_canonicalise(m):
                 path = m.group(1)
                 if not _is_figure_asset_ref(path):
                     return m.group(0)
                 basename = Path(path).name
-                if basename == path:
+                canonical = f"figures/_assets/{basename}"
+                if path == canonical:
                     return m.group(0)
-                return f"![[{basename}]]"
-            new_text = _OBSIDIAN_EMBED_RE.sub(obs_path_to_filename, new_text)
+                return f"![[{canonical}]]"
+            new_text = _OBSIDIAN_EMBED_RE.sub(obs_canonicalise, new_text)
         if new_text != text:
             p.write_text(new_text)
             touched.append(str(p.relative_to(wiki_dir)))
     print(json.dumps({"ok": True, "target": target, "touched": len(touched),
                         "paths": touched[:20]}, indent=2))
+
+
+def cmd_backfill_figure_sourcelinks(wiki_dir: Path):
+    """Retrofit `[[<source-stub-stem>]]` wikilinks into figure pages
+    that were created before the mechanical-wikilink rule was wired
+    in. For each `wiki/figures/*.md` page with no wikilinks in its
+    body, derive the source stub stem from the first `(vault:X)`
+    citation (via `naming.citation_stem(parse_source_meta(X))`) and
+    insert `from [[<stem>]] ` immediately before that citation.
+
+    Idempotent: figure pages that already contain at least one
+    `[[wikilink]]` in the body are skipped.
+    """
+    from naming import CITATION_RE, WIKILINK_RE, citation_stem, parse_source_meta
+
+    figures_dir = wiki_dir / "figures"
+    vault_dir = wiki_dir.parent / "vault"
+    if not figures_dir.is_dir():
+        print(json.dumps({"ok": True, "touched": 0, "note": "no figures/ dir"}))
+        return
+
+    touched = []
+    for p in sorted(figures_dir.glob("*.md")):
+        text = p.read_text()
+        fm, body = read_frontmatter(text)
+        if fm.get("type") != "figure":
+            continue
+        # A figure page body always has `![[...]]` for the image
+        # embed — that matches WIKILINK_RE but isn't a true link.
+        # Check for wikilinks NOT preceded by `!`.
+        has_real_wikilink = any(
+            not (wm.start() > 0 and body[wm.start() - 1] == "!")
+            for wm in WIKILINK_RE.finditer(body)
+        )
+        if has_real_wikilink:
+            continue
+        m = CITATION_RE.search(body)
+        if not m:
+            continue
+        vault_rel = m.group(1).strip()
+        vault_file = vault_dir / vault_rel
+        if not vault_file.exists() or not vault_file.is_file():
+            continue
+        try:
+            meta = parse_source_meta(vault_file)
+            stem = citation_stem(meta)
+        except Exception:
+            continue
+        if not stem:
+            continue
+        insertion = f"from [[{stem}]] "
+        new_body = body[: m.start()] + insertion + body[m.start():]
+        new_text = text.replace(body, new_body, 1)
+        if new_text != text:
+            p.write_text(new_text)
+            touched.append(str(p.relative_to(wiki_dir)))
+    print(json.dumps({
+        "ok": True,
+        "touched": len(touched),
+        "paths": touched[:20],
+    }, indent=2))
 
 
 def cmd_migrate_asset_location(wiki_dir: Path):
@@ -991,13 +1060,13 @@ def cmd_migrate_asset_location(wiki_dir: Path):
             basename = Path(m.group(1)).name
             if viewer_mode == "vscode":
                 return f"![{basename}](_assets/{basename})"
-            return f"![[{basename}]]"
+            return f"![[figures/_assets/{basename}]]"
 
         def vs_old(m):
             basename = Path(m.group(2)).name
             if viewer_mode == "vscode":
                 return f"![{basename}](_assets/{basename})"
-            return f"![[{basename}]]"
+            return f"![[figures/_assets/{basename}]]"
 
         new_text = _OLD_OBS_PATH_RE.sub(obs_old, text)
         new_text = _OLD_VSCODE_PATH_RE.sub(vs_old, new_text)
@@ -2069,6 +2138,7 @@ def main():
         "fix-spaced-wikilinks", "fix-orphan-root-files",
         "fix-frontmatter-quotes", "dedupe-self-citations",
         "convert-image-embeds", "migrate-asset-location",
+        "backfill-figure-sourcelinks",
         "sync-todos", "sync-notes", "normalize-vault-suffixes",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
@@ -2123,6 +2193,8 @@ def main():
         cmd_normalize_vault_suffixes(wiki_dir)
     elif args.command == "migrate-asset-location":
         cmd_migrate_asset_location(wiki_dir)
+    elif args.command == "backfill-figure-sourcelinks":
+        cmd_backfill_figure_sourcelinks(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":

@@ -230,6 +230,14 @@ EOF
 }
 _seed_notes_or_todos_stub wiki/notes/new.md          '[note] new (default /note landing; curator drains)' note
 _seed_notes_or_todos_stub wiki/notes/for-attention.md '[note] for-attention (notes awaiting user topic)'   note
+
+# Landing page. Quartz serves `/` from content/index.md; Obsidian
+# shows it at the top of the vault. Seed only if absent — user may
+# have customised it.
+if [ ! -f wiki/index.md ] && [ -f "$TEMPLATE_DIR/wiki-index.md" ]; then
+    cp "$TEMPLATE_DIR/wiki-index.md" wiki/index.md
+    echo "  Seeded wiki/index.md (landing page)"
+fi
 _seed_notes_or_todos_stub wiki/todos/day.md           '[todo] day-priority'   todo-list
 _seed_notes_or_todos_stub wiki/todos/month.md         '[todo] month-priority' todo-list
 _seed_notes_or_todos_stub wiki/todos/year.md          '[todo] year-priority'  todo-list
@@ -720,6 +728,10 @@ if [ -d wiki/.git ]; then
         # configured viewer mode, removes the old empty dirs, adds
         # the new gitignore line. Idempotent no-op once applied.
         uv run python3 "$SCRIPT_DIR/sweep.py" migrate-asset-location wiki >/dev/null 2>&1 || true
+        # Retrofit source-stub wikilinks into figure pages that were
+        # created before the mechanical-wikilink rule was wired in.
+        # Idempotent no-op once all figure pages carry a wikilink.
+        uv run python3 "$SCRIPT_DIR/sweep.py" backfill-figure-sourcelinks wiki >/dev/null 2>&1 || true
         # One-shot migration for vault files ingested before the
         # local_ingest suffix-doubling fix (foo.pdf.pdf → foo.pdf).
         # Idempotent no-op once applied.
