@@ -106,7 +106,7 @@ git remote add origin git@github.com:<you>/<repo>.git
 git push -u origin main
 ```
 
-**Updating the skill without exiting the session.** For git-clone installs, just ask the agent to "update the skill". It runs `scripts/update.sh`, which fetches the upstream and prints release notes; once you confirm, it auto-commits any in-progress wiki edits with a canned `wip: auto-commit before skill update` message, fast-forward-pulls the skill, and runs `setup.sh` to apply any migrations. Npx-skills installs aren't git repos, so those users update via `npx skills update benjsmith/curiosity-engine` and then rerun `setup.sh` against the workspace.
+**Updating the skill without exiting the session.** Ask the agent to "update the skill". It runs `scripts/update.sh`, which detects the install channel automatically — `git pull --ff-only` for git-clone installs, `npx skills update -g <slug>` for npx-skills installs — prints a preview (commit log for git, update plan for npx), and waits for you to confirm. Once confirmed, it auto-commits any in-progress wiki edits with a canned `wip: auto-commit before skill update` message, applies the update, and runs `setup.sh` to apply any migrations. The npx-skills slug is stored in `.curator/config.json` as `update_source_slug` — fork users edit it there to point at their fork.
 
 ### Running in other coding-agent CLIs
 

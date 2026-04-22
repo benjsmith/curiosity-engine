@@ -101,7 +101,9 @@ bash <skill_path>/scripts/update.sh        # prints release notes, exits
 bash <skill_path>/scripts/update.sh --yes  # applies after user confirms
 ```
 
-Two-step flow by design. The first call `git fetch`es the skill repo and prints the local..upstream commit log to stdout, then exits without changes (non-interactive callers need explicit `--yes`). Relay the release notes to the user, wait for confirmation, then re-invoke with `--yes`. Stage 2 auto-commits any dirty wiki with a canned `wip: auto-commit before skill update` message, fast-forward-pulls the skill, and runs `setup.sh` (which reapplies the migration pass).
+Two-step flow by design. The first call inspects the install channel and prints a preview: for git-clone installs it `git fetch`es the skill repo and shows the local..upstream commit log; for npx-skills installs (`.git` absent from the skill dir) it shows the update plan and the slug that will be passed to `npx skills update -g`. Either way it exits without changes (non-interactive callers need explicit `--yes`). Relay the preview to the user, wait for confirmation, then re-invoke with `--yes`. Stage 2 auto-commits any dirty wiki with a canned `wip: auto-commit before skill update` message, applies the update (`git pull --ff-only` or `npx skills update -g <slug>`), and runs `setup.sh` to reapply the migration pass.
+
+The npx-skills slug is read from `.curator/config.json`'s `update_source_slug` key (seeded by setup.sh from the template default); fork users edit the key in their workspace config to repoint.
 
 ## Data stores
 
