@@ -63,6 +63,14 @@ except Exception:
 if [ -z "$SLUG" ]; then
     SLUG="benjsmith/curiosity-engine"
 fi
+# npx-skills tracks installs by bare skill name (the repo portion of
+# the slug), not the full owner/repo form — `npx skills update -g
+# owner/repo` reports "No installed skills found matching". Derive the
+# bare name by stripping everything up to and including the last `/`.
+# Works both for a full slug (`benjsmith/curiosity-engine` →
+# `curiosity-engine`) and for a bare name the user may have typed
+# directly into the config (left unchanged).
+SKILL_NAME="${SLUG##*/}"
 
 # ── Preview stage. Collect update plan + optional release notes into
 #    a shared block so the approval gate logic below is identical across
@@ -101,7 +109,7 @@ else
     echo "=== npx-skills update plan ==="
     echo "  Skill dir:  $SKILL_ROOT (no .git)"
     echo "  Slug:       $SLUG  (from .curator/config.json → update_source_slug)"
-    echo "  Will run:   npx skills update -g $SLUG"
+    echo "  Will run:   npx skills update -g $SKILL_NAME"
     echo ""
     echo "  Detailed release notes aren't available for npx-skills installs —"
     echo "  inspect the upstream repo on GitHub if you want the full log before"
@@ -146,8 +154,21 @@ if [ "$UPDATE_METHOD" = "git" ]; then
     git -C "$SKILL_ROOT" pull --quiet --ff-only
 else
     echo ""
-    echo "Running npx skills update -g $SLUG ..."
-    npx skills update -g "$SLUG"
+    echo "Running npx skills update -g $SKILL_NAME ..."
+    # npx-skills exits 0 even when it can't find the named skill, so
+    # capture the output and check for its "No installed skills found"
+    # signal explicitly to avoid a silent no-op.
+    _npx_out="$(npx skills update -g "$SKILL_NAME" 2>&1)"
+    echo "$_npx_out"
+    if echo "$_npx_out" | grep -qi "No installed skills found matching"; then
+        echo ""
+        echo "ERROR: npx-skills did not recognise '$SKILL_NAME'. Installed skills:"
+        npx skills list -g 2>&1 | grep -E '^[[:space:]]*[a-z]' | head -20
+        echo ""
+        echo "Set update_source_slug in .curator/config.json to a value whose last"
+        echo "segment matches one of the installed skill names above."
+        exit 1
+    fi
 fi
 
 echo ""
