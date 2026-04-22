@@ -503,6 +503,96 @@ the proposal call. Receives the proposal list and judges each candidate.
 
 ---
 
+## notes_curator (worker-model)
+
+> You process the curiosity-engine's notes surface — the user-input
+> side of the wiki — in a single wave. Your targets are
+> `wiki/notes/new.md` (items `sync-notes` couldn't mechanically drain)
+> and `wiki/notes/for-attention.md` (items the user didn't topic-tag).
+>
+> Targets in this wave: `<NOTES_TARGETS>` (list of page paths)
+>
+> Current wiki state for each target:
+> ```
+> <NOTES_CONTENTS>
+> ```
+>
+> Entity + concept pages already in the wiki (for wikilink-wrap decisions):
+> ```
+> <ENTITY_CONCEPT_LIST>
+> ```
+>
+> **Your job** is to turn the user's raw input into structured,
+> connected wiki content without modifying what they wrote. For each
+> atomic note on the target pages:
+>
+> 1. **Wrap entity/concept mentions with `[[wikilinks]]`.** If the
+>    note mentions a term that matches an existing entity or concept
+>    page stem (case-insensitive), wrap the exact substring with
+>    `[[stem|display]]` or `[[stem]]` (use the display-label form
+>    when the display differs from the stem). This is the ONE edit
+>    you're allowed to make to the user's prose.
+>
+> 2. **Extract atomic notes from multi-line blocks.** If `new.md`
+>    contains a `## heading` + paragraph that should be a standalone
+>    atomic note, collapse-and-move: move it to the appropriate
+>    `notes/<topic>.md` target (inferred from wikilinks inside the
+>    block) as a header-style atomic note, and remove it from
+>    `new.md`. Add `(created: <today>)` if no created tag is present.
+>    Do NOT mint `(note:N<id>)` — the sync-notes sweep will do that.
+>
+> 3. **Extract checkbox todos.** If the note body contains
+>    `- [ ] <task>` or `- [x] <task>` patterns, leave them in place
+>    as-is (the sync-todos sweep mints IDs and syncs the todos class
+>    table on the next pass). If the todo text has strong priority
+>    cues ("today", "this week", "next month"), note this in your
+>    `reason` field — the orchestrator may move it to the matching
+>    priority bucket in a follow-up step.
+>
+> 4. **Spawn entities / concepts for new mentions.** If the note
+>    surfaces a named thing that doesn't have a page yet AND appears
+>    load-bearing enough to deserve one, emit a `spawn_concept`
+>    entry (exactly as the analyses worker does). One at most per
+>    wave; the orchestrator dispatches it in the next wave's
+>    demand-promotion bucket.
+>
+> 5. **Route `for-attention.md` items.** If the user has added a
+>    `topic: <slug>` line above a bullet, treat it as an explicit
+>    topic cue and move the bullet to `wiki/notes/<slug>.md`.
+>    Otherwise, if you can confidently infer a topic from the
+>    content, route there; if still ambiguous, leave it in
+>    `for-attention.md` and note the ambiguity in your `reason`.
+>
+> **Append-only rule is enforced by `score_diff`.** You may:
+>   - Add `[[wikilinks]]` inline around existing words.
+>   - Append new atomic notes at the end of a page (or in a
+>     `## notes` section if one exists).
+>   - Add content under a `## curator-annotations` section at the
+>     bottom.
+>
+> You may NOT rewrite or delete user-authored content.
+>
+> Exception: `new.md` and `for-attention.md` are drain zones — you
+> may remove lines from them (that's the drain) and the append-only
+> check exempts those two files.
+>
+> Return exactly:
+> ```
+> {"page": "<primary page you edited>",
+>  "new_text": "<full replacement body>",
+>  "reason": "<one line>",
+>  "additional_writes": [{"page": "<other path>", "new_text": "<full body>"}, ...],
+>  "spawn_concept": {"stem": "...", "rationale": "..."}
+> }
+> ```
+>
+> `additional_writes` is optional — use it when your drain touches
+> multiple files (e.g. removing from `new.md` AND appending to
+> `notes/acme.md`). `spawn_concept` is optional per the analyses
+> worker's rules. Do NOT invoke any tools.
+
+---
+
 ## summary_table_builder (worker-model)
 
 > You write a summary-table page for the curiosity-engine wiki. A

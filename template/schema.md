@@ -27,7 +27,18 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
   Drop folder: `vault/raw/` — user drops files here for bulk ingest.
 - **Wiki** (`wiki/`): git-tracked markdown content. Pages only.
   Subdirs: `sources/`, `entities/`, `concepts/`, `analyses/`, `evidence/`,
-  `facts/`, `tables/`, `figures/`.
+  `facts/`, `tables/`, `figures/`, `notes/`, `todos/`.
+
+  `notes/` is the user-input surface (append-only for the curator).
+  User dumps via `/note` land in `notes/new.md`; the curator drains
+  into `notes/<topic>.md` on each sweep based on wikilink or
+  `topic:` cues.
+
+  `todos/` carries priority-bucket views (`day.md`, `month.md`,
+  `year.md`, `unfiled.md`, `topic-<stem>.md`) and a yearly
+  completion archive (`YYYY.md`). The canonical todos class-table
+  lives in `.curator/tables.db`; pages are mention sites. Status
+  ticks propagate across mentions via `sweep.py sync-todos`.
 - **Graph** (`.curator/graph.kuzu`): kuzu property graph tracking WikiPage
   and VaultSource nodes, WikiLink and Cites edges. Rebuild after any
   structural wiki change via `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.

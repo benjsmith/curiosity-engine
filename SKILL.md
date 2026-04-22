@@ -309,8 +309,9 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 
    **Wire mode** — run a LINK-style pass over the whole wiki (see the **LINK** op for the full protocol). Propose up to ~150 cross-page wikilinks via the `link_proposer` template, classify via the `link_classifier` template, and mechanically apply the `valid` ones. The "wave" is one LINK pass; no worker fan-out. Commit on completion.
 
-   **Repair mode** — priority order (editorial → frontier):
-   - **Editorial** first: top-K worst non-source pages by composite score, skipping `sources/`.
+   **Repair mode** — priority order (notes → editorial → frontier):
+   - **Notes first** (highest priority): if `wiki/notes/new.md` has any remaining atomic notes that `sync-notes` couldn't drain mechanically, OR `wiki/notes/for-attention.md` has un-topic-tagged items, dispatch a worker with the `notes_curator` template in `.curator/prompts.md` to process them. This handles the cases the sweep's heuristic can't — multi-line note blocks, notes without wikilinks that need entity/concept inference, topic-routing for items in for-attention. At most 1 notes-worker per wave (the drain is bursty, not continuous).
+   - **Editorial**: top-K worst non-source pages by composite score, skipping `sources/`.
    - **Frontier**: orphan source stubs + uncited vault sources paired to the best-fit concept/entity page (incorporate via citation AND `[[source-stem]]` wikilink).
    Mix to fill the wave.
 
@@ -444,6 +445,58 @@ Optional static-site viewer for users who can't or don't want to install Obsidia
 4. **Rebuild only.** `bash <skill_path>/scripts/quartz.sh build` — produces `~/.cache/curiosity-engine/quartz/public/` and exits. Useful if you want to serve via a different HTTP server or deploy the output.
 
 The rendered site picks up curator writes only on the next build; for live-updating previews stick with Obsidian or the VS Code + Foam combo documented in README.
+
+### NOTES — "/note X", "add a note", free-form user input
+
+Personal-note surface parallel to `vault/` for external sources. Users dump unstructured thinking into `wiki/notes/new.md` (the default `/note` landing) or directly into a topic file. The curator drains `new.md` into topic files on each sweep and (via CURATE) enriches notes with wikilinks + spawned entities/concepts/facts/todos.
+
+**Folders:**
+- `wiki/notes/new.md` — default landing for `/note` without a topic cue. Drained by `sweep.py sync-notes` each wave.
+- `wiki/notes/for-attention.md` — landing for items the mechanical drain couldn't classify (no wikilink, no `topic:` cue). User adds a `topic: <slug>` line to route, or the curator-agent handles during CURATE.
+- `wiki/notes/<topic>.md` — topic aggregations. Agent-synthesised (via drain) or user-created directly (e.g. `/note topic: project-x ...`). Plain type `note` pages with `## notes` sections appended.
+
+**Atomic-note format:**
+```
+- <content> [[wikilinks]] (created: YYYY-MM-DD) (note:N<id>)
+```
+Or header-style for multi-line:
+```
+## <first-few-words> (created: YYYY-MM-DD, note:N<id>)
+<body paragraphs, possibly with [[wikilinks]]>
+```
+
+**Append-only rule (enforced by `score_diff`):** curator may add `[[stem]]` wikilinks around existing entity/concept mentions, append new atomic notes, and add content under `## curator-annotations` at the bottom. Curator may NOT rewrite or delete user-authored content. The check canonicalises each line (strip wikilinks preserving display-label, strip mint markers, collapse whitespace) and requires every old line to appear in order in the new text. Exemptions: `new.md` and `for-attention.md` are curator-drained staging areas.
+
+**Graph:** each atomic note becomes a `Note` node in kuzu (id + content_hash + created). Every wiki page containing the `(note:N<id>)` marker gets an `AppearsIn` edge from the Note. A note can legitimately `AppearsIn` many pages (e.g. a steerco note filed under both the project and the capability domain).
+
+### TODOS — "/day X", "/month X", "/year X", "/todo X", conversational capture
+
+Canonical class-table (`wiki/entities/todos.md` declares the schema; rows live in `.curator/tables.db`). Status / priority / due stored relationally; page mentions are display views.
+
+**Folders:**
+- `wiki/todos/day.md` — active day-priority bucket
+- `wiki/todos/month.md` — active month-priority bucket
+- `wiki/todos/year.md` — active year-priority bucket (default for `/todo` without an explicit priority)
+- `wiki/todos/unfiled.md` — staging for priority-pending todos (curator drains)
+- `wiki/todos/topic-<stem>.md` — agent-synthesised topic lists (cross-page aggregation by shared `[[stem]]` wikilinks inside todo text)
+- `wiki/todos/YYYY.md` — completion archive, one per year. Appended by `sync-todos` when a todo transitions open→done, with `(created: ..., completed: ...)` date pair.
+
+**Atomic-todo format:**
+```
+- [ ] <text> [[wikilinks]] (created: YYYY-MM-DD) (todo:T<id>)
+- [x] <text> [[wikilinks]] (created: YYYY-MM-DD) (todo:T<id>)
+```
+
+**Priority derivation:** the row's priority is derived from mention-site location — appearance in `day.md` → priority `day` (wins urgency), else `month.md` → `month`, else `year.md` → `year`. Topic files inherit whatever priority the todo already has. A user moving a line from `year.md` to `day.md` IS the priority change — no separate override concept.
+
+**Sync behaviour (`sweep.py sync-todos`):** mint IDs for any un-IDed checkboxes, upsert each todo to the table (_provenance = `log:sync-todos-<date>-<id>`), propagate status changes to every mention-site so ticking `[x]` in one place updates the others, append newly-done todos to `YYYY.md` with date pair. Runs in CURATE Phase 3 every wave.
+
+**Slash commands** (optional affordance for Claude Code):
+- `/day`, `/month`, `/year` — append under `## active` in the matching priority file
+- `/todo` — agent-judged priority from content (today-cue → day, current-month date → month, else year default)
+- `/note` — append to `notes/new.md`, or to `notes/<slug>.md` if the input has an explicit `topic:` / `re:` / `project <name>` cue
+
+Non-Claude-Code CLIs ignore `.claude/commands/`; users invoke the same operations via natural language with equivalent results.
 
 ### CONTRADICTION — "scan contradictions", "check contradictions"
 

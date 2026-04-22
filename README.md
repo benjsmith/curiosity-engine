@@ -73,6 +73,12 @@ Three verbs:
 - **`query`** — *"what do I know about transformers?"* The curator searches the wiki and vault, answers with citations, ends with a question to probe further.
 - **`curate`** — *"curate this wiki for an hour"*. The curator runs a plan-execute-evaluate loop, drafts improvements in parallel, gates each through a mechanical check, has a reviewer judge the wave, and commits.
 
+**Notes and todos — raw-input paths for your own thinking:**
+
+- `/note <anything>` dumps a free-form note into `wiki/notes/new.md`. The curator drains it into a topic file (`wiki/notes/<topic>.md`) on the next sweep — routed by `[[wikilinks]]` in the note, by a `topic:` cue, or by agent inference during CURATE.
+- `/todo <text>`, `/day <text>`, `/month <text>`, `/year <text>` — add to-dos with intent-detected or explicit priority. The canonical store is a `todos` class table; pages under `wiki/todos/` are priority-bucket views. Ticking `[x]` in any mention-site propagates to the others and appends to the yearly completion archive (`wiki/todos/YYYY.md`) with created + completed dates.
+- Slash commands only register in Claude Code (`.claude/commands/*.md`); on other CLIs, natural-language invocations hit the same code paths.
+
 ## Quick start
 
 ```bash
