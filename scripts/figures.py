@@ -83,7 +83,35 @@ def _assets_dir(wiki_dir: Path) -> Path:
 
 def _default_asset_name(source_path: Path, page: int) -> str:
     """`<source-stem>-p<N>.png` — shared across figures on the same page."""
-    return f"{source_path.stem}-p{page}.png"
+    # local_ingest.py sometimes lands files with a doubled `.pdf.pdf`
+    # suffix (when the dropped file was already named *.pdf and the
+    # ingest pipeline re-adds its own `.pdf`). Strip any trailing `.pdf`
+    # from the stem so the generated asset name is the same regardless
+    # of which suffix form the source carries.
+    stem = source_path.stem
+    if stem.endswith(".pdf"):
+        stem = stem[: -len(".pdf")]
+    return f"{stem}-p{page}.png"
+
+
+def _resolve_pdf_path(path_or_str) -> Path:
+    """Resolve a source path to the real file on disk, tolerating the
+    `.pdf` vs `.pdf.pdf` suffix ambiguity left behind by local_ingest.py.
+
+    Caller passes e.g. `vault/20260420-...-schnet-2018.pdf`; the actual
+    file might be named `...-schnet-2018.pdf.pdf`. Try the given path
+    first; if it doesn't exist and doesn't already end with `.pdf.pdf`,
+    try appending an extra `.pdf`. Fall back to the original path (the
+    caller's error message will clarify "not found").
+    """
+    p = Path(path_or_str).resolve()
+    if p.exists():
+        return p
+    if p.suffix.lower() == ".pdf" and not str(p).lower().endswith(".pdf.pdf"):
+        double = Path(str(p) + ".pdf")
+        if double.exists():
+            return double
+    return p
 
 
 def _render_pdf_page(pdf_path: Path, page: int, out_png: Path,
@@ -137,7 +165,7 @@ def _pdf_page_count(pdf_path: Path) -> int:
 
 
 def cmd_pages(args) -> int:
-    source = Path(args.source).resolve()
+    source = _resolve_pdf_path(args.source)
     if not source.exists():
         print(json.dumps({"ok": False, "error": f"source not found: {source}"}))
         return 1
@@ -157,7 +185,7 @@ def cmd_pages(args) -> int:
 
 
 def cmd_render_all(args) -> int:
-    source = Path(args.source).resolve()
+    source = _resolve_pdf_path(args.source)
     if not source.exists():
         print(json.dumps({"ok": False, "error": f"source not found: {source}"}))
         return 1
@@ -209,7 +237,7 @@ def cmd_render_all(args) -> int:
 
 
 def cmd_extract(args) -> int:
-    source = Path(args.source).resolve()
+    source = _resolve_pdf_path(args.source)
     if not source.exists():
         print(json.dumps({"ok": False,
                           "error": f"source not found: {source}"}))
