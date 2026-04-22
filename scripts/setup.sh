@@ -213,7 +213,7 @@ if [ ! -f wiki/entities/todos.md ] && [ -f "$TEMPLATE_DIR/entities/todos.md" ]; 
     echo "  Seeded wiki/entities/todos.md (canonical todos table schema)"
 fi
 _seed_notes_or_todos_stub() {
-    local path="$1"; local title="$2"; local type="$3"
+    local path="$1"; local title="$2"; local type="$3"; local hub="$4"
     if [ ! -f "$path" ]; then
         cat > "$path" <<EOF
 ---
@@ -223,13 +223,15 @@ created: $(date +%Y-%m-%d)
 updated: $(date +%Y-%m-%d)
 ---
 
+Part of [[$hub]].
+
 ## active
 
 EOF
     fi
 }
-_seed_notes_or_todos_stub wiki/notes/new.md          '[note] new (default /note landing; curator drains)' note
-_seed_notes_or_todos_stub wiki/notes/for-attention.md '[note] for-attention (notes awaiting user topic)'   note
+_seed_notes_or_todos_stub wiki/notes/new.md          '[note] new (default /note landing; curator drains)' note notes
+_seed_notes_or_todos_stub wiki/notes/for-attention.md '[note] for-attention (notes awaiting user topic)'   note notes
 
 # Landing page. Quartz serves `/` from content/index.md; Obsidian
 # shows it at the top of the vault. Seed only if absent — user may
@@ -238,10 +240,22 @@ if [ ! -f wiki/index.md ] && [ -f "$TEMPLATE_DIR/wiki-index.md" ]; then
     cp "$TEMPLATE_DIR/wiki-index.md" wiki/index.md
     echo "  Seeded wiki/index.md (landing page)"
 fi
-_seed_notes_or_todos_stub wiki/todos/day.md           '[todo] day-priority'   todo-list
-_seed_notes_or_todos_stub wiki/todos/month.md         '[todo] month-priority' todo-list
-_seed_notes_or_todos_stub wiki/todos/year.md          '[todo] year-priority'  todo-list
-_seed_notes_or_todos_stub wiki/todos/unfiled.md       '[todo] unfiled (priority pending)' todo-list
+# Hub pages for the notes / todos surfaces. Bucket stubs carry a
+# `Part of [[notes|todos]].` wikilink that targets these pages, which
+# keeps them connected in Obsidian's graph view instead of floating
+# as an isolated cluster of empty nodes.
+if [ ! -f wiki/notes.md ] && [ -f "$TEMPLATE_DIR/notes-overview.md" ]; then
+    cp "$TEMPLATE_DIR/notes-overview.md" wiki/notes.md
+    echo "  Seeded wiki/notes.md (notes surface overview)"
+fi
+if [ ! -f wiki/todos.md ] && [ -f "$TEMPLATE_DIR/todos-overview.md" ]; then
+    cp "$TEMPLATE_DIR/todos-overview.md" wiki/todos.md
+    echo "  Seeded wiki/todos.md (todos surface overview)"
+fi
+_seed_notes_or_todos_stub wiki/todos/day.md           '[todo] day-priority'   todo-list todos
+_seed_notes_or_todos_stub wiki/todos/month.md         '[todo] month-priority' todo-list todos
+_seed_notes_or_todos_stub wiki/todos/year.md          '[todo] year-priority'  todo-list todos
+_seed_notes_or_todos_stub wiki/todos/unfiled.md       '[todo] unfiled (priority pending)' todo-list todos
 
 # Copy slash commands into the workspace's .claude/commands/ directory.
 # These register /day, /month, /year, /todo, /note for Claude Code
@@ -732,6 +746,10 @@ if [ -d wiki/.git ]; then
         # created before the mechanical-wikilink rule was wired in.
         # Idempotent no-op once all figure pages carry a wikilink.
         uv run python3 "$SCRIPT_DIR/sweep.py" backfill-figure-sourcelinks wiki >/dev/null 2>&1 || true
+        # Retrofit `Part of [[notes|todos]].` hub wikilinks into
+        # bucket pages seeded before the hub convention existed, so
+        # they show as connected in Obsidian's graph view. Idempotent.
+        uv run python3 "$SCRIPT_DIR/sweep.py" backfill-bucket-hubs wiki >/dev/null 2>&1 || true
         # One-shot migration for vault files ingested before the
         # local_ingest suffix-doubling fix (foo.pdf.pdf → foo.pdf).
         # Idempotent no-op once applied.

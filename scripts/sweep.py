@@ -1000,6 +1000,49 @@ def cmd_backfill_figure_sourcelinks(wiki_dir: Path):
     }, indent=2))
 
 
+def cmd_backfill_bucket_hubs(wiki_dir: Path):
+    """Inject `Part of [[notes]].` / `Part of [[todos]].` into bucket
+    pages seeded before the hub convention existed. Without this link
+    the bucket stubs (new.md, for-attention.md, day.md, etc.) float as
+    an isolated cluster in Obsidian's graph view whenever they're empty.
+
+    Idempotent: pages already containing the hub wikilink are skipped.
+    """
+    targets = [
+        ("notes/new.md", "notes"),
+        ("notes/for-attention.md", "notes"),
+        ("todos/day.md", "todos"),
+        ("todos/month.md", "todos"),
+        ("todos/year.md", "todos"),
+        ("todos/unfiled.md", "todos"),
+    ]
+    touched = []
+    for rel, hub in targets:
+        p = wiki_dir / rel
+        if not p.exists():
+            continue
+        text = p.read_text()
+        fm, body = read_frontmatter(text)
+        if not fm:
+            continue
+        if f"[[{hub}]]" in body:
+            continue
+        # Insert just after the closing `---\n` of the frontmatter.
+        fm_end = text.find("\n---\n", 3)
+        if fm_end < 0:
+            continue
+        insert_at = fm_end + len("\n---\n")
+        new_text = text[:insert_at] + f"\nPart of [[{hub}]].\n" + text[insert_at:]
+        if new_text != text:
+            p.write_text(new_text)
+            touched.append(str(p.relative_to(wiki_dir)))
+    print(json.dumps({
+        "ok": True,
+        "touched": len(touched),
+        "paths": touched,
+    }, indent=2))
+
+
 def cmd_migrate_asset_location(wiki_dir: Path):
     """One-shot migration of figure PNGs from the workspace-level
     `assets/figures/` directory into `wiki/figures/_assets/`.
@@ -2138,7 +2181,7 @@ def main():
         "fix-spaced-wikilinks", "fix-orphan-root-files",
         "fix-frontmatter-quotes", "dedupe-self-citations",
         "convert-image-embeds", "migrate-asset-location",
-        "backfill-figure-sourcelinks",
+        "backfill-figure-sourcelinks", "backfill-bucket-hubs",
         "sync-todos", "sync-notes", "normalize-vault-suffixes",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
@@ -2195,6 +2238,8 @@ def main():
         cmd_migrate_asset_location(wiki_dir)
     elif args.command == "backfill-figure-sourcelinks":
         cmd_backfill_figure_sourcelinks(wiki_dir)
+    elif args.command == "backfill-bucket-hubs":
+        cmd_backfill_bucket_hubs(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":
