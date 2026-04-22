@@ -317,17 +317,34 @@ refresh_template_md() {
 refresh_template_md "$TEMPLATE_DIR/schema.md" ".curator/schema.md"
 refresh_template_md "$TEMPLATE_DIR/prompts.md" ".curator/prompts.md"
 
-# config.json: copy if missing; leave user-tuned values alone otherwise.
-# Schema additions (new config keys) print a warning rather than overwriting.
+# config.json: copy if missing; otherwise merge any keys the template
+# has added since the user's config was last written. Additive only —
+# never overwrites a value the user has tuned, and descends into nested
+# dicts (e.g. the `caveman` block) so added sub-keys land too.
 if [ ! -f ".curator/config.json" ]; then
     cp "$TEMPLATE_DIR/config.json" ".curator/config.json"
     echo "  Created .curator/config.json"
-elif ! cmp -s "$TEMPLATE_DIR/config.json" ".curator/config.json"; then
-    echo ""
-    echo "  NOTE: .curator/config.json differs from the skill template."
-    echo "  Not auto-refreshing (preserves your worker_model/parallel_workers/"
-    echo "  saturation-threshold tuning). Diff against $TEMPLATE_DIR/config.json"
-    echo "  to pick up any new keys."
+else
+    uv run --no-project python3 - "$TEMPLATE_DIR/config.json" .curator/config.json <<'PY'
+import json, sys
+from pathlib import Path
+template = json.load(open(sys.argv[1]))
+existing_path = Path(sys.argv[2])
+existing = json.load(open(existing_path))
+added = []
+def merge(tmpl, cur, prefix=""):
+    for k, v in tmpl.items():
+        qname = f"{prefix}{k}"
+        if k not in cur:
+            cur[k] = v
+            added.append(qname)
+        elif isinstance(v, dict) and isinstance(cur[k], dict):
+            merge(v, cur[k], qname + ".")
+merge(template, existing)
+if added:
+    existing_path.write_text(json.dumps(existing, indent=2) + "\n")
+    print(f"  Merged {len(added)} new key(s) from template: {', '.join(added)}")
+PY
 fi
 # Drop the config.example.json alongside so users can see cross-vendor
 # variants (Anthropic default, Gemini, OpenAI, Ollama fully-local, mixed).
