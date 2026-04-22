@@ -55,8 +55,8 @@ Zooming into the curator:
       │              │              │               │
       │ vault/       │ vault.db     │ graph.kuzu    │
       │ wiki/ 8 page │  FTS5 + vec  │  WikiLink     │
-      │   types      │ tables.db    │  Cites        │
-      │ assets/      │  class rows  │  DataRef      │
+      │   types +    │ tables.db    │  Cites        │
+      │   _assets    │  class rows  │  DataRef      │
       │ .curator/log │              │  Depicts      │
       └──────┬───────┴──────────────┴───────────────┘
              │ feedback: epoch_summary · graph queries · FTS5
@@ -106,6 +106,8 @@ git remote add origin git@github.com:<you>/<repo>.git
 git push -u origin main
 ```
 
+**Updating the skill without exiting the session.** For git-clone installs, just ask the agent to "update the skill". It runs `scripts/update.sh`, which fetches the upstream and prints release notes; once you confirm, it auto-commits any in-progress wiki edits with a canned `wip: auto-commit before skill update` message, fast-forward-pulls the skill, and runs `setup.sh` to apply any migrations. Npx-skills installs aren't git repos, so those users update via `npx skills update benjsmith/curiosity-engine` and then rerun `setup.sh` against the workspace.
+
 ### Running in other coding-agent CLIs
 
 Same `setup.sh` works; `.claude/settings.json` is skipped or ignored by non-Claude-Code CLIs. Point your CLI at the cloned skill folder and drive it with the same "set up a knowledge base", "add to the vault", "curate" prompts.
@@ -143,8 +145,8 @@ See `template/config.example.json` for working variants:
 
 ### Deployment notes
 
-- **Disk footprint.** Rough guide: `vault/` ≈ the size of your source PDFs (~50 MB per 100 academic papers). `vault.db` adds ~10–30% for FTS5 indexing. Semantic embeddings (opt-in) add ~0.5 MB per indexed line — ~200 MB for a 100-source vault. `assets/figures/` at 150 DPI is ~0.3–0.6 MB per rendered page; figure extraction typically renders 5–20 pages per source. Budget a few GB for a 100-source knowledge base with semantic search + figures on.
-- **Backup & restore.** `wiki/` is a git repo — push it wherever you back up code. `vault/` holds your raw sources — back it up like any data folder; re-ingest is expensive (it's what you pay the curator to do). `vault.db`, `graph.kuzu`, and `assets/figures/` are all derived and auto-regenerate from vault + wiki on the next `setup.sh` / `graph.py rebuild` / `figures.py regen` run. The one non-regeneratable store is `.curator/tables.db` (class-entity row data is source-of-truth in SQLite, not derivable from git-tracked files) — back it up separately if you've used class tables.
+- **Disk footprint.** Rough guide: `vault/` ≈ the size of your source PDFs (~50 MB per 100 academic papers). `vault.db` adds ~10–30% for FTS5 indexing. Semantic embeddings (opt-in) add ~0.5 MB per indexed line — ~200 MB for a 100-source vault. `wiki/figures/_assets/` at 150 DPI is ~0.3–0.6 MB per rendered page; figure extraction typically renders 5–20 pages per source. Budget a few GB for a 100-source knowledge base with semantic search + figures on.
+- **Backup & restore.** `wiki/` is a git repo — push it wherever you back up code. `vault/` holds your raw sources — back it up like any data folder; re-ingest is expensive (it's what you pay the curator to do). `vault.db`, `graph.kuzu`, and `wiki/figures/_assets/` are all derived and auto-regenerate from vault + wiki on the next `setup.sh` / `graph.py rebuild` / `figures.py regen` run (the asset folder is gitignored inside the wiki repo for the same reason). The one non-regeneratable store is `.curator/tables.db` (class-entity row data is source-of-truth in SQLite, not derivable from git-tracked files) — back it up separately if you've used class tables.
 - **Rendering outside Obsidian.** Wiki figure and summary-table pages use Obsidian's `![[asset.png]]` transclusion syntax, which renders inline in Obsidian but shows as literal text in GitHub and generic markdown viewers. The underlying data is still there; it just looks worse until opened in Obsidian.
 - **No-network / air-gapped install.** `setup.sh` uses `curl … | sh` to install `uv` when missing. For environments where that's blocked, pre-install uv via `pip install uv` first and re-run `setup.sh` — it'll detect the existing uv and skip the curl step. Same applies to pypdfium2 / Pillow / kuzu / pyyaml — pre-populate a PyPI mirror and `pip install` them; setup.sh uses `uv pip install` which respects `UV_INDEX_URL` / `PIP_INDEX_URL` for internal mirrors.
 
@@ -178,7 +180,7 @@ For the full design rationale (why not RAG, how the ratchet works, where the ski
 
 **Obsidian (default, richest view).** `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian → **Open folder as vault** → pick `<your-workspace>/wiki`. Backlinks and the graph view light up immediately, no plugins. Figure asset PNGs live at `wiki/figures/_assets/` (inside the vault scope, so inline image embeds render without reconfiguration). The `_assets/` folder is gitignored; Obsidian's graph view by default hides image nodes, but if you've turned "Show attachments" on you can scope them out with a `-path:_assets` filter. Leave Claude Code running in the workspace root; Obsidian picks up new pages as the curator writes them. Treat Obsidian as a read-mostly view — manual edits outside a `git -C wiki commit` won't be seen by the curator until the next operation reads the page.
 
-**VS Code + Foam (enterprise-friendly alternative).** If Obsidian isn't installable, open the workspace in VS Code and add the **Foam** extension (free, open-source, typically on enterprise marketplaces). Foam renders `[[wikilinks]]` as clickable links, adds a backlinks panel, and provides a lightweight graph view — the core of what Obsidian gives you. Toggle `wiki_viewer_mode: "vscode"` in `.curator/config.json` and re-run setup.sh; a one-time sweep converts figure-page image embeds from Obsidian-transclusion syntax (`![[../assets/figures/foo.png]]`) to standard markdown (`![foo.png](../assets/figures/foo.png)`) so VS Code's built-in preview renders them inline. Switch back to `"obsidian"` and re-run setup.sh to convert them back.
+**VS Code + Foam (enterprise-friendly alternative).** If Obsidian isn't installable, open the workspace in VS Code and add the **Foam** extension (free, open-source, typically on enterprise marketplaces). Foam renders `[[wikilinks]]` as clickable links, adds a backlinks panel, and provides a lightweight graph view — the core of what Obsidian gives you. Toggle `wiki_viewer_mode: "vscode"` in `.curator/config.json` and re-run setup.sh; a one-time sweep converts figure-page image embeds from Obsidian-transclusion syntax (`![[figures/_assets/foo.png]]`) to standard markdown (`![foo.png](_assets/foo.png)`) so VS Code's built-in preview renders them inline. Switch back to `"obsidian"` and re-run setup.sh to convert them back.
 
 **Quartz (static-site view, installed by setup.sh).** For a browser-based graph + backlinks experience without any editor extension, setup.sh can install [Quartz](https://quartz.jzhao.xyz/) — a Node-based static-site generator purpose-built for Obsidian-style wikis. Run `bash <skill_path>/scripts/quartz.sh serve` to build and host the wiki on `http://localhost:8080`; the curator's writes land in the site on the next rebuild. Install prompts on first setup.sh run (in interactive mode) or installs silently (in non-interactive mode) — requires Node.js, which setup.sh will install user-locally via nvm if missing.
 
