@@ -808,6 +808,50 @@ def cmd_fix_frontmatter_quotes(wiki_dir: Path):
                         "paths": touched[:20]}, indent=2))
 
 
+def cmd_normalize_vault_suffixes(wiki_dir: Path):
+    """Rename any vault/<name>.pdf.pdf binary to <name>.pdf and update
+    its paired extraction's `kept_as:` frontmatter field.
+
+    One-shot migration for workspaces ingested before the local_ingest
+    suffix-doubling fix. Idempotent — vault files that are already
+    single-suffix pass through untouched.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    if not vault_dir.is_dir():
+        print(json.dumps({"ok": True, "renamed": 0, "note": "no vault/"}))
+        return
+    renamed = []
+    extraction_fm_updated = []
+    for p in sorted(vault_dir.iterdir()):
+        if not p.is_file():
+            continue
+        # Detect `<stem>.<ext>.<ext>` where both extensions match.
+        stem, ext = p.stem, p.suffix.lstrip(".")
+        stem_ext = Path(stem).suffix.lstrip(".")
+        if not ext or ext.lower() != stem_ext.lower():
+            continue
+        target = vault_dir / p.stem
+        if target.exists():
+            continue
+        p.rename(target)
+        renamed.append({"from": p.name, "to": target.name})
+        # Find the paired extraction and patch `kept_as:`.
+        ext_md = vault_dir / f"{p.stem}.extracted.md"
+        if ext_md.exists():
+            text = ext_md.read_text()
+            old_line = f"kept_as: {p.name}"
+            new_line = f"kept_as: {target.name}"
+            if old_line in text:
+                ext_md.write_text(text.replace(old_line, new_line, 1))
+                extraction_fm_updated.append(ext_md.name)
+    print(json.dumps({
+        "ok": True,
+        "renamed": len(renamed),
+        "extraction_fm_updated": len(extraction_fm_updated),
+        "rename_pairs": renamed[:20],
+    }, indent=2))
+
+
 _OBSIDIAN_EMBED_RE = re.compile(r"!\[\[([^\]\n]+)\]\]")
 _VSCODE_EMBED_RE = re.compile(r"!\[([^\]\n]*)\]\(([^)\n]+)\)")
 _ASSET_PATH_HINT = re.compile(r"assets/figures/")
@@ -1871,7 +1915,7 @@ def main():
         "fix-spaced-wikilinks", "fix-orphan-root-files",
         "fix-frontmatter-quotes", "dedupe-self-citations",
         "convert-image-embeds",
-        "sync-todos", "sync-notes",
+        "sync-todos", "sync-notes", "normalize-vault-suffixes",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
         "evidence-candidates", "figure-candidates",
@@ -1921,6 +1965,8 @@ def main():
         cmd_sync_todos(wiki_dir)
     elif args.command == "sync-notes":
         cmd_sync_notes(wiki_dir)
+    elif args.command == "normalize-vault-suffixes":
+        cmd_normalize_vault_suffixes(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":

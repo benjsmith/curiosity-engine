@@ -706,6 +706,10 @@ if [ -d wiki/.git ]; then
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" dedupe-self-citations wiki >/dev/null
+        # One-shot migration for vault files ingested before the
+        # local_ingest suffix-doubling fix (foo.pdf.pdf → foo.pdf).
+        # Idempotent no-op once applied.
+        uv run python3 "$SCRIPT_DIR/sweep.py" normalize-vault-suffixes wiki >/dev/null 2>&1 || true
         # Sync the canonical todos class-table schema (idempotent — creates
         # the table on first run, re-hashes on schema change) and drain any
         # user-authored todos / notes into their structured homes.

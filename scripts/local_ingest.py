@@ -184,7 +184,19 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
         base = f"{ts}-local-{slug}"
         raw_ext = path.suffix.lstrip(".") or "txt"
 
-        kept_path = VAULT_DIR / f"{base}.{raw_ext}"
+        # `slugify` preserves the extension in the slug (so foo.pdf
+        # slugifies to "foo.pdf"), which means `base` already ends
+        # with ".{raw_ext}" — re-appending the extension here would
+        # produce e.g. `foo.pdf.pdf`. Detect that and skip the second
+        # append so the kept binary's filename matches what downstream
+        # callers (figures.py, sweep.py) expect. The paired extraction
+        # keeps its `.pdf.extracted.md` suffix because that's the
+        # semantic name ("the .extracted.md of foo.pdf"), not a
+        # doubled extension.
+        if base.lower().endswith(f".{raw_ext.lower()}"):
+            kept_path = VAULT_DIR / base
+        else:
+            kept_path = VAULT_DIR / f"{base}.{raw_ext}"
         if is_drop:
             shutil.move(str(path), str(kept_path))
         else:
