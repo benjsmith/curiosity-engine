@@ -250,17 +250,25 @@ if [ -d "$TEMPLATE_DIR/claude-commands" ]; then
     done
 fi
 
-# Workspace-level assets directory. Sits alongside vault/ and wiki/.
-# Deliberately OUTSIDE the wiki git scope — figure binaries are not
-# tracked; figures.py regenerates them from vault sources on demand.
-# If the workspace root itself is a git repo (uncommon — the wiki repo
-# is the usual setup), add /assets/ to its .gitignore so the binaries
-# don't leak into that repo either.
-mkdir -p assets/figures
-touch assets/.gitkeep assets/figures/.gitkeep
-if [ -d .git ] && ! grep -qE "^/?assets(/|$)" .gitignore 2>/dev/null; then
-    printf '\n# Figure assets — regenerated from vault sources by figures.py\n/assets/\n' >> .gitignore
-    echo "  Added /assets/ to workspace-root .gitignore"
+# Figure asset PNGs live inside the wiki at wiki/figures/_assets/ so
+# they're inside the Obsidian vault + Quartz content dir scope (clean
+# inline rendering in both). The folder is gitignored in the wiki
+# repo because the binaries are regenerable from vault PDFs via
+# figures.py regen — committing them would bloat the repo for no
+# portability gain. The `_` prefix is a widely-recognised "supporting
+# files, not content" convention that also makes it easy for users to
+# hide the folder from Obsidian's graph view with a `-path:_assets`
+# filter.
+mkdir -p wiki/figures/_assets
+_wiki_gitignore="wiki/.gitignore"
+_gitignore_line="/figures/_assets/"
+if [ ! -f "$_wiki_gitignore" ] || ! grep -qE "^/?figures/_assets(/|$)" "$_wiki_gitignore" 2>/dev/null; then
+    if [ ! -f "$_wiki_gitignore" ]; then
+        printf '# Figure asset PNGs — regenerated from vault PDFs by figures.py\n%s\n' "$_gitignore_line" > "$_wiki_gitignore"
+    else
+        printf '\n# Figure asset PNGs — regenerated from vault PDFs by figures.py\n%s\n' "$_gitignore_line" >> "$_wiki_gitignore"
+    fi
+    echo "  Added $_gitignore_line to wiki/.gitignore"
 fi
 
 # Refresh markdown templates that drift as the skill evolves. The skill
@@ -706,6 +714,12 @@ if [ -d wiki/.git ]; then
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" dedupe-self-citations wiki >/dev/null
+        # One-shot migration for workspaces whose figure assets still
+        # live under workspace/assets/figures/. Moves them into
+        # wiki/figures/_assets/, rewrites embed paths to match the
+        # configured viewer mode, removes the old empty dirs, adds
+        # the new gitignore line. Idempotent no-op once applied.
+        uv run python3 "$SCRIPT_DIR/sweep.py" migrate-asset-location wiki >/dev/null 2>&1 || true
         # One-shot migration for vault files ingested before the
         # local_ingest suffix-doubling fix (foo.pdf.pdf → foo.pdf).
         # Idempotent no-op once applied.

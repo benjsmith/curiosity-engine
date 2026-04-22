@@ -120,7 +120,7 @@ This creates the full project structure, initializes git in the wiki, creates th
 | graph | `.curator/graph.kuzu` | kuzu property graph | WikiLink / Cites / typed-data-reference edges |
 | class tables | `.curator/tables.db` | SQLite standard tables | entity-class instance data with schema from entity pages |
 
-**Assets** (`assets/figures/`) — Binary files (PNGs) for `wiki/figures/*.md` pages. Sits alongside `vault/` and `wiki/` at workspace root; NOT git-tracked. Figure pages record `source_path` + `source_page` in frontmatter so `figures.py regen` rebuilds any missing asset deterministically from its vault source. A fresh clone re-materialises the assets folder on the first setup.sh run.
+**Figure asset PNGs** (`wiki/figures/_assets/`) — Binary files for `wiki/figures/*.md` pages. Lives inside the wiki at a `_`-prefixed subfolder (the `_` signals "supporting files, not content") so assets are inside the Obsidian vault scope + Quartz content directory — inline rendering works in both without any reconfiguration. NOT git-tracked: `wiki/.gitignore` excludes `/figures/_assets/` because the binaries are regenerable from vault PDFs via `figures.py regen`. A fresh clone re-materialises the folder on the first setup.sh run.
 
 Read `.curator/schema.md` before any operation.
 
@@ -155,7 +155,7 @@ Read `.curator/schema.md` before any operation.
 - **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
 - **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
 - **figure_extract_min_citers** — minimum `distinct_citers` on a `figure-candidates` entry for figure-extract mode to fire (default 2). Raise to 3+ if the wiki has many low-demand PDF sources you don't want auto-extracted. Set to 0 to disable figure-extract mode entirely.
-- **wiki_viewer_mode** — `"obsidian"` (default) or `"vscode"`. Controls the format of image-embed syntax in figure pages. Obsidian mode uses `![[../assets/figures/foo.png]]` (Obsidian transclusion, renders inline only in Obsidian). VS Code mode uses `![foo.png](../assets/figures/foo.png)` (standard markdown, renders in VS Code's built-in preview, GitHub web UI, and most other renderers). Setup.sh's migration pass reads this value and runs `sweep.py convert-image-embeds --target <mode>` to align figure pages with the selected mode. Idempotent — toggling back switches the syntax back.
+- **wiki_viewer_mode** — `"obsidian"` (default) or `"vscode"`. Controls the format of image-embed syntax in figure pages. Obsidian mode uses `![[<filename>.png]]` (filename-resolution — our unique timestamp-prefixed asset names make this reliable; renders inline in Obsidian and Quartz). VS Code mode uses `![<filename>.png](_assets/<filename>.png)` (standard markdown with a relative path from the figure page, renders in VS Code's built-in preview, GitHub web UI, and most other renderers). Assets live at `wiki/figures/_assets/` in either mode. Setup.sh's migration pass reads this value and runs `sweep.py convert-image-embeds --target <mode>` to align figure pages with the selected mode. Idempotent — toggling back switches the syntax back.
 - **spot_audit_interval** — every Nth wave (default 20), Phase 3 dispatches a single-page adversarial spot auditor against a random accepted edit. Set to 0 to disable. Catches subtle source misrepresentation the praise-mode batch reviewer doesn't flag.
 - **embedding_enabled** / **embedding_model** — opt-in semantic vault search. When `true`, `vault_index.py` computes an embedding alongside every FTS5 row (stored in sqlite-vec), and `vault_search.py --mode hybrid` merges FTS5 + cosine rankings via RRF. Default model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim, ~80MB). Install the deps (`uv pip install sentence-transformers sqlite-vec`) before flipping `embedding_enabled` to true. Setup prompts for this at bootstrap time. When enabled, `sweep.py sync-notes` also runs semantic dedup on notes (see below).
 - **notes_semantic_dedup_threshold** — cosine-similarity floor for `sync-notes` to merge a new note onto an existing note's ID rather than mint a fresh one (default 0.92). Active only when `embedding_enabled: true`. Lower values (e.g. 0.85) catch more fuzzy dupes at the cost of occasionally merging distinct-but-related thoughts; higher (0.95+) is stricter. Two-stage pipeline: content-hash first (free, catches verbatim dupes), embedding comparison only on miss.
@@ -597,7 +597,7 @@ When to produce one: a comparison table across sources ("benchmark X across 5 pa
 
 ### Figures (`wiki/figures/`)
 
-Captioned visual artefacts — extracted figures from source PDFs or plots/diagrams created during analyses. Each figure is a first-class wiki page wrapping a binary asset that lives in `assets/figures/` (workspace-level, NOT git-tracked). The frontmatter carries enough provenance to regenerate the asset deterministically from its source.
+Captioned visual artefacts — extracted figures from source PDFs or plots/diagrams created during analyses. Each figure is a first-class wiki page wrapping a binary asset that lives at `wiki/figures/_assets/<filename>.png` (inside the wiki, `_`-prefixed subfolder to signal supporting-files, gitignored because regenerable). The frontmatter carries enough provenance to regenerate the asset deterministically from its source.
 
 ```markdown
 ---
@@ -606,7 +606,7 @@ type: figure
 created: 2026-04-21
 updated: 2026-04-21
 origin: extracted                 # extracted | created
-asset: attention-p3.png           # filename under assets/figures/
+asset: attention-p3.png           # basename; file at wiki/figures/_assets/<asset>
 source_path: vault/papers/attention.pdf
 source_page: 3
 extraction_method: pdf_page_render
@@ -615,10 +615,12 @@ sources: [papers/attention.extracted.md]
 relates_to: [concepts/attention-mechanism.md, evidence/attention-layer-6.md]
 ---
 
-![[../assets/figures/attention-p3.png]]
+![[attention-p3.png]]
 
 *[[attention-mechanism|Self-attention]] weights at layer 6. `[CLS]` focuses on subject-noun positions (vault:papers/attention.extracted.md).*
 ```
+
+The Obsidian-form embed `![[attention-p3.png]]` uses filename-resolution — Obsidian finds the asset at `wiki/figures/_assets/` because the timestamp-prefixed filenames are unique across the vault. VS Code mode (via `wiki_viewer_mode: "vscode"`) rewrites to `![attention-p3.png](_assets/attention-p3.png)` — a relative path from the figure page that renders in VS Code's built-in markdown preview, Quartz, GitHub, and other standard renderers.
 
 Two origins:
 

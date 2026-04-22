@@ -65,20 +65,25 @@ from naming import read_frontmatter  # noqa: E402
 
 
 DEFAULT_DPI = 150
-ASSET_SUBDIR = "figures"
 FIGURE_SUBDIR = "figures"
+ASSETS_SUBDIR = "_assets"
 
 
 def _workspace_root(wiki_dir: Path) -> Path:
     """Given a wiki/ path, return its parent workspace root.
 
-    Used to resolve assets/ and vault/ siblings of the wiki.
+    Used to resolve vault/ sibling of the wiki (for figure regeneration
+    from source PDFs).
     """
     return wiki_dir.resolve().parent
 
 
 def _assets_dir(wiki_dir: Path) -> Path:
-    return _workspace_root(wiki_dir) / "assets" / ASSET_SUBDIR
+    """Figure asset PNGs live inside the wiki at `figures/_assets/` so
+    they're inside the Obsidian vault + Quartz content dir scope. The
+    folder is gitignored (assets are regenerable via figures.py regen).
+    """
+    return wiki_dir.resolve() / FIGURE_SUBDIR / ASSETS_SUBDIR
 
 
 def _default_asset_name(source_path: Path, page: int) -> str:

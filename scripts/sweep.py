@@ -854,21 +854,40 @@ def cmd_normalize_vault_suffixes(wiki_dir: Path):
 
 _OBSIDIAN_EMBED_RE = re.compile(r"!\[\[([^\]\n]+)\]\]")
 _VSCODE_EMBED_RE = re.compile(r"!\[([^\]\n]*)\]\(([^)\n]+)\)")
-_ASSET_PATH_HINT = re.compile(r"assets/figures/")
+# Recognises both the legacy path (pre-migration, workspace-level
+# assets/ folder) and the current path (wiki/figures/_assets/). Either
+# form identifies the embed as a figure asset worth touching.
+_FIGURE_ASSET_PATH_HINT = re.compile(r"(?:\.\./)?assets/figures/|(?:^|/)_assets/")
+_FIGURE_ASSET_BARE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.png$")
+
+
+def _is_figure_asset_ref(path: str) -> bool:
+    """True iff the given embed path plausibly points at a figure
+    asset — either via the old `../assets/figures/` path or the new
+    `_assets/` folder, or is just a bare `.png` filename appearing
+    inside a figures/ page (Obsidian filename-resolution form).
+    """
+    if _FIGURE_ASSET_PATH_HINT.search(path):
+        return True
+    return bool(_FIGURE_ASSET_BARE_RE.match(path))
 
 
 def cmd_convert_image_embeds(wiki_dir: Path, target: str):
-    """Convert figure-page image embeds between Obsidian and VS Code.
+    """Convert figure-page image embeds between Obsidian and VS Code
+    renderer-friendly forms.
 
-    Obsidian: `![[../assets/figures/attention-p3.png]]`
-    VS Code:  `![attention-p3.png](../assets/figures/attention-p3.png)`
+    Obsidian: `![[<basename>.png]]` (Obsidian resolves by filename;
+             our timestamp-prefixed asset names are unique across the
+             vault, so this form works without a path.)
+    VS Code:  `![<basename>.png](_assets/<basename>.png)` (standard
+             markdown, relative to the figure page in wiki/figures/).
 
-    Scope is limited to embeds whose path contains `assets/figures/` —
-    the canonical location for figure-asset PNGs — so unrelated
-    `![...](...)` or `![[...]]` uses anywhere in the wiki are left
-    untouched. Idempotent: re-running with the current target is a
-    no-op. Works on every `.md` under `wiki/` so embedded figures on
-    evidence / analysis / concept pages also migrate.
+    Scope is limited to embeds whose path hints at a figure asset
+    (old `assets/figures/` path, new `_assets/` path, or a bare
+    `*.png` filename inside a wiki/figures/*.md page). Unrelated
+    `![...](...)` or `![[...]]` uses anywhere else in the wiki are
+    untouched. Idempotent: re-running with the current target is
+    a no-op.
     """
     if target not in ("obsidian", "vscode"):
         print(json.dumps({"ok": False, "error":
@@ -877,25 +896,160 @@ def cmd_convert_image_embeds(wiki_dir: Path, target: str):
     touched = []
     for p in wiki_pages(wiki_dir):
         text = p.read_text()
+        in_figures_dir = p.parent.name == "figures"
         if target == "vscode":
             def obs_to_vs(m):
                 path = m.group(1)
-                if not _ASSET_PATH_HINT.search(path):
+                if not _is_figure_asset_ref(path):
                     return m.group(0)
-                return f"![{Path(path).name}]({path})"
+                basename = Path(path).name
+                return f"![{basename}](_assets/{basename})"
             new_text = _OBSIDIAN_EMBED_RE.sub(obs_to_vs, text)
         else:  # obsidian
             def vs_to_obs(m):
                 path = m.group(2)
-                if not _ASSET_PATH_HINT.search(path):
+                if not _is_figure_asset_ref(path):
                     return m.group(0)
-                return f"![[{path}]]"
+                basename = Path(path).name
+                return f"![[{basename}]]"
             new_text = _VSCODE_EMBED_RE.sub(vs_to_obs, text)
+            # Also collapse any residual path-form Obsidian embeds to
+            # filename-only so that a mixed state converges.
+            def obs_path_to_filename(m):
+                path = m.group(1)
+                if not _is_figure_asset_ref(path):
+                    return m.group(0)
+                basename = Path(path).name
+                if basename == path:
+                    return m.group(0)
+                return f"![[{basename}]]"
+            new_text = _OBSIDIAN_EMBED_RE.sub(obs_path_to_filename, new_text)
         if new_text != text:
             p.write_text(new_text)
             touched.append(str(p.relative_to(wiki_dir)))
     print(json.dumps({"ok": True, "target": target, "touched": len(touched),
                         "paths": touched[:20]}, indent=2))
+
+
+def cmd_migrate_asset_location(wiki_dir: Path):
+    """One-shot migration of figure PNGs from the workspace-level
+    `assets/figures/` directory into `wiki/figures/_assets/`.
+
+    Steps:
+      1. Move every *.png under workspace/assets/figures/ to
+         wiki/figures/_assets/ (create directory if missing).
+         Skips any file whose target name already exists (never
+         clobbers).
+      2. Rewrite figure-page embeds from the old
+         `![[../assets/figures/X]]` or `![alt](../assets/figures/X)`
+         form to the new form appropriate to the configured
+         wiki_viewer_mode (obsidian → `![[X]]`, vscode →
+         `![X](_assets/X)`).
+      3. Remove the now-empty workspace/assets/figures/ and
+         workspace/assets/ directories.
+      4. Add `/figures/_assets/` to wiki/.gitignore if not already
+         present.
+
+    Idempotent — second run is a no-op.
+    """
+    from datetime import date as _date
+    workspace = wiki_dir.parent
+    old_assets = workspace / "assets" / "figures"
+    new_assets = wiki_dir / "figures" / "_assets"
+
+    # Determine viewer mode from config (default obsidian).
+    cfg_path = workspace / ".curator" / "config.json"
+    viewer_mode = "obsidian"
+    try:
+        cfg = json.loads(cfg_path.read_text())
+        viewer_mode = cfg.get("wiki_viewer_mode", "obsidian")
+    except Exception:
+        pass
+
+    new_assets.mkdir(parents=True, exist_ok=True)
+
+    moved = []
+    if old_assets.is_dir():
+        for png in sorted(old_assets.glob("*")):
+            if not png.is_file():
+                continue
+            target = new_assets / png.name
+            if target.exists():
+                continue
+            png.rename(target)
+            moved.append(png.name)
+
+    # Rewrite embeds in ALL wiki pages (not just figures/), since
+    # evidence/analysis pages could also reference figure assets.
+    _OLD_OBS_PATH_RE = re.compile(r"!\[\[((?:\.\./)?assets/figures/[^\]\n]+)\]\]")
+    _OLD_VSCODE_PATH_RE = re.compile(r"!\[([^\]\n]*)\]\(((?:\.\./)?assets/figures/[^)\n]+)\)")
+    rewrote = []
+    for p in wiki_pages(wiki_dir):
+        text = p.read_text()
+
+        def obs_old(m):
+            basename = Path(m.group(1)).name
+            if viewer_mode == "vscode":
+                return f"![{basename}](_assets/{basename})"
+            return f"![[{basename}]]"
+
+        def vs_old(m):
+            basename = Path(m.group(2)).name
+            if viewer_mode == "vscode":
+                return f"![{basename}](_assets/{basename})"
+            return f"![[{basename}]]"
+
+        new_text = _OLD_OBS_PATH_RE.sub(obs_old, text)
+        new_text = _OLD_VSCODE_PATH_RE.sub(vs_old, new_text)
+        if new_text != text:
+            p.write_text(new_text)
+            rewrote.append(str(p.relative_to(wiki_dir)))
+
+    # Clean up empty legacy directories.
+    removed_dirs = []
+    if old_assets.is_dir():
+        try:
+            old_assets.rmdir()   # only succeeds if empty
+            removed_dirs.append(str(old_assets.relative_to(workspace)))
+        except OSError:
+            pass
+    _legacy_parent = workspace / "assets"
+    if _legacy_parent.is_dir():
+        # Allow empty OR containing only .gitkeep.
+        kids = [x for x in _legacy_parent.iterdir() if x.name != ".gitkeep"]
+        if not kids:
+            for stale in _legacy_parent.glob(".gitkeep"):
+                stale.unlink()
+            try:
+                _legacy_parent.rmdir()
+                removed_dirs.append(str(_legacy_parent.relative_to(workspace)))
+            except OSError:
+                pass
+
+    # Update wiki/.gitignore with the new asset path.
+    gi = wiki_dir / ".gitignore"
+    gitignore_updated = False
+    line = "/figures/_assets/"
+    if not gi.exists():
+        gi.write_text(f"# Figure asset PNGs — regenerated from vault PDFs\n{line}\n")
+        gitignore_updated = True
+    else:
+        existing = gi.read_text()
+        if line not in existing:
+            with gi.open("a") as f:
+                if not existing.endswith("\n"):
+                    f.write("\n")
+                f.write(f"\n# Figure asset PNGs — regenerated from vault PDFs\n{line}\n")
+            gitignore_updated = True
+
+    print(json.dumps({
+        "ok": True,
+        "moved_pngs": len(moved),
+        "rewrote_figures": len(rewrote),
+        "removed_empty_dirs": removed_dirs,
+        "gitignore_updated": gitignore_updated,
+        "viewer_mode_used": viewer_mode,
+    }, indent=2))
 
 
 def cmd_dedupe_self_citations(wiki_dir: Path):
@@ -1914,7 +2068,7 @@ def main():
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
         "fix-spaced-wikilinks", "fix-orphan-root-files",
         "fix-frontmatter-quotes", "dedupe-self-citations",
-        "convert-image-embeds",
+        "convert-image-embeds", "migrate-asset-location",
         "sync-todos", "sync-notes", "normalize-vault-suffixes",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
@@ -1967,6 +2121,8 @@ def main():
         cmd_sync_notes(wiki_dir)
     elif args.command == "normalize-vault-suffixes":
         cmd_normalize_vault_suffixes(wiki_dir)
+    elif args.command == "migrate-asset-location":
+        cmd_migrate_asset_location(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":
