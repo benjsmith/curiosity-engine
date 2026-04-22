@@ -689,6 +689,14 @@ if [ -d wiki/.git ]; then
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" dedupe-self-citations wiki >/dev/null
+        # Sync the canonical todos class-table schema (idempotent — creates
+        # the table on first run, re-hashes on schema change) and drain any
+        # user-authored todos / notes into their structured homes.
+        if [ -f wiki/entities/todos.md ]; then
+            uv run python3 "$SCRIPT_DIR/tables.py" sync wiki/entities/todos.md >/dev/null 2>&1 || true
+        fi
+        uv run python3 "$SCRIPT_DIR/sweep.py" sync-todos wiki >/dev/null 2>&1 || true
+        uv run python3 "$SCRIPT_DIR/sweep.py" sync-notes wiki >/dev/null 2>&1 || true
         # Align figure-page image-embed syntax with the configured viewer.
         # Default obsidian; user switches to "vscode" for VS Code preview
         # compatibility. Idempotent when already in target form.

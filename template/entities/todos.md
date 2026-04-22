@@ -4,6 +4,7 @@ type: entity
 created: 2026-04-22
 updated: 2026-04-22
 table:
+  name: todos
   primary_key: id
   columns:
     - name: id

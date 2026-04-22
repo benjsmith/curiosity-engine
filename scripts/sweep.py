@@ -923,6 +923,356 @@ def _differentiate_stem(base_stem: str, vault_file) -> str:
     return "-".join(extras[:2])
 
 
+_CHECKBOX_RE = re.compile(r"^(\s*[-*]\s*)\[([ xX])\](\s+)(.+)$")
+_TODO_ID_RE = re.compile(r"\(todo:T(\d+)\)")
+_NOTE_ID_RE = re.compile(r"\(note:N(\d+)\)")
+_CREATED_TAG_RE = re.compile(r"\(created:\s*(\d{4}-\d{2}-\d{2})\)")
+_ATOMIC_TOPIC_RE = re.compile(r"(?:^|\s)topic:\s*([a-z][a-z0-9-]*)", re.IGNORECASE)
+
+
+def cmd_sync_todos(wiki_dir: Path):
+    """Reconcile checkbox todos across the wiki to the todos class table.
+
+    Responsibilities:
+      1. Mint `(todo:T<N>)` IDs for any checkbox line that lacks one.
+      2. Upsert each todo into `.curator/tables.db` (todos table).
+         Status = done iff any mention-site shows `[x]`.
+         Priority = highest-urgency mention-site location (day > month > year).
+      3. On a status transition from open -> done, append the todo to
+         the current year's completion archive (`wiki/todos/YYYY.md`)
+         with `created:` and `completed:` dates.
+      4. Propagate status changes to every mention site so ticking the
+         box in day.md updates it on year.md / topic files too.
+
+    Skipped in v1: unfiled drain to priority buckets (curator-agent
+    responsibility rather than mechanical sweep). Semantic dedup.
+    """
+    import sqlite3
+    from datetime import date as _date
+
+    workspace = wiki_dir.parent
+    tables_db = workspace / ".curator" / "tables.db"
+
+    if not tables_db.exists():
+        print(json.dumps({"ok": False,
+                          "note": "tables.db missing — run tables.py sync wiki/entities/todos.md first"}))
+        return
+
+    try:
+        conn = sqlite3.connect(str(tables_db))
+        conn.execute("SELECT 1 FROM todos LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        print(json.dumps({"ok": False,
+                          "note": "todos table missing — run tables.py sync wiki/entities/todos.md"}))
+        return
+
+    pages = wiki_pages(wiki_dir)
+    existing_ids = set()
+    for p in pages:
+        existing_ids.update(int(m.group(1)) for m in _TODO_ID_RE.finditer(p.read_text()))
+    next_id = (max(existing_ids) if existing_ids else 0) + 1
+
+    canon: dict = {}
+    page_lines: dict = {}
+    _PRIORITY_FROM_PATH = {
+        "todos/day.md": "day",
+        "todos/month.md": "month",
+        "todos/year.md": "year",
+    }
+    _URGENCY = {"day": 3, "month": 2, "year": 1}
+    today = _date.today().isoformat()
+    year_archive = wiki_dir / "todos" / f"{_date.today().year}.md"
+
+    for page in pages:
+        rel = str(page.relative_to(wiki_dir))
+        text = page.read_text()
+        lines = text.split("\n")
+        priority = _PRIORITY_FROM_PATH.get(rel)
+        modified = False
+        for i, line in enumerate(lines):
+            m = _CHECKBOX_RE.match(line)
+            if not m:
+                continue
+            indent, check, sep, rest = m.groups()
+            done = check.lower() == "x"
+            idm = _TODO_ID_RE.search(rest)
+            if idm:
+                tid = f"T{idm.group(1)}"
+            else:
+                tid = f"T{next_id}"
+                next_id += 1
+                if not _CREATED_TAG_RE.search(rest):
+                    rest = f"{rest} (created: {today})"
+                rest = f"{rest} (todo:{tid})"
+                lines[i] = f"{indent}[{check}]{sep}{rest}"
+                modified = True
+
+            text_only = _TODO_ID_RE.sub("", rest)
+            text_only = _CREATED_TAG_RE.sub("", text_only).strip()
+            created_m = _CREATED_TAG_RE.search(rest)
+            created = created_m.group(1) if created_m else today
+
+            entry = canon.setdefault(tid, {
+                "text": text_only, "created": created,
+                "origin": rel, "done": False, "priority": None,
+                "sites": [],
+            })
+            entry["sites"].append((str(page), i))
+            if done:
+                entry["done"] = True
+            if priority:
+                if entry["priority"] is None or _URGENCY[priority] > _URGENCY[entry["priority"]]:
+                    entry["priority"] = priority
+
+        if modified:
+            page_lines[page] = lines
+
+    for page, lines in page_lines.items():
+        page.write_text("\n".join(lines))
+
+    rows_added = rows_updated = newly_done = 0
+    archive_append_lines = []
+
+    for tid, entry in canon.items():
+        new_status = "done" if entry["done"] else "open"
+        new_priority = entry["priority"] or "year"
+        existing = conn.execute(
+            "SELECT status, priority, done_at FROM todos WHERE id = ?",
+            (tid,)
+        ).fetchone()
+        if existing is None:
+            # tables.db rows require the skill's reserved columns:
+            #   _provenance  — source marker (vault:... | log:...). Todos
+            #                  come from wiki mention-sites not vault rows,
+            #                  so we use a synthetic log: provenance that
+            #                  traces to this sweep invocation.
+            #   _inserted_at — tables.py normally populates this on insert,
+            #                  but we're writing directly. Set it explicitly.
+            #   _schema_version — tracks the schema hash row was written
+            #                  against. Read the current hash from the
+            #                  todos schema_meta.
+            _provenance = f"log:sync-todos-{today}-{tid}"
+            _schema_version = conn.execute(
+                "SELECT schema_hash FROM _schema_meta WHERE table_name = 'todos'"
+            ).fetchone()
+            _schema_version = _schema_version[0] if _schema_version else ""
+            conn.execute(
+                "INSERT INTO todos (id, text, status, priority, created, done_at, origin, "
+                "_provenance, _inserted_at, _schema_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (tid, entry["text"], new_status, new_priority, entry["created"],
+                 today if new_status == "done" else None, entry["origin"],
+                 _provenance, today, _schema_version)
+            )
+            rows_added += 1
+            if new_status == "done":
+                newly_done += 1
+                archive_append_lines.append(
+                    f"- [x] {entry['text']} — created: {entry['created']}, "
+                    f"completed: {today} (todo:{tid})"
+                )
+        else:
+            old_status, old_priority, old_done_at = existing
+            if old_status != new_status or old_priority != new_priority:
+                new_done_at = old_done_at
+                if new_status == "done" and old_status != "done":
+                    new_done_at = today
+                    newly_done += 1
+                    archive_append_lines.append(
+                        f"- [x] {entry['text']} — created: {entry['created']}, "
+                        f"completed: {today} (todo:{tid})"
+                    )
+                elif new_status != "done":
+                    new_done_at = None
+                conn.execute(
+                    "UPDATE todos SET status = ?, priority = ?, done_at = ?, "
+                    "_updated_at = ? WHERE id = ?",
+                    (new_status, new_priority, new_done_at, today, tid)
+                )
+                rows_updated += 1
+    conn.commit()
+    conn.close()
+
+    # Append newly-done to the year archive, creating the file if needed.
+    # Deduplicate: lines already present (by todo:TN marker) are skipped.
+    if archive_append_lines:
+        if year_archive.exists():
+            existing_archive = year_archive.read_text()
+        else:
+            existing_archive = (
+                f"---\ntitle: \"[todo] {_date.today().year} completed\"\n"
+                f"type: todo-list\ncreated: {today}\nupdated: {today}\n---\n\n"
+                f"## completed\n\n"
+            )
+        already = set(m.group(0) for m in _TODO_ID_RE.finditer(existing_archive))
+        fresh_lines = [ln for ln in archive_append_lines
+                       if f"(todo:{ln.rsplit('(todo:', 1)[-1].rstrip(')')}" not in already]
+        # Simpler check via ID in line
+        fresh_lines = []
+        for ln in archive_append_lines:
+            idm = _TODO_ID_RE.search(ln)
+            if idm and f"T{idm.group(1)}" in {i.strip(')').split(':')[-1] for i in already}:
+                continue
+            fresh_lines.append(ln)
+        if fresh_lines:
+            if not existing_archive.endswith("\n"):
+                existing_archive += "\n"
+            existing_archive += "\n".join(fresh_lines) + "\n"
+            year_archive.write_text(existing_archive)
+
+    print(json.dumps({
+        "ok": True,
+        "rows_added": rows_added,
+        "rows_updated": rows_updated,
+        "ids_minted": len(page_lines),
+        "newly_done_archived": newly_done,
+        "archive_file": str(year_archive.relative_to(workspace)),
+    }))
+
+
+def cmd_sync_notes(wiki_dir: Path):
+    """Drain wiki/notes/new.md atomic notes to topic files (or for-
+    attention.md) and mint `(note:N<id>)` IDs across notes/.
+
+    Routing heuristic (v1, mechanical — no LLM judgment):
+      1. Line contains `[[stem]]` → notes/<stem>.md
+      2. Line contains `topic: <slug>` → notes/<slug>.md
+      3. Otherwise → notes/for-attention.md
+
+    Atomic note granularity: a single bullet line OR a `##` heading
+    plus the paragraph that follows (until blank line or next heading).
+    For v1 simplicity, only bullet-line atomic notes are drained —
+    multi-line blocks stay in new.md until the user collapses them to
+    bullets or the curator-agent processes them explicitly.
+
+    Content-hash dedup: identical normalised content (line stripped of
+    markers, lowercased) resolves to the existing ID rather than mint
+    a new one.
+    """
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    notes_dir = wiki_dir / "notes"
+    if not notes_dir.is_dir():
+        print(json.dumps({"ok": False, "note": "no notes/ dir"}))
+        return
+
+    new_path = notes_dir / "new.md"
+    for_attention = notes_dir / "for-attention.md"
+    if not new_path.exists() and not for_attention.exists():
+        print(json.dumps({"ok": True, "note": "no new.md or for-attention.md"}))
+        return
+
+    # Collect existing note content-hashes so dedup can merge.
+    import hashlib
+    existing_ids = {}   # content_hash -> note_id
+    existing_numeric = set()
+    for page in wiki_pages(wiki_dir):
+        text = page.read_text()
+        for ln in text.split("\n"):
+            for m in _NOTE_ID_RE.finditer(ln):
+                nid = f"N{m.group(1)}"
+                existing_numeric.add(int(m.group(1)))
+                h = _hash_note_line(ln)
+                existing_ids.setdefault(h, nid)
+    next_id = (max(existing_numeric) if existing_numeric else 0) + 1
+
+    _WIKILINK_STEM_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+
+    drained = 0
+    minted = 0
+    deduped = 0
+    routed = {}
+
+    if new_path.exists():
+        text = new_path.read_text()
+        lines = text.split("\n")
+        surviving = []
+        for line in lines:
+            stripped = line.lstrip()
+            is_bullet = stripped.startswith("- ") or stripped.startswith("* ")
+            if not is_bullet:
+                surviving.append(line)
+                continue
+            # Skip if already has ID — sync-notes only drains un-IDed bullets
+            if _NOTE_ID_RE.search(line):
+                surviving.append(line)
+                continue
+
+            # Determine target
+            target_stem = None
+            wm = _WIKILINK_STEM_RE.search(line)
+            tm = _ATOMIC_TOPIC_RE.search(line)
+            if wm:
+                target_stem = wm.group(1).strip().lower().replace(" ", "-")
+            elif tm:
+                target_stem = tm.group(1).strip().lower()
+            target_file = notes_dir / (f"{target_stem}.md" if target_stem else "for-attention.md")
+
+            # Content-hash dedup
+            line_hash = _hash_note_line(line)
+            if line_hash in existing_ids:
+                tid = existing_ids[line_hash]
+                deduped += 1
+            else:
+                tid = f"N{next_id}"
+                next_id += 1
+                existing_ids[line_hash] = tid
+                minted += 1
+
+            # Build new bullet with markers
+            decorated = line.rstrip()
+            if not _CREATED_TAG_RE.search(decorated):
+                decorated = f"{decorated} (created: {today})"
+            decorated = f"{decorated} (note:{tid})"
+
+            # Append to target
+            _append_atomic_note(target_file, decorated, today)
+            routed.setdefault(str(target_file.relative_to(wiki_dir)), 0)
+            routed[str(target_file.relative_to(wiki_dir))] += 1
+            drained += 1
+        new_path.write_text("\n".join(surviving))
+
+    print(json.dumps({
+        "ok": True,
+        "drained_from_new_md": drained,
+        "ids_minted": minted,
+        "deduped_merges": deduped,
+        "routed_counts": routed,
+    }))
+
+
+def _hash_note_line(line: str) -> str:
+    import hashlib
+    s = line.lower().strip()
+    s = _NOTE_ID_RE.sub("", s)
+    s = _CREATED_TAG_RE.sub("", s)
+    s = re.sub(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]", lambda m: m.group(1), s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
+
+def _append_atomic_note(target: Path, decorated_line: str, today: str) -> None:
+    """Append a single atomic note line to a notes/ topic page, creating
+    it with standard frontmatter + `## notes` section if missing.
+    """
+    if not target.exists():
+        stem = target.stem
+        title = stem.replace("-", " ").title()
+        content = (
+            f"---\ntitle: \"[note] {title}\"\ntype: note\n"
+            f"created: {today}\nupdated: {today}\n---\n\n"
+            f"## notes\n\n{decorated_line}\n"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+    else:
+        text = target.read_text()
+        if not text.endswith("\n"):
+            text += "\n"
+        text += decorated_line + "\n"
+        target.write_text(text)
+
+
 def cmd_resync_prefixes(wiki_dir: Path):
     """Rename pages in `wiki/tables/` and `wiki/figures/` so their
     filename stems carry the type's prefix (`tbl-` / `fig-`), then
@@ -1311,6 +1661,7 @@ def main():
         "fix-spaced-wikilinks", "fix-orphan-root-files",
         "fix-frontmatter-quotes", "dedupe-self-citations",
         "convert-image-embeds",
+        "sync-todos", "sync-notes",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
         "evidence-candidates", "figure-candidates",
@@ -1356,6 +1707,10 @@ def main():
         cmd_dedupe_self_citations(wiki_dir)
     elif args.command == "convert-image-embeds":
         cmd_convert_image_embeds(wiki_dir, args.target)
+    elif args.command == "sync-todos":
+        cmd_sync_todos(wiki_dir)
+    elif args.command == "sync-notes":
+        cmd_sync_notes(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":

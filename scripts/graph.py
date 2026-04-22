@@ -92,6 +92,15 @@ def _init_schema(conn):
         # prose containing a [[wikilink]]. Queries like "what figures
         # illustrate this concept?" traverse Depicts in reverse.
         "CREATE REL TABLE IF NOT EXISTS Depicts(FROM WikiPage TO WikiPage)",
+        # Note = an atomic user-authored note fragment. Rows carry an
+        # id minted by sweep.py sync-notes and a content_hash for dedup.
+        # Notes can appear on multiple wiki pages simultaneously (e.g.
+        # once under notes/acme.md, once under notes/steerco-project-x.md)
+        # so the Note → WikiPage relationship is many-to-many via
+        # AppearsIn. The earliest-timestamped AppearsIn is the note's
+        # origin; no separate origin edge needed.
+        "CREATE NODE TABLE IF NOT EXISTS Note(id STRING, content_hash STRING, created STRING, PRIMARY KEY (id))",
+        "CREATE REL TABLE IF NOT EXISTS AppearsIn(FROM Note TO WikiPage)",
     ]:
         conn.execute(stmt)
 
@@ -134,6 +143,11 @@ def rebuild(wiki_dir: Path, force: bool = False):
 
     vault_sources = set()
     page_data = []
+    note_occurrences = {}   # note_id -> (content_hash, created, {page_rels})
+
+    import hashlib as _hashlib
+    _NOTE_MARKER_RE = re.compile(r"\(note:N(\d+)\)")
+    _CREATED_TAG_RE = re.compile(r"created:\s*(\d{4}-\d{2}-\d{2})")
 
     for page in pages:
         text = page.read_text()
@@ -141,6 +155,27 @@ def rebuild(wiki_dir: Path, force: bool = False):
         rel = str(page.relative_to(wiki_dir))
         page_type = fm.get("type", "")
         title = fm.get("title", page.stem.replace("-", " ").title())
+
+        # Note occurrences — each `(note:N<id>)` marker contributes an
+        # AppearsIn edge from the Note node to this page. Content hash
+        # is computed from the first line/block containing the marker
+        # so two verbatim appearances of the same note resolve to the
+        # same hash for dedup.
+        for line in text.split("\n"):
+            for m in _NOTE_MARKER_RE.finditer(line):
+                nid = f"N{m.group(1)}"
+                entry = note_occurrences.setdefault(nid, (None, None, set()))
+                ch, created, pages_set = entry
+                pages_set.add(rel)
+                if ch is None:
+                    # First time seeing this note — compute its hash and
+                    # pull the created-date if present on the same line.
+                    normalised = line.strip().lower()
+                    normalised = _NOTE_MARKER_RE.sub("", normalised).strip()
+                    ch = _hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:16]
+                    cm = _CREATED_TAG_RE.search(line)
+                    created = cm.group(1) if cm else ""
+                note_occurrences[nid] = (ch, created, pages_set)
 
         links = set()
         for m in WIKILINK_RE.finditer(text):
@@ -286,6 +321,25 @@ def rebuild(wiki_dir: Path, force: bool = False):
             except _sqlite3.Error:
                 pass
 
+    # Note nodes + AppearsIn edges. Runs after WikiPage nodes are
+    # created so AppearsIn can resolve its WikiPage endpoint.
+    appears_in_edges = 0
+    for nid, (content_hash, created, pages_set) in note_occurrences.items():
+        conn.execute(
+            "CREATE (:Note {id: $i, content_hash: $h, created: $c})",
+            {"i": nid, "h": content_hash or "", "c": created or ""}
+        )
+        for target_rel in pages_set:
+            if target_rel not in page_paths:
+                continue
+            conn.execute(
+                "MATCH (a:Note), (b:WikiPage) "
+                "WHERE a.id = $nid AND b.path = $p "
+                "CREATE (a)-[:AppearsIn]->(b)",
+                {"nid": nid, "p": target_rel}
+            )
+            appears_in_edges += 1
+
     stats = {
         "pages": len(page_data),
         "vault_sources": len(vault_sources),
@@ -294,6 +348,8 @@ def rebuild(wiki_dir: Path, force: bool = False):
         "data_rows": data_rows,
         "data_refs": data_refs,
         "depicts_edges": depicts_edges,
+        "notes": len(note_occurrences),
+        "appears_in_edges": appears_in_edges,
     }
     print(json.dumps({"status": "rebuilt", **stats}))
 
