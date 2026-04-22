@@ -288,6 +288,83 @@ def verdict(before: dict, after: dict) -> tuple:
     return True, "pass"
 
 
+# Curator annotations region marker — content after this header in a
+# notes/ page is the curator's scratch zone (not subject to append-only).
+_CURATOR_ANNOTATIONS_MARKER = "## curator-annotations"
+
+# Lines/strings added by the curator that shouldn't count as modifications
+# of user-authored content:
+#   [[stem]] / [[stem|display]]  — wikilinks wrapping existing terms
+#   (note:N<id>) / (todo:T<id>)  — mint-time markers
+_WIKILINK_DISPLAY_RE = re.compile(r"\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
+_MINT_MARKER_RE = re.compile(r"\s*\((?:note:N\d+|todo:T\d+)\)")
+
+
+def _strip_curator_markers(text: str) -> str:
+    """Normalise user-body text by removing wikilinks (keeping display
+    label) and note/todo mint markers so append-only comparisons only
+    see user-authored content.
+    """
+    def _wikilink_display(m):
+        target = m.group(1) or ""
+        display = m.group(2)
+        return display if display is not None else target
+
+    out = _WIKILINK_DISPLAY_RE.sub(_wikilink_display, text)
+    out = _MINT_MARKER_RE.sub("", out)
+    # Collapse runs of whitespace so cosmetic spacing doesn't trip the
+    # comparison — a worker may insert a space around a wikilink.
+    out = re.sub(r"[ \t]+", " ", out)
+    return out
+
+
+def _user_body(text: str) -> str:
+    """Extract the user-authored region of a page body (everything
+    before `## curator-annotations`).
+    """
+    _, body = read_frontmatter(text)
+    if _CURATOR_ANNOTATIONS_MARKER in body:
+        body = body.split(_CURATOR_ANNOTATIONS_MARKER, 1)[0]
+    return body
+
+
+def notes_append_only_verdict(old_text: str, new_text: str,
+                                 page: Path) -> tuple:
+    """For notes/ pages: every non-blank line from the old user-body
+    (stripped of wikilinks + mint markers) must appear — in order — in
+    the new user-body (same stripping). Wikilinks and mint markers can
+    be added; user content is preserved. new.md and for-attention.md
+    are exempt (curator drains them).
+
+    Returns (ok, reason). ok=True when the invariant holds.
+    """
+    if page.name in ("new.md", "for-attention.md"):
+        return True, "notes/ transient (drain-zone exempt)"
+
+    def canon_lines(text: str) -> list:
+        body = _user_body(text)
+        return [_strip_curator_markers(ln).strip()
+                for ln in body.split("\n")
+                if _strip_curator_markers(ln).strip()]
+
+    old_lines = canon_lines(old_text)
+    new_lines = canon_lines(new_text)
+    ni = 0
+    for ol in old_lines:
+        found = False
+        while ni < len(new_lines):
+            if new_lines[ni] == ol:
+                found = True
+                ni += 1
+                break
+            ni += 1
+        if not found:
+            snippet = ol[:60] + ("…" if len(ol) > 60 else "")
+            return False, (f"notes/ append-only: user line missing or "
+                              f"modified (expected to find {snippet!r})")
+    return True, "notes/ append-only: preserved"
+
+
 def _floors_for(page: Path) -> dict:
     """Minimum thresholds for a new page, tightened or relaxed by directory.
 
@@ -320,6 +397,14 @@ def _floors_for(page: Path) -> dict:
         # wikilinks required (cells carry them naturally), >=10 words of
         # framing prose so we don't accept an empty table scaffold.
         return {"citations": 1, "wikilinks": 0, "words": 10}
+    if "todos" in parts or "notes" in parts:
+        # Notes and todo-list pages are user-authored raw input (notes/)
+        # or curator-maintained priority buckets (todos/). Neither
+        # warrants the citation/wikilink/words ratchet used for
+        # concept/entity/analysis pages — they're staging areas, not
+        # finished knowledge artefacts. Zero floors; additional rules
+        # (append-only for notes/, todo-ID syntax) enforced separately.
+        return {"citations": 0, "wikilinks": 0, "words": 0}
     return {"citations": 2, "wikilinks": 2, "words": 100}
 
 
@@ -409,6 +494,16 @@ def main():
     before = metrics(old_text)
     after = metrics(new_text)
     accept, reason = verdict(before, after)
+
+    # notes/ pages enforce append-only on user-authored content.
+    # Curator writes can add wikilinks and mint markers; they cannot
+    # delete or rewrite the user's prose. Exemption: new.md and
+    # for-attention.md, which are curator-drained staging areas.
+    if accept and "notes" in set(page.parts):
+        ok, note_reason = notes_append_only_verdict(old_text, new_text, page)
+        if not ok:
+            accept = False
+            reason = note_reason
 
     result = {
         "page": str(page), "accept": accept, "reason": reason,

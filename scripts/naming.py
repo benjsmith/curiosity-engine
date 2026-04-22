@@ -34,7 +34,7 @@ WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
-                      "fact", "summary-table", "figure"}
+                      "fact", "summary-table", "figure", "note", "todo-list"}
 
 # Allowlist of frontmatter keys the curator actually reads. Unknown keys are
 # dropped by read_frontmatter so an adversarial source cannot smuggle
@@ -82,6 +82,8 @@ TYPE_PREFIX = {
     "fact": "[fact]",
     "summary-table": "[tbl]",
     "figure": "[fig]",
+    "note": "[note]",
+    "todo-list": "[todo]",
 }
 
 # Filename stem prefixes for the page types that live in dedicated

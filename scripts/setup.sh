@@ -197,12 +197,58 @@ fi
 #   .curator/              curator state, NOT tracked by wiki's git
 #   CLAUDE.md              workspace instructions (mirrors SKILL.md)
 #   .claude/settings.json  auto-allow permissions
-mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables,figures}
+mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables,figures,notes,todos}
 touch vault/.gitkeep vault/raw/.gitkeep
-for d in sources entities concepts analyses evidence facts tables figures; do
+for d in sources entities concepts analyses evidence facts tables figures notes todos; do
     touch "wiki/$d/.gitkeep"
 done
 mkdir -p .curator
+mkdir -p .claude/commands
+
+# Seed the canonical todos entity page (first-class class-table schema
+# shipped by the skill) + the notes/todos staging pages. Skip if already
+# present so user edits are preserved.
+if [ ! -f wiki/entities/todos.md ] && [ -f "$TEMPLATE_DIR/entities/todos.md" ]; then
+    cp "$TEMPLATE_DIR/entities/todos.md" wiki/entities/todos.md
+    echo "  Seeded wiki/entities/todos.md (canonical todos table schema)"
+fi
+_seed_notes_or_todos_stub() {
+    local path="$1"; local title="$2"; local type="$3"
+    if [ ! -f "$path" ]; then
+        cat > "$path" <<EOF
+---
+title: "$title"
+type: $type
+created: $(date +%Y-%m-%d)
+updated: $(date +%Y-%m-%d)
+---
+
+## active
+
+EOF
+    fi
+}
+_seed_notes_or_todos_stub wiki/notes/new.md          '[note] new (default /note landing; curator drains)' note
+_seed_notes_or_todos_stub wiki/notes/for-attention.md '[note] for-attention (notes awaiting user topic)'   note
+_seed_notes_or_todos_stub wiki/todos/day.md           '[todo] day-priority'   todo-list
+_seed_notes_or_todos_stub wiki/todos/month.md         '[todo] month-priority' todo-list
+_seed_notes_or_todos_stub wiki/todos/year.md          '[todo] year-priority'  todo-list
+_seed_notes_or_todos_stub wiki/todos/unfiled.md       '[todo] unfiled (priority pending)' todo-list
+
+# Copy slash commands into the workspace's .claude/commands/ directory.
+# These register /day, /month, /year, /todo, /note for Claude Code
+# sessions opened in this workspace. Non-Claude-Code CLIs (Codex,
+# Copilot Chat, Gemini CLI) will ignore the directory; users fall back
+# to natural-language invocation which the agent handles the same way.
+if [ -d "$TEMPLATE_DIR/claude-commands" ]; then
+    for _cmd in "$TEMPLATE_DIR/claude-commands"/*.md; do
+        [ -f "$_cmd" ] || continue
+        _cmd_name="$(basename "$_cmd")"
+        if [ ! -f ".claude/commands/$_cmd_name" ]; then
+            cp "$_cmd" ".claude/commands/$_cmd_name"
+        fi
+    done
+fi
 
 # Workspace-level assets directory. Sits alongside vault/ and wiki/.
 # Deliberately OUTSIDE the wiki git scope — figure binaries are not
