@@ -92,6 +92,17 @@ bash <skill_path>/scripts/setup.sh
 
 This creates the full project structure, initializes git in the wiki, creates the FTS5 search index, and drops in a `.claude/settings.json` that auto-allows commits inside `wiki/` only. Tell the user: "Knowledge base ready. Try: 'add ~/some-file.pdf to the vault'"
 
+### In-session update
+
+If the user asks to update / refresh / upgrade the skill mid-session:
+
+```bash
+bash <skill_path>/scripts/update.sh        # prints release notes, exits
+bash <skill_path>/scripts/update.sh --yes  # applies after user confirms
+```
+
+Two-step flow by design. The first call `git fetch`es the skill repo and prints the local..upstream commit log to stdout, then exits without changes (non-interactive callers need explicit `--yes`). Relay the release notes to the user, wait for confirmation, then re-invoke with `--yes`. Stage 2 auto-commits any dirty wiki with a canned `wip: auto-commit before skill update` message, fast-forward-pulls the skill, and runs `setup.sh` (which reapplies the migration pass).
+
 ## Data stores
 
 **Vault** (`vault/`) — Folder of raw source files. Append-only. Never modify existing files.

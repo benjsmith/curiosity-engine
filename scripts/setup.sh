@@ -433,6 +433,7 @@ else
                                               # path for .extracted.md
         "scripts/figures.py"                 # post-figures-feature allowlist
         "Write(/tmp/"                        # post-curate-scratch allowlist
+        "scripts/update.sh"                  # post-in-session-update allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -512,6 +513,7 @@ EOF
       "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
       "Bash(bash $root/scripts/quartz.sh:*)",
+      "Bash(bash $root/scripts/update.sh:*)",
 EOF
     done
     # Footer: workspace-scoped Edit/Write + misc.
