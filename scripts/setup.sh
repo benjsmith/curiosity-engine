@@ -418,6 +418,7 @@ EOF
       "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
+      "Bash(bash $root/scripts/quartz.sh:*)",
 EOF
     done
     # Footer: workspace-scoped Edit/Write + misc.
@@ -472,6 +473,53 @@ fi
 if [ ! -d wiki/.git ]; then
     (cd wiki && git init -q && git add -A && git commit -q -m "init: curiosity engine wiki")
     echo "  Initialized wiki git repo"
+fi
+
+# Optional: install Quartz for a static-site view of the wiki.
+# Shared install at ~/.cache/curiosity-engine/quartz so multiple
+# workspaces only pay the ~500 MB node_modules cost once. In
+# interactive mode, prompt; in non-interactive mode, install silently
+# (gracefully skipping if Node can't be made available). Script
+# scripts/quartz.sh wraps the build + serve flow.
+_quartz_dir="$HOME/.cache/curiosity-engine/quartz"
+_install_quartz() {
+    mkdir -p "$(dirname "$_quartz_dir")"
+    if [ ! -d "$_quartz_dir" ]; then
+        echo "  Cloning Quartz into $_quartz_dir ..."
+        git clone --quiet --depth 1 https://github.com/jackyzha0/quartz.git "$_quartz_dir" \
+            || { echo "  Quartz clone failed; skipping."; return 1; }
+    fi
+    if command -v node >/dev/null 2>&1; then
+        echo "  Installing Quartz node_modules (one-time, ~500 MB) ..."
+        (cd "$_quartz_dir" && npm install --silent --no-audit --no-fund --no-progress 2>&1 \
+            | tail -5) || echo "  (npm install reported issues; Quartz may still work)"
+    else
+        echo "  Node.js not found — Quartz needs Node 18+."
+        echo "  Install user-locally via nvm (no admin needed):"
+        echo "    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
+        echo "    . ~/.nvm/nvm.sh && nvm install --lts"
+        echo "  Then rerun setup.sh; Quartz's npm install will complete."
+        return 1
+    fi
+}
+if [ ! -d "$_quartz_dir/node_modules" ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
+        echo ""
+        printf "Install Quartz (static-site view of the wiki, ~500 MB)? [Y/n] "
+        read -r reply_quartz || reply_quartz="y"
+        case "$reply_quartz" in
+            ""|y|Y|yes|YES)
+                _install_quartz || true
+                ;;
+            *)
+                echo "  Skipping Quartz. Install later by rerunning setup.sh."
+                ;;
+        esac
+    else
+        # Non-interactive default: attempt install silently. Gracefully skip
+        # if the machine can't support it.
+        _install_quartz >/dev/null 2>&1 || true
+    fi
 fi
 
 # Optional: install the caveman compression skill.
