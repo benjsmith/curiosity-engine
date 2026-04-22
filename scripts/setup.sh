@@ -240,10 +240,11 @@ EOF
 _seed_notes_or_todos_stub wiki/notes/new.md          '[note] new (default /note landing; curator drains)' note notes
 _seed_notes_or_todos_stub wiki/notes/for-attention.md '[note] for-attention (notes awaiting user topic)'   note notes
 
-# Landing page. Quartz serves `/` from content/index.md; Obsidian
-# shows it at the top of the vault. Seed only if absent — user may
-# have customised it.
-if [ ! -f wiki/index.md ] && [ -f "$TEMPLATE_DIR/wiki-index.md" ]; then
+# Landing + hub pages. `[ ! -s ]` covers both absent AND zero-byte
+# (an Obsidian click-artefact or a pre-hub-era empty stub) so the
+# template gets installed in either case. User edits are preserved
+# because a non-empty file is never overwritten.
+if [ ! -s wiki/index.md ] && [ -f "$TEMPLATE_DIR/wiki-index.md" ]; then
     cp "$TEMPLATE_DIR/wiki-index.md" wiki/index.md
     echo "  Seeded wiki/index.md (landing page)"
 fi
@@ -251,11 +252,11 @@ fi
 # `Part of [[notes|todos]].` wikilink that targets these pages, which
 # keeps them connected in Obsidian's graph view instead of floating
 # as an isolated cluster of empty nodes.
-if [ ! -f wiki/notes.md ] && [ -f "$TEMPLATE_DIR/notes-overview.md" ]; then
+if [ ! -s wiki/notes.md ] && [ -f "$TEMPLATE_DIR/notes-overview.md" ]; then
     cp "$TEMPLATE_DIR/notes-overview.md" wiki/notes.md
     echo "  Seeded wiki/notes.md (notes surface overview)"
 fi
-if [ ! -f wiki/todos.md ] && [ -f "$TEMPLATE_DIR/todos-overview.md" ]; then
+if [ ! -s wiki/todos.md ] && [ -f "$TEMPLATE_DIR/todos-overview.md" ]; then
     cp "$TEMPLATE_DIR/todos-overview.md" wiki/todos.md
     echo "  Seeded wiki/todos.md (todos surface overview)"
 fi
@@ -754,6 +755,13 @@ if [ -d wiki/.git ]; then
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" dedupe-self-citations wiki >/dev/null
+        # Sweep up zero-byte .md files at wiki/ root — almost always
+        # Obsidian click-artefacts from unresolved wikilinks (e.g. a
+        # literal `[[wikilinks]]` placeholder in a template rendering
+        # as a clickable link). Seeded hub pages (index/notes/todos)
+        # are populated above, so any remaining top-level empty file
+        # is genuinely orphaned. Idempotent no-op when clean.
+        uv run python3 "$SCRIPT_DIR/sweep.py" fix-orphan-root-files wiki >/dev/null 2>&1 || true
         # One-shot migration for workspaces whose figure assets still
         # live under workspace/assets/figures/. Moves them into
         # wiki/figures/_assets/, rewrites embed paths to match the
@@ -768,6 +776,12 @@ if [ -d wiki/.git ]; then
         # bucket pages seeded before the hub convention existed, so
         # they show as connected in Obsidian's graph view. Idempotent.
         uv run python3 "$SCRIPT_DIR/sweep.py" backfill-bucket-hubs wiki >/dev/null 2>&1 || true
+        # Undo sync-todos pollution on hub pages + completion archives
+        # from the window where sync-todos parsed inside fenced code
+        # blocks. Matches the literal `(todo:T<id>)` template marker to
+        # find the bad lines; orphan sqlite rows are purged too.
+        # Idempotent no-op once clean.
+        uv run python3 "$SCRIPT_DIR/sweep.py" purge-template-todo-artefacts wiki >/dev/null 2>&1 || true
         # One-shot migration for vault files ingested before the
         # local_ingest suffix-doubling fix (foo.pdf.pdf → foo.pdf).
         # Idempotent no-op once applied.

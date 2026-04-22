@@ -1000,6 +1000,88 @@ def cmd_backfill_figure_sourcelinks(wiki_dir: Path):
     }, indent=2))
 
 
+def cmd_purge_template_todo_artefacts(wiki_dir: Path):
+    """One-shot: undo pollution from the pre-fix sync-todos that parsed
+    template syntax-examples inside fenced code blocks as real todos.
+
+    Detection marker is the literal `(todo:T<id>)` string — with the
+    angle-bracketed word "id", not digits — which is only ever present
+    in template placeholders. For each line containing it:
+
+      * In completion archives (`todos/YYYY.md`): drop the whole line
+        (fabricated `## completed` entries from template `[x]` examples).
+      * Elsewhere (hub pages): strip everything appended after the
+        template marker, restoring the original placeholder line.
+
+    Also purges the orphan sqlite rows in `.curator/tables.db` whose
+    IDs no longer appear on any wiki page after the wiki cleanup. Safe
+    because the rows have `_provenance` pointing at the synthetic
+    sync-todos marker — no human has ever referred to them.
+    """
+    import sqlite3
+    TEMPLATE_MARKER = re.compile(r"\(todo:T<id>\)")
+    pages = wiki_pages(wiki_dir)
+    touched_files = []
+    for p in pages:
+        text = p.read_text()
+        if "(todo:T<id>)" not in text:
+            continue
+        rel = str(p.relative_to(wiki_dir))
+        is_archive = (
+            rel.startswith("todos/")
+            and rel.removeprefix("todos/").removesuffix(".md").isdigit()
+        )
+        new_lines = []
+        modified = False
+        for line in text.split("\n"):
+            if "(todo:T<id>)" not in line:
+                new_lines.append(line)
+                continue
+            if is_archive and _CHECKBOX_RE.match(line):
+                modified = True
+                continue
+            tmatch = TEMPLATE_MARKER.search(line)
+            trailing = line[tmatch.end():]
+            if trailing.strip():
+                new_lines.append(line[:tmatch.end()])
+                modified = True
+            else:
+                new_lines.append(line)
+        if modified:
+            p.write_text("\n".join(new_lines))
+            touched_files.append(rel)
+
+    tables_db = wiki_dir.parent / ".curator" / "tables.db"
+    rows_purged = 0
+    if tables_db.exists():
+        try:
+            conn = sqlite3.connect(str(tables_db))
+            try:
+                live_ids = set()
+                for p in pages:
+                    for m in _TODO_ID_RE.finditer(p.read_text()):
+                        live_ids.add(f"T{m.group(1)}")
+                db_ids = {row[0] for row in conn.execute(
+                    "SELECT id FROM todos WHERE _provenance LIKE 'log:sync-todos-%'"
+                ).fetchall()}
+                orphans = db_ids - live_ids
+                for oid in orphans:
+                    conn.execute("DELETE FROM todos WHERE id = ?", (oid,))
+                conn.commit()
+                rows_purged = len(orphans)
+            finally:
+                conn.close()
+        except sqlite3.OperationalError:
+            pass
+
+    print(json.dumps({
+        "ok": True,
+        "files_cleaned": len(touched_files),
+        "paths": touched_files,
+        "db_rows_purged": rows_purged,
+    }, indent=2))
+
+
 def cmd_backfill_bucket_hubs(wiki_dir: Path):
     """Inject `Part of [[notes]].` / `Part of [[todos]].` into bucket
     pages seeded before the hub convention existed. Without this link
@@ -1303,7 +1385,17 @@ def cmd_sync_todos(wiki_dir: Path):
         lines = text.split("\n")
         priority = _PRIORITY_FROM_PATH.get(rel)
         modified = False
+        in_code_block = False
         for i, line in enumerate(lines):
+            # Fenced code-block tracking. Syntax-example lines inside
+            # ``` ... ``` blocks (e.g. `- [ ] <text> (todo:T<id>)`) are
+            # documentation, not todos — minting IDs into them pollutes
+            # hub pages and fabricates completion-archive entries.
+            if line.lstrip().startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if in_code_block:
+                continue
             m = _CHECKBOX_RE.match(line)
             if not m:
                 continue
@@ -2182,6 +2274,7 @@ def main():
         "fix-frontmatter-quotes", "dedupe-self-citations",
         "convert-image-embeds", "migrate-asset-location",
         "backfill-figure-sourcelinks", "backfill-bucket-hubs",
+        "purge-template-todo-artefacts",
         "sync-todos", "sync-notes", "normalize-vault-suffixes",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
@@ -2240,6 +2333,8 @@ def main():
         cmd_backfill_figure_sourcelinks(wiki_dir)
     elif args.command == "backfill-bucket-hubs":
         cmd_backfill_bucket_hubs(wiki_dir)
+    elif args.command == "purge-template-todo-artefacts":
+        cmd_purge_template_todo_artefacts(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":
