@@ -441,6 +441,7 @@ else
         "scripts/figures.py"                 # post-figures-feature allowlist
         "Write(/tmp/"                        # post-curate-scratch allowlist
         "scripts/update.sh"                  # post-in-session-update allowlist
+        "scripts/naming.py"                  # post-naming-allowlist-gap fix
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -525,6 +526,7 @@ EOF
       "Bash(uv run python3 $root/scripts/graph.py:*)",
       "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(uv run python3 $root/scripts/figures.py:*)",
+      "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
       "Bash(bash $root/scripts/quartz.sh:*)",
       "Bash(bash $root/scripts/update.sh:*)",
