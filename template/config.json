@@ -11,6 +11,7 @@
   "spot_audit_interval": 20,
   "embedding_enabled": false,
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "notes_semantic_dedup_threshold": 0.92,
   "cluster_scope_threshold": 500,
   "caveman": {
     "read": "ultra",

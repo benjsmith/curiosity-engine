@@ -924,8 +924,11 @@ def _differentiate_stem(base_stem: str, vault_file) -> str:
 
 
 _CHECKBOX_RE = re.compile(r"^(\s*[-*]\s*)\[([ xX])\](\s+)(.+)$")
-_TODO_ID_RE = re.compile(r"\(todo:T(\d+)\)")
-_NOTE_ID_RE = re.compile(r"\(note:N(\d+)\)")
+# Match the id marker either as its own paren group `(todo:T42)` or
+# alongside other tags in the same paren, e.g. `(created: 2026-04-22,
+# todo:T42)`. Same for note ids.
+_TODO_ID_RE = re.compile(r"\btodo:T(\d+)\b")
+_NOTE_ID_RE = re.compile(r"\bnote:N(\d+)\b")
 _CREATED_TAG_RE = re.compile(r"\(created:\s*(\d{4}-\d{2}-\d{2})\)")
 _ATOMIC_TOPIC_RE = re.compile(r"(?:^|\s)topic:\s*([a-z][a-z0-9-]*)", re.IGNORECASE)
 
@@ -1130,6 +1133,193 @@ def cmd_sync_todos(wiki_dir: Path):
     }))
 
 
+def _init_notes_semantic_ctx(workspace: Path):
+    """Open an embedding-backed dedup context for sync-notes.
+
+    Returns (embedder, conn, threshold) if `embedding_enabled: true` in
+    config AND the dependencies (sentence-transformers, sqlite-vec,
+    pysqlite3 on macOS) are importable. Returns None otherwise —
+    sync-notes then falls back to content-hash-only dedup.
+
+    The embeddings DB is a separate file `.curator/notes_embeddings.db`
+    so vault.db's FTS5+vec layer stays independent. Two stores, two
+    domains (vault = source extractions; notes = user thinking).
+    """
+    config_path = workspace / ".curator" / "config.json"
+    if not config_path.exists():
+        return None
+    try:
+        cfg = json.loads(config_path.read_text())
+    except Exception:
+        return None
+    if not cfg.get("embedding_enabled"):
+        return None
+    threshold = float(cfg.get("notes_semantic_dedup_threshold", 0.92))
+    model_name = cfg.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2")
+
+    try:
+        from sentence_transformers import SentenceTransformer  # type: ignore
+    except ImportError:
+        return None
+    try:
+        try:
+            import pysqlite3 as _sqlite3  # type: ignore
+        except ImportError:
+            import sqlite3 as _sqlite3
+        import sqlite_vec  # type: ignore
+    except ImportError:
+        return None
+
+    emb_db = workspace / ".curator" / "notes_embeddings.db"
+    try:
+        conn = _sqlite3.connect(str(emb_db))
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+    except Exception:
+        return None
+
+    # vec0 virtual table pairs a primary-key id with a fixed-dim vector.
+    # 384 dims matches MiniLM-L6-v2; if a different model is configured
+    # and emits a different dimension, the INSERT will error and we'll
+    # skip semantic dedup for that sweep. User can delete the embeddings
+    # db to recreate at the new dimensionality.
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS notes_vec USING vec0(
+                note_id TEXT PRIMARY KEY,
+                embedding float[384]
+            )
+        """)
+        conn.commit()
+    except Exception:
+        return None
+
+    try:
+        embedder = SentenceTransformer(model_name)
+    except Exception:
+        return None
+
+    return (embedder, conn, threshold)
+
+
+def _encode_normalised(embedder, text: str):
+    """Produce a unit-norm float32 embedding ready for sqlite-vec.
+
+    Normalising makes L2 distance correspond cleanly to cosine
+    similarity via `cos = 1 - L2²/2`, independent of whether the
+    underlying model returns unit vectors by default.
+    """
+    import numpy as np
+    vec = embedder.encode([text])[0]
+    v = np.asarray(vec, dtype=np.float32)
+    n = float((v * v).sum()) ** 0.5
+    if n > 1e-12:
+        v = v / n
+    return v.tobytes()
+
+
+def _semantic_find_dup(line: str, ctx) -> Optional[str]:
+    """Cosine-search for a semantic duplicate of the incoming note.
+
+    Returns an existing note_id when top match's similarity exceeds
+    the threshold; None otherwise. Uses global scope (not per-topic-
+    file) because notes legitimately cross-appear — a meeting note
+    relevant to both project and domain should merge to one ID with
+    two AppearsIn edges, not mint twice.
+    """
+    if ctx is None:
+        return None
+    embedder, conn, threshold = ctx
+    try:
+        vec_bytes = _encode_normalised(embedder, _normalise_note_for_embedding(line))
+    except Exception:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT note_id, distance FROM notes_vec "
+            "WHERE embedding MATCH ? AND k = 1 ORDER BY distance",
+            [vec_bytes]
+        ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    note_id, distance = row
+    # Unit-norm vectors: cos_sim = 1 - L2²/2.
+    similarity = max(0.0, 1.0 - (distance * distance) / 2.0)
+    return note_id if similarity >= threshold else None
+
+
+def _semantic_store(note_id: str, line: str, ctx) -> None:
+    """Persist the embedding for a newly-minted note."""
+    if ctx is None:
+        return
+    embedder, conn, _ = ctx
+    try:
+        vec_bytes = _encode_normalised(embedder, _normalise_note_for_embedding(line))
+        conn.execute(
+            "INSERT OR REPLACE INTO notes_vec (note_id, embedding) VALUES (?, ?)",
+            [note_id, vec_bytes]
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _semantic_backfill(wiki_dir: Path, ctx) -> int:
+    """On first run with embeddings enabled, populate the vec table
+    from every existing `(note:N<id>)` marker in the wiki so semantic
+    dedup has prior notes to compare against.
+
+    Returns the number of rows backfilled (0 if the table was already
+    populated, which is the steady-state case).
+    """
+    if ctx is None:
+        return 0
+    embedder, conn, _ = ctx
+    existing = conn.execute("SELECT COUNT(*) FROM notes_vec").fetchone()
+    if existing and existing[0] > 0:
+        return 0
+    seen = {}
+    for page in wiki_pages(wiki_dir):
+        text = page.read_text()
+        for ln in text.split("\n"):
+            for m in _NOTE_ID_RE.finditer(ln):
+                nid = f"N{m.group(1)}"
+                seen.setdefault(nid, ln)
+    if not seen:
+        return 0
+    try:
+        ids = list(seen.keys())
+        rows = [(nid, _encode_normalised(embedder, _normalise_note_for_embedding(seen[nid])))
+                for nid in ids]
+        conn.executemany(
+            "INSERT OR REPLACE INTO notes_vec (note_id, embedding) VALUES (?, ?)",
+            rows
+        )
+        conn.commit()
+    except Exception:
+        return 0
+    return len(seen)
+
+
+def _normalise_note_for_embedding(line: str) -> str:
+    """Strip markup so the embedding captures content, not format. Drop
+    bullet prefixes, mint markers, created-date suffix, wikilink
+    brackets (keeping display/target), collapse whitespace.
+    """
+    s = line.strip()
+    if s.startswith("- ") or s.startswith("* "):
+        s = s[2:]
+    s = _NOTE_ID_RE.sub("", s)
+    s = _CREATED_TAG_RE.sub("", s)
+    s = re.sub(r"\[\[([^\]|]+)(?:\|([^\]]*))?\]\]",
+               lambda m: m.group(2) if m.group(2) else m.group(1), s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def cmd_sync_notes(wiki_dir: Path):
     """Drain wiki/notes/new.md atomic notes to topic files (or for-
     attention.md) and mint `(note:N<id>)` IDs across notes/.
@@ -1176,11 +1366,18 @@ def cmd_sync_notes(wiki_dir: Path):
                 existing_ids.setdefault(h, nid)
     next_id = (max(existing_numeric) if existing_numeric else 0) + 1
 
+    # Semantic dedup context (None if embeddings are disabled or deps
+    # aren't installed). Backfill on first run so prior notes are
+    # available for comparison.
+    semantic_ctx = _init_notes_semantic_ctx(wiki_dir.parent)
+    backfilled = _semantic_backfill(wiki_dir, semantic_ctx)
+
     _WIKILINK_STEM_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
 
     drained = 0
     minted = 0
     deduped = 0
+    semantic_deduped = 0
     routed = {}
 
     if new_path.exists():
@@ -1208,16 +1405,25 @@ def cmd_sync_notes(wiki_dir: Path):
                 target_stem = tm.group(1).strip().lower()
             target_file = notes_dir / (f"{target_stem}.md" if target_stem else "for-attention.md")
 
-            # Content-hash dedup
+            # Two-stage dedup. Exact content-hash first (cheap); if
+            # miss, semantic cosine against existing note embeddings
+            # (only when embedding_enabled + deps available).
             line_hash = _hash_note_line(line)
             if line_hash in existing_ids:
                 tid = existing_ids[line_hash]
                 deduped += 1
             else:
-                tid = f"N{next_id}"
-                next_id += 1
-                existing_ids[line_hash] = tid
-                minted += 1
+                sem_match = _semantic_find_dup(line, semantic_ctx)
+                if sem_match:
+                    tid = sem_match
+                    existing_ids[line_hash] = tid
+                    semantic_deduped += 1
+                else:
+                    tid = f"N{next_id}"
+                    next_id += 1
+                    existing_ids[line_hash] = tid
+                    _semantic_store(tid, line, semantic_ctx)
+                    minted += 1
 
             # Build new bullet with markers
             decorated = line.rstrip()
@@ -1237,6 +1443,9 @@ def cmd_sync_notes(wiki_dir: Path):
         "drained_from_new_md": drained,
         "ids_minted": minted,
         "deduped_merges": deduped,
+        "semantic_deduped_merges": semantic_deduped,
+        "semantic_backfilled": backfilled,
+        "semantic_enabled": semantic_ctx is not None,
         "routed_counts": routed,
     }))
 
