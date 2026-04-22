@@ -168,11 +168,13 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 
 For the full design rationale (why not RAG, how the ratchet works, where the skill struggles), see [`docs/architecture.md`](docs/architecture.md).
 
-## Viewing in Obsidian
+## Viewing the wiki
 
-`wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian → **Open folder as vault** → pick `<your-workspace>/wiki`. Backlinks and the graph view light up immediately, no plugins. Leave Claude Code running in the workspace root; Obsidian picks up new pages as the curator writes them.
+**Obsidian (default, richest view).** `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian → **Open folder as vault** → pick `<your-workspace>/wiki`. Backlinks and the graph view light up immediately, no plugins. Leave Claude Code running in the workspace root; Obsidian picks up new pages as the curator writes them. Treat Obsidian as a read-mostly view — manual edits outside a `git -C wiki commit` won't be seen by the curator until the next operation reads the page.
 
-Treat Obsidian as a read-mostly view. Manual edits outside a `git -C wiki commit` won't be seen by the curator until the next operation reads the page.
+**VS Code + Foam (enterprise-friendly alternative).** If Obsidian isn't installable, open the workspace in VS Code and add the **Foam** extension (free, open-source, typically on enterprise marketplaces). Foam renders `[[wikilinks]]` as clickable links, adds a backlinks panel, and provides a lightweight graph view — the core of what Obsidian gives you. Toggle `wiki_viewer_mode: "vscode"` in `.curator/config.json` and re-run setup.sh; a one-time sweep converts figure-page image embeds from Obsidian-transclusion syntax (`![[../assets/figures/foo.png]]`) to standard markdown (`![foo.png](../assets/figures/foo.png)`) so VS Code's built-in preview renders them inline. Switch back to `"obsidian"` and re-run setup.sh to convert them back.
+
+**Quartz (static-site view, installed by setup.sh).** For a browser-based graph + backlinks experience without any editor extension, setup.sh can install [Quartz](https://quartz.jzhao.xyz/) — a Node-based static-site generator purpose-built for Obsidian-style wikis. Run `bash <skill_path>/scripts/quartz.sh serve` to build and host the wiki on `http://localhost:8080`; the curator's writes land in the site on the next rebuild. Install prompts on first setup.sh run (in interactive mode) or installs silently (in non-interactive mode) — requires Node.js, which setup.sh will install user-locally via nvm if missing.
 
 ## Caveman mode (optional compression)
 

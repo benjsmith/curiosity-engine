@@ -137,6 +137,7 @@ Read `.curator/schema.md` before any operation.
   "saturation_consecutive_waves": 2,
   "orphan_dominance_threshold": 0.6,
   "figure_extract_min_citers": 2,
+  "wiki_viewer_mode": "obsidian",
   "spot_audit_interval": 20,
   "embedding_enabled": false,
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
@@ -152,6 +153,7 @@ Read `.curator/schema.md` before any operation.
 - **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
 - **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
 - **figure_extract_min_citers** — minimum `distinct_citers` on a `figure-candidates` entry for figure-extract mode to fire (default 2). Raise to 3+ if the wiki has many low-demand PDF sources you don't want auto-extracted. Set to 0 to disable figure-extract mode entirely.
+- **wiki_viewer_mode** — `"obsidian"` (default) or `"vscode"`. Controls the format of image-embed syntax in figure pages. Obsidian mode uses `![[../assets/figures/foo.png]]` (Obsidian transclusion, renders inline only in Obsidian). VS Code mode uses `![foo.png](../assets/figures/foo.png)` (standard markdown, renders in VS Code's built-in preview, GitHub web UI, and most other renderers). Setup.sh's migration pass reads this value and runs `sweep.py convert-image-embeds --target <mode>` to align figure pages with the selected mode. Idempotent — toggling back switches the syntax back.
 - **spot_audit_interval** — every Nth wave (default 20), Phase 3 dispatches a single-page adversarial spot auditor against a random accepted edit. Set to 0 to disable. Catches subtle source misrepresentation the praise-mode batch reviewer doesn't flag.
 - **embedding_enabled** / **embedding_model** — opt-in semantic vault search. When `true`, `vault_index.py` computes an embedding alongside every FTS5 row (stored in sqlite-vec), and `vault_search.py --mode hybrid` merges FTS5 + cosine rankings via RRF. Default model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim, ~80MB). Install the deps (`uv pip install sentence-transformers sqlite-vec`) before flipping `embedding_enabled` to true. Setup prompts for this at bootstrap time.
 - **cluster_scope_threshold** — when non-source wiki pages exceed this count, `epoch_summary.py` returns a `wave_scope` field (worst-scoring page + its 2-hop wikilink neighborhood). Phase 1 restricts **repair-mode** target selection to that scope; create and wire modes stay global. Default 500 pages; set to 0 to disable cluster scoping entirely.

@@ -595,6 +595,17 @@ if [ -d wiki/.git ]; then
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" dedupe-self-citations wiki >/dev/null
+        # Align figure-page image-embed syntax with the configured viewer.
+        # Default obsidian; user switches to "vscode" for VS Code preview
+        # compatibility. Idempotent when already in target form.
+        _viewer_mode=$(uv run --no-project python3 -c "
+import json, sys
+try:
+    print(json.load(open('.curator/config.json')).get('wiki_viewer_mode', 'obsidian'))
+except Exception:
+    print('obsidian')
+" 2>/dev/null || echo "obsidian")
+        uv run python3 "$SCRIPT_DIR/sweep.py" convert-image-embeds wiki --target "$_viewer_mode" >/dev/null 2>&1 || true
         uv run python3 "$SCRIPT_DIR/sweep.py" resync-stems wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" resync-prefixes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-index wiki >/dev/null

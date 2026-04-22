@@ -807,6 +807,52 @@ def cmd_fix_frontmatter_quotes(wiki_dir: Path):
                         "paths": touched[:20]}, indent=2))
 
 
+_OBSIDIAN_EMBED_RE = re.compile(r"!\[\[([^\]\n]+)\]\]")
+_VSCODE_EMBED_RE = re.compile(r"!\[([^\]\n]*)\]\(([^)\n]+)\)")
+_ASSET_PATH_HINT = re.compile(r"assets/figures/")
+
+
+def cmd_convert_image_embeds(wiki_dir: Path, target: str):
+    """Convert figure-page image embeds between Obsidian and VS Code.
+
+    Obsidian: `![[../assets/figures/attention-p3.png]]`
+    VS Code:  `![attention-p3.png](../assets/figures/attention-p3.png)`
+
+    Scope is limited to embeds whose path contains `assets/figures/` —
+    the canonical location for figure-asset PNGs — so unrelated
+    `![...](...)` or `![[...]]` uses anywhere in the wiki are left
+    untouched. Idempotent: re-running with the current target is a
+    no-op. Works on every `.md` under `wiki/` so embedded figures on
+    evidence / analysis / concept pages also migrate.
+    """
+    if target not in ("obsidian", "vscode"):
+        print(json.dumps({"ok": False, "error":
+                            f"target must be obsidian|vscode, got {target!r}"}))
+        return
+    touched = []
+    for p in wiki_pages(wiki_dir):
+        text = p.read_text()
+        if target == "vscode":
+            def obs_to_vs(m):
+                path = m.group(1)
+                if not _ASSET_PATH_HINT.search(path):
+                    return m.group(0)
+                return f"![{Path(path).name}]({path})"
+            new_text = _OBSIDIAN_EMBED_RE.sub(obs_to_vs, text)
+        else:  # obsidian
+            def vs_to_obs(m):
+                path = m.group(2)
+                if not _ASSET_PATH_HINT.search(path):
+                    return m.group(0)
+                return f"![[{path}]]"
+            new_text = _VSCODE_EMBED_RE.sub(vs_to_obs, text)
+        if new_text != text:
+            p.write_text(new_text)
+            touched.append(str(p.relative_to(wiki_dir)))
+    print(json.dumps({"ok": True, "target": target, "touched": len(touched),
+                        "paths": touched[:20]}, indent=2))
+
+
 def cmd_dedupe_self_citations(wiki_dir: Path):
     """Remove duplicate `(vault:X)` citations on source stubs only.
 
@@ -1264,11 +1310,15 @@ def main():
         "scan", "fix-source-stubs", "fix-index", "fix-percent-escapes",
         "fix-spaced-wikilinks", "fix-orphan-root-files",
         "fix-frontmatter-quotes", "dedupe-self-citations",
+        "convert-image-embeds",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
         "evidence-candidates", "figure-candidates",
         "pending-multimodal", "pending-figures",
     ])
+    ap.add_argument("--target", choices=["obsidian", "vscode"],
+                    default="obsidian",
+                    help="convert-image-embeds: target syntax form")
     ap.add_argument("wiki", nargs="?", default="wiki")
     ap.add_argument("--min-inbound", type=int, default=3,
                     help="concept-candidates: minimum distinct pages that "
@@ -1304,6 +1354,8 @@ def main():
         cmd_fix_frontmatter_quotes(wiki_dir)
     elif args.command == "dedupe-self-citations":
         cmd_dedupe_self_citations(wiki_dir)
+    elif args.command == "convert-image-embeds":
+        cmd_convert_image_embeds(wiki_dir, args.target)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":
