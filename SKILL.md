@@ -59,7 +59,8 @@ Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompt
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
 2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
-4. `bash <skill_path>/scripts/quartz.sh ...` — optional static-site viewer (see §Operations → QUARTZ-VIEW)
+4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
+5. `bash <skill_path>/scripts/quartz.sh ...` — legacy Quartz viewer (see §Operations → QUARTZ-VIEW)
 5. `date ...`
 
 `<skill_path>` is Claude Code's per-session substitution for the skill's physical directory. On coding-agent CLIs that don't perform that substitution (Codex CLI, Gemini CLI, Copilot Chat), export `CURIOSITY_ENGINE_SCRIPTS_DIR=<absolute-path-to-scripts>` once per shell or workspace; all bash invocations above work unchanged when `<skill_path>/scripts` is replaced by `$CURIOSITY_ENGINE_SCRIPTS_DIR`.
@@ -457,16 +458,26 @@ When the user volunteers a fact that maps onto an existing class table's row (a 
 
 Do not ask about every field or have long back-and-forth per row; batch updates when the user signals multiple, keep questions proportional to genuine ambiguity, capture the exchange in the log so it's auditable.
 
-### QUARTZ-VIEW — "quartz view", "open quartz", "browse the wiki"
+### VIEWER — "view the wiki", "open the graph", "browse the wiki"
 
-Optional static-site viewer for users who can't or don't want to install Obsidian. Quartz (https://quartz.jzhao.xyz/) renders the wiki — wikilinks, backlinks, a D3 graph view — to a local HTTP endpoint at `http://localhost:8080`. Shared install at `~/.cache/curiosity-engine/quartz/` so multiple workspaces share the ~500 MB node_modules cost; each workspace's wiki is symlinked into Quartz's `content/` at build time.
+Graph-first static viewer purpose-built for the curiosity-engine schema. Walks `wiki/`, queries `.curator/graph.kuzu`, and emits a single static-site bundle into `~/.cache/curiosity-engine/wiki-view/<workspace>/`. D3 force-directed graph at the centre, narrow content browser on the left with Fuse.js fuzzy search, click-to-open doc viewer modal sized 68% × 90% of the graph pane. Light/dark theming, palette-A type colours, auto/on/off label modes. No Node.js dependency — pure Python build + vanilla JS frontend with vendored D3 + Fuse.
 
-1. **Precondition.** `~/.cache/curiosity-engine/quartz/node_modules` exists. Installed by setup.sh (interactive prompt, or silent in non-interactive mode). If missing, tell the user to rerun setup.sh.
-2. **Build + serve.** `bash <skill_path>/scripts/quartz.sh serve` from the workspace root. Stays running; `^C` stops.
-3. **Open browser.** `bash <skill_path>/scripts/quartz.sh open` — same as serve but opens `http://localhost:8080` in the default browser after a short delay.
-4. **Rebuild only.** `bash <skill_path>/scripts/quartz.sh build` — produces `~/.cache/curiosity-engine/quartz/public/` and exits. Useful if you want to serve via a different HTTP server or deploy the output.
+1. **Build + serve.** `bash <skill_path>/scripts/viewer.sh serve` from the workspace root. Default port 8090; stays running until `^C`.
+2. **Open browser.** `bash <skill_path>/scripts/viewer.sh open` — same as serve but opens the URL automatically.
+3. **Rebuild only.** `bash <skill_path>/scripts/viewer.sh build` — re-emits the bundle without serving. Run after wiki edits; the page must be reloaded to pick them up.
 
-The rendered site picks up curator writes only on the next build; for live-updating previews stick with Obsidian or the VS Code + Foam combo documented in README.
+Vendor libraries (D3 + Fuse) download once into `~/.cache/curiosity-engine/wiki-view-vendor/` and copy into each workspace bundle so the rendered site is self-contained.
+
+### QUARTZ-VIEW — "quartz view", "open quartz", "old viewer"
+
+Legacy static-site viewer kept for users who prefer Quartz's exact layout. Use `viewer.sh` (above) for the curiosity-engine native viewer. Quartz (https://quartz.jzhao.xyz/) renders the wiki to `http://localhost:8080`. Shared install at `~/.cache/curiosity-engine/quartz/`; each workspace's wiki is symlinked into Quartz's `content/` at build time.
+
+1. **Precondition.** `~/.cache/curiosity-engine/quartz/node_modules` exists (set up by setup.sh's interactive prompt).
+2. **Build + serve.** `bash <skill_path>/scripts/quartz.sh serve`.
+3. **Open browser.** `bash <skill_path>/scripts/quartz.sh open`.
+4. **Rebuild only.** `bash <skill_path>/scripts/quartz.sh build`.
+
+Both viewers pick up curator writes only on the next build; for live-updating previews use Obsidian or VS Code + Foam.
 
 ### NOTES — "/note X", "add a note", free-form user input
 
