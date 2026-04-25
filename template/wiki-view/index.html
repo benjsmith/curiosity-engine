@@ -37,6 +37,31 @@
         <span class="ctrl-label">labels:</span><span id="label-mode-state">auto</span>
       </button>
     </div>
+    <button id="settings-trigger" class="icon-btn settings-trigger" title="Physics settings" aria-label="Physics settings">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="8" r="2.4"/>
+        <path d="M8 1.5 L8 3.2 M8 12.8 L8 14.5 M1.5 8 L3.2 8 M12.8 8 L14.5 8 M3.4 3.4 L4.6 4.6 M11.4 11.4 L12.6 12.6 M3.4 12.6 L4.6 11.4 M11.4 4.6 L12.6 3.4"/>
+      </svg>
+    </button>
+    <div id="settings-panel" class="settings-panel hidden" role="dialog" aria-label="Physics settings">
+      <div class="settings-head">Physics</div>
+      <div class="settings-row">
+        <label for="phys-charge">Repulsion</label>
+        <input id="phys-charge" type="range" min="-1200" max="-50" step="10" value="-420">
+        <span id="phys-charge-val" class="settings-val">-420</span>
+      </div>
+      <div class="settings-row">
+        <label for="phys-link">Link distance</label>
+        <input id="phys-link" type="range" min="20" max="300" step="5" value="110">
+        <span id="phys-link-val" class="settings-val">110</span>
+      </div>
+      <div class="settings-row">
+        <label for="phys-collide">Collide pad</label>
+        <input id="phys-collide" type="range" min="0" max="40" step="1" value="10">
+        <span id="phys-collide-val" class="settings-val">10</span>
+      </div>
+      <button id="phys-reset" class="settings-reset">Reset</button>
+    </div>
   </main>
 
   <div id="modal-backdrop" class="hidden" aria-hidden="true"></div>

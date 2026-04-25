@@ -46,10 +46,18 @@ window.Graph = (function () {
   // Source-type matcher: frontmatter says 'source', subdir name 'sources'.
   function isSourceType(t) { return t === 'source' || t === 'sources'; }
 
-  // Minimum on-screen pixel size for a label to ever be considered.
-  const MIN_NODE_RADIUS_FOR_LABEL_PX = 7;
+  // Physics defaults — exposed via the settings panel as live sliders.
+  // Values bumped from previous round for more spread between clusters.
+  const PHYSICS_DEFAULTS = { charge: -420, link: 110, collide: 10 };
+  const PHYSICS = Object.assign({}, PHYSICS_DEFAULTS);
+
+  // Minimum on-screen sizes for a label to ever be considered.
+  const MIN_NODE_RADIUS_FOR_LABEL_PX = 6;
+  const MIN_LABEL_TEXT_HEIGHT_PX = 10;   // text smaller than this isn't legible
   // Padding around each label's bounding box (px) when checking collisions.
   const LABEL_PADDING_PX = 4;
+  // SVG text font-size in user units (must match CSS .node text font-size).
+  const LABEL_FONT_SVG = 11;
 
   function nodeRadius(d) {
     return 4 + Math.sqrt((d.degree || 0) + 1) * 1.6;
@@ -108,13 +116,25 @@ window.Graph = (function () {
       .attr('dy', d => -nodeRadius(d) - 3)
       .text(d => d.title || d.id);
 
+    // Measure each label's natural width once so the auto-mode collision
+    // check uses real widths instead of a character-count estimate.
+    // getComputedTextLength returns SVG user units; multiply by zoom k
+    // to convert to screen px during collision testing.
+    textSel.each(function(d) {
+      try {
+        d._labelW = this.getComputedTextLength();
+      } catch (e) {
+        d._labelW = (d.title || d.id).length * 6.5;
+      }
+    });
+
     // Force simulation. Tuned for cluster separation; pre-warmed below
     // so the user doesn't watch the layout flop into place on first paint.
     simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(edges).id(d => d.id).distance(85).strength(0.55))
-      .force('charge', d3.forceManyBody().strength(-310).distanceMax(420))
+      .force('link', d3.forceLink(edges).id(d => d.id).distance(PHYSICS.link).strength(0.55))
+      .force('charge', d3.forceManyBody().strength(PHYSICS.charge).distanceMax(500))
       .force('center', d3.forceCenter().strength(0.04))
-      .force('collide', d3.forceCollide(d => nodeRadius(d) + 7))
+      .force('collide', d3.forceCollide(d => nodeRadius(d) + PHYSICS.collide))
       .stop();   // halt the auto-loop while we hand-tick
 
     // Pre-warm: 250 manual ticks land the layout very close to settled.
@@ -171,11 +191,85 @@ window.Graph = (function () {
 
     modeStateEl = document.querySelector('#label-mode-state');
     document.querySelector('#label-mode').addEventListener('click', cycleLabelMode);
+    initSettingsPanel();
 
-    // Initial paint puts sources into hidden state.
     applyVisibility();
 
     return { focus: focusOnPage };
+  }
+
+  /* Settings panel — top-right gear icon opens a popover with physics
+   * sliders. Live updates simulation forces; values persist for the
+   * session via memory only (refresh resets to defaults). */
+  function initSettingsPanel() {
+    const trigger = document.querySelector('#settings-trigger');
+    const panel = document.querySelector('#settings-panel');
+    if (!trigger || !panel) return;
+
+    trigger.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      panel.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (ev) => {
+      if (panel.classList.contains('hidden')) return;
+      if (panel.contains(ev.target)) return;
+      if (trigger.contains(ev.target)) return;
+      panel.classList.add('hidden');
+    });
+
+    function bindSlider(inputId, valueId, apply) {
+      const input = document.querySelector('#' + inputId);
+      const out = document.querySelector('#' + valueId);
+      if (!input || !out) return;
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        out.textContent = input.value;
+        apply(v);
+        simulation.alpha(0.35).restart();
+      });
+    }
+
+    bindSlider('phys-charge', 'phys-charge-val', v => {
+      PHYSICS.charge = v;
+      simulation.force('charge').strength(v);
+    });
+    bindSlider('phys-link', 'phys-link-val', v => {
+      PHYSICS.link = v;
+      simulation.force('link').distance(v);
+    });
+    bindSlider('phys-collide', 'phys-collide-val', v => {
+      PHYSICS.collide = v;
+      simulation.force('collide', d3.forceCollide(d => nodeRadius(d) + v));
+    });
+
+    const resetBtn = document.querySelector('#phys-reset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        Object.assign(PHYSICS, PHYSICS_DEFAULTS);
+        const set = (id, valId, v) => {
+          const i = document.querySelector('#' + id);
+          const o = document.querySelector('#' + valId);
+          if (i) i.value = v;
+          if (o) o.textContent = v;
+        };
+        set('phys-charge',  'phys-charge-val',  PHYSICS.charge);
+        set('phys-link',    'phys-link-val',    PHYSICS.link);
+        set('phys-collide', 'phys-collide-val', PHYSICS.collide);
+        simulation.force('charge').strength(PHYSICS.charge);
+        simulation.force('link').distance(PHYSICS.link);
+        simulation.force('collide', d3.forceCollide(d => nodeRadius(d) + PHYSICS.collide));
+        simulation.alpha(0.6).restart();
+      });
+    }
+
+    // Initial paint of the slider readouts so they match the active values.
+    const setOut = (valId, v) => {
+      const o = document.querySelector('#' + valId);
+      if (o) o.textContent = v;
+    };
+    setOut('phys-charge-val',  PHYSICS.charge);
+    setOut('phys-link-val',    PHYSICS.link);
+    setOut('phys-collide-val', PHYSICS.collide);
   }
 
   function tick() {
@@ -231,33 +325,25 @@ window.Graph = (function () {
       ? (() => { const s = new Set(neighbours.get(focusId) || []); s.add(focusId); return s; })()
       : null;
 
+    // Source NODES stay visible — only their labels are gated to hover.
+    // Same applies to edges that touch sources.
     nodeSel.attr('data-vis', d => {
       if (hasFocus) {
         if (d.id === focusId) return 'focus';
         if (focusSet.has(d.id)) return 'neighbour';
-        if (isSourceType(d.type)) return 'hidden';
         return 'dim';
       }
-      if (isSourceType(d.type)) return 'hidden';
       return null;
     });
 
     edgeSel.attr('data-vis', e => {
       const sId = (typeof e.source === 'object') ? e.source.id : e.source;
       const tId = (typeof e.target === 'object') ? e.target.id : e.target;
-      const sIsSource = isSourceType(nodeById.get(sId)?.type);
-      const tIsSource = isSourceType(nodeById.get(tId)?.type);
       if (hasFocus) {
         const touchesFocus = sId === focusId || tId === focusId;
         if (touchesFocus) return 'focus';
-        // Hide edges whose source endpoint would itself be hidden in
-        // this focus state (avoids edges leading to nothing).
-        const sourceHidden = sIsSource && !focusSet.has(sId);
-        const targetHidden = tIsSource && !focusSet.has(tId);
-        if (sourceHidden || targetHidden) return 'hidden';
         return 'dim';
       }
-      if (sIsSource || tIsSource) return 'hidden';
       return null;
     });
 
@@ -310,42 +396,51 @@ window.Graph = (function () {
     });
   }
 
-  /* Greedy bbox-collision label placement.
+  /* Greedy bbox-collision label placement (Obsidian-style).
    *
-   * Candidate filter: node is non-source, on-screen radius >= MIN_PX.
-   * Candidates sorted by degree (largest = most connections first), so
-   * the most-connected nodes win label slots when they collide with
-   * smaller neighbours.
-   *
-   * Bounding box is approximated from character count (Inter at 11px is
-   * ~6.2 px/char). A fully accurate measure would call getBBox per
-   * label, which works but costs reflows; the heuristic is good enough.
+   * Approach:
+   *   - Zoom gate: at low zoom the rendered text is too small to read
+   *     anyway, so emit no auto labels (matches Obsidian where labels
+   *     only appear once you zoom in).
+   *   - Candidate filter: node is non-source, on-screen radius and label
+   *     height clear minimum thresholds.
+   *   - Candidates sorted by degree (largest = most connections first),
+   *     so the most-connected nodes win when they collide with neighbours.
+   *   - Label widths come from getComputedTextLength() measured at
+   *     element-creation time, scaled by current zoom k to land in
+   *     screen pixels.
    */
   function recomputeAutoVisible() {
     if (!nodes) { _autoVisibleIds = new Set(); return; }
     const r = svg.node().getBoundingClientRect();
     const k = zoomTransform.k;
 
+    // Soft zoom gate. SVG text inside the zoomed group renders at
+    // LABEL_FONT_SVG * k screen pixels — gate when that's below
+    // legibility threshold.
+    const labelHScreen = LABEL_FONT_SVG * k;
+    if (labelHScreen < MIN_LABEL_TEXT_HEIGHT_PX) {
+      _autoVisibleIds = new Set();
+      return;
+    }
+
     const candidates = [];
     for (const d of nodes) {
-      if (isSourceType(d.type)) continue;     // sources never auto-label
-      if (d.x == null) continue;              // pre-tick guard
+      if (isSourceType(d.type)) continue;
+      if (d.x == null) continue;
       const screenR = nodeRadius(d) * k;
       if (screenR < MIN_NODE_RADIUS_FOR_LABEL_PX) continue;
-      // Node centre in screen space (svg viewBox has origin at centre).
       const sx = d.x * k + zoomTransform.x + r.width / 2;
       const sy = d.y * k + zoomTransform.y + r.height / 2;
-      // Cull candidates outside the visible viewport (with a margin).
       if (sx < -100 || sy < -100 || sx > r.width + 100 || sy > r.height + 100) continue;
-      const title = d.title || d.id;
-      const w = title.length * 6.2 + LABEL_PADDING_PX * 2;
-      const h = 14 + LABEL_PADDING_PX * 2;
+      const labelWScreen = (d._labelW || (d.title || d.id).length * 6.5) * k;
+      const w = labelWScreen + LABEL_PADDING_PX * 2;
+      const h = labelHScreen + LABEL_PADDING_PX * 2;
       candidates.push({
         id: d.id,
         degree: d.degree || 0,
-        // bbox above the node circle (text-anchor middle, dy = -r - 3)
         x: sx - w / 2,
-        y: sy - screenR - 3 - h,
+        y: sy - screenR - 3 * k - h,
         w, h,
       });
     }
