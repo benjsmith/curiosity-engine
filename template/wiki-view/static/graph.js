@@ -150,9 +150,13 @@ window.Graph = (function () {
     simulation.on('end', () => scheduleAutoRecompute());
 
     // Drag — Obsidian-style click-and-hold to move. Release lets physics
-    // take over again (no pinning).
+    // take over again (no pinning). clickDistance(5) means small pointer
+    // movement during a click still registers as a click — without it
+    // even a 1-px wobble suppresses the native click event and the user
+    // has to double-click to open the modal.
     nodeSel.call(
       d3.drag()
+        .clickDistance(5)
         .on('start', (ev, d) => {
           if (!ev.active) simulation.alphaTarget(0.3).restart();
           d.fx = d.x; d.fy = d.y;

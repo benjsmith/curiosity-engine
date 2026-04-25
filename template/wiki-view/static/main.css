@@ -622,16 +622,20 @@ body[data-sidebar="collapsed"] #modal {
   stroke-width: 1;
   fill: none;
 }
+.sub-edge[data-kind="depicts"] { stroke-dasharray: 3 3; }
+
 .sub-node { cursor: pointer; }
 .sub-node.sub-center { cursor: default; }
 .sub-node circle {
   stroke: var(--bg-modal);
   stroke-width: 1.2px;
-  transition: stroke 100ms;
+  transition: stroke 100ms, opacity 120ms;
 }
+.sub-node[data-hop="2"] circle { opacity: 0.65; }
 .sub-node:not(.sub-center):hover circle {
   stroke: var(--accent);
   stroke-width: 1.8px;
+  opacity: 1;
 }
 .sub-node text {
   fill: var(--text);
@@ -642,8 +646,12 @@ body[data-sidebar="collapsed"] #modal {
   stroke: var(--bg-modal);
   stroke-width: 3px;
   stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 90ms;
 }
+.sub-node:hover text { opacity: 1; }
 .sub-node.sub-center text {
+  opacity: 1;
   font-size: 11px;
   font-weight: 600;
 }

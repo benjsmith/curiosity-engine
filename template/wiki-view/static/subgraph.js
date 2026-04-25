@@ -1,28 +1,41 @@
 /* Subgraph view inside the doc viewer modal.
  *
- * Static radial layout: the focused page is the centre node, all
- * 1-hop neighbours arrange evenly around it. Clicking a neighbour
- * pushes a hash change which the main-router picks up and swaps the
- * modal content to that page. The wheel pattern is deliberate — a
- * deterministic, fast layout that's readable at a glance and never
- * has to relax like the main graph.
+ * 2-hop force-directed mini-graph:
+ *   - Centre node = current modal target. Pinned at the viewport middle
+ *     so the rest of the layout fans around it. Label always visible.
+ *   - 1-hop neighbours = direct connections. Label on hover.
+ *   - 2-hop neighbours = connections of connections. Smaller, slightly
+ *     faded; label on hover. Skipped entirely when the 1-hop set is
+ *     already dense (>30 nodes).
+ *   - All edges between any pair of nodes in the set are drawn.
  *
- * Public API: Subgraph.init(data), Subgraph.render(centerId), Subgraph.clear()
+ * Layout runs as a normal d3-force simulation but is pre-warmed (250
+ * manual ticks) before any DOM update, so the user sees the settled
+ * layout at first paint without watching it relax.
+ *
+ * Click any non-centre node → push hash, main-router swaps the modal
+ * content to that page; the subgraph re-renders for the new centre.
  */
 window.Subgraph = (function () {
-  let nodes = null, palette = null;
+  let allNodes = null, allEdges = null, palette = null;
   let nodeById = new Map();
   let neighbours = new Map();
-  let containerEl = null;
-  let headEl = null;
+  let containerEl = null, headEl = null;
+
+  // Node-set caps. 1-hop dense neighbourhoods (e.g. Scaling Laws with
+  // 50+ direct edges) skip the 2-hop expansion to keep the wheel
+  // readable. The hard cap stops 2-hop runaway on small but well-
+  // connected hops.
+  const HOP1_HOP2_THRESHOLD = 30;
+  const HARD_NODE_CAP = 80;
 
   function init(data) {
-    nodes = data.nodes;
+    allNodes = data.nodes;
+    allEdges = data.edges || [];
     palette = data.palette || {};
-    nodeById = new Map();
+    nodeById = new Map(allNodes.map(n => [n.id, n]));
     neighbours = new Map();
-    nodes.forEach(n => nodeById.set(n.id, n));
-    (data.edges || []).forEach(e => {
+    allEdges.forEach(e => {
       const s = (typeof e.source === 'object') ? e.source.id : e.source;
       const t = (typeof e.target === 'object') ? e.target.id : e.target;
       if (!neighbours.has(s)) neighbours.set(s, new Set());
@@ -33,7 +46,6 @@ window.Subgraph = (function () {
     containerEl = document.querySelector('#modal-subgraph');
     headEl = document.querySelector('#modal-subgraph-head');
 
-    // Click delegation — neighbour click navigates, centre is inert.
     if (containerEl) {
       containerEl.addEventListener('click', (ev) => {
         const g = ev.target.closest && ev.target.closest('.sub-node');
@@ -49,82 +61,107 @@ window.Subgraph = (function () {
     if (!containerEl) return;
     const center = nodeById.get(centerId);
     if (!center) { clear(); return; }
-    const nIds = neighbours.get(centerId) || new Set();
-    const ns = [...nIds].map(id => nodeById.get(id)).filter(Boolean);
+
+    // Build the 2-hop node set.
+    const hop1 = neighbours.get(centerId) || new Set();
+    const ids = new Set([centerId]);
+    hop1.forEach(id => ids.add(id));
+
+    let includedHop2 = false;
+    if (hop1.size < HOP1_HOP2_THRESHOLD) {
+      for (const n1 of hop1) {
+        if (ids.size >= HARD_NODE_CAP) break;
+        const h2 = neighbours.get(n1) || new Set();
+        for (const n2 of h2) {
+          if (ids.size >= HARD_NODE_CAP) break;
+          if (!ids.has(n2)) {
+            ids.add(n2);
+            includedHop2 = true;
+          }
+        }
+      }
+    }
 
     if (headEl) {
-      headEl.textContent = ns.length === 0
-        ? 'No connections'
-        : `Connections (${ns.length})`;
+      const cnt = ids.size - 1;
+      const desc = includedHop2 ? '2-hop' : '1-hop';
+      headEl.textContent = cnt > 0 ? `Connections (${cnt}, ${desc})` : 'No connections';
     }
-    if (ns.length === 0) {
-      containerEl.innerHTML = '';
-      return;
+    if (ids.size <= 1) { containerEl.innerHTML = ''; return; }
+
+    const subNodes = [...ids].map(id => Object.assign({
+      hop: id === centerId ? 0 : (hop1.has(id) ? 1 : 2),
+    }, nodeById.get(id)));
+    const subById = new Map(subNodes.map(n => [n.id, n]));
+    const subEdges = [];
+    for (const e of allEdges) {
+      const sId = (typeof e.source === 'object') ? e.source.id : e.source;
+      const tId = (typeof e.target === 'object') ? e.target.id : e.target;
+      if (subById.has(sId) && subById.has(tId) && sId !== tId) {
+        subEdges.push({ source: sId, target: tId, type: e.type });
+      }
     }
 
-    // Sort neighbours by degree desc so larger nodes occupy the more
-    // visually prominent angular slots (the wheel is symmetric, but
-    // dense neighbourhoods read better with the top edges populated by
-    // hubs).
-    ns.sort((a, b) => (b.degree || 0) - (a.degree || 0));
-
-    // Geometry. Container width is fluid; we pick a height that scales
-    // gently with neighbour count so dense wheels don't compress.
     const W = containerEl.clientWidth || 600;
-    const H = Math.max(280, Math.min(420, 240 + ns.length * 4));
-    const cx = W / 2, cy = H / 2;
-    const ringR = Math.min(W, H) * 0.36;
+    const H = Math.max(360, Math.min(560, 300 + subNodes.length * 3));
+
+    // Pin the centre to the viewport middle and run a settled simulation.
+    const cn = subById.get(centerId);
+    cn.fx = W / 2;
+    cn.fy = H / 2;
+
+    const sim = d3.forceSimulation(subNodes)
+      .force('link', d3.forceLink(subEdges).id(d => d.id)
+        .distance(d => 38 + (d.source.hop + d.target.hop) * 6)
+        .strength(0.55))
+      .force('charge', d3.forceManyBody()
+        .strength(d => d.hop === 0 ? -380 : -160)
+        .distanceMax(260))
+      .force('collide', d3.forceCollide(d => subRadius(d) + 5))
+      .alpha(1)
+      .alphaDecay(0.06)
+      .stop();
+
+    for (let i = 0; i < 250; i++) sim.tick();
+
+    // Clamp positions inside the SVG so nothing escapes off-screen
+    // during the static render.
+    const margin = 28;
+    for (const n of subNodes) {
+      n.x = Math.max(margin, Math.min(W - margin, n.x));
+      n.y = Math.max(margin, Math.min(H - margin, n.y));
+    }
 
     const colourFor = t => palette[t] || palette.default || '#7a7a7a';
-    const radius = d => 4 + Math.sqrt((d.degree || 0) + 1) * 1.4;
-    const centerR = Math.max(8, radius(center) + 2);
-
-    // Hard truncation for label legibility in dense wheels.
-    const labelChars = ns.length > 16 ? 16 : (ns.length > 8 ? 22 : 28);
-    const trunc = (s, n) => s.length > n ? s.substring(0, n - 1) + '…' : s;
-
     let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`;
 
-    // Edges first so nodes paint on top.
-    const positioned = ns.map((n, i) => {
-      const angle = (2 * Math.PI * i / ns.length) - Math.PI / 2;  // start at 12 o'clock
-      return {
-        n,
-        x: cx + ringR * Math.cos(angle),
-        y: cy + ringR * Math.sin(angle),
-        angle,
-      };
-    });
-    for (const p of positioned) {
-      svg += `<line class="sub-edge" x1="${cx}" y1="${cy}" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}"/>`;
+    // Edges first.
+    for (const e of subEdges) {
+      const s = subById.get(typeof e.source === 'object' ? e.source.id : e.source);
+      const t = subById.get(typeof e.target === 'object' ? e.target.id : e.target);
+      svg += `<line class="sub-edge" data-kind="${escapeAttr(e.type)}" x1="${s.x.toFixed(1)}" y1="${s.y.toFixed(1)}" x2="${t.x.toFixed(1)}" y2="${t.y.toFixed(1)}"/>`;
     }
 
-    // Centre node (no click — already showing).
-    svg += `<g class="sub-node sub-center" data-id="${escapeAttr(center.id)}" data-type="${escapeAttr(center.type)}">
-      <circle cx="${cx}" cy="${cy}" r="${centerR}" fill="${colourFor(center.type)}"/>
-      <text x="${cx}" y="${cy + centerR + 14}" text-anchor="middle">${escapeHtml(trunc(center.title || center.id, 32))}</text>
-      <title>${escapeHtml(center.title || center.id)}</title>
-    </g>`;
-
-    // Neighbour nodes — labels positioned outside the ring so they
-    // don't tangle with the centre. Anchor flips left/right of centre.
-    for (const p of positioned) {
-      const r = radius(p.n);
-      const dx = Math.cos(p.angle);
-      const dy = Math.sin(p.angle);
-      const labelDist = r + 8;
-      const lx = (p.x + dx * labelDist).toFixed(1);
-      const ly = (p.y + dy * labelDist + 4).toFixed(1);    // +4 baseline shim
-      const anchor = dx > 0.15 ? 'start' : dx < -0.15 ? 'end' : 'middle';
-      svg += `<g class="sub-node" data-id="${escapeAttr(p.n.id)}" data-type="${escapeAttr(p.n.type)}">
-        <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}" fill="${colourFor(p.n.type)}"/>
-        <text x="${lx}" y="${ly}" text-anchor="${anchor}">${escapeHtml(trunc(p.n.title || p.n.id, labelChars))}</text>
-        <title>${escapeHtml(p.n.title || p.n.id)}</title>
+    // Nodes.
+    for (const n of subNodes) {
+      const r = subRadius(n);
+      const isCenter = n.id === centerId;
+      const cls = isCenter ? 'sub-node sub-center' : 'sub-node';
+      svg += `<g class="${cls}" data-id="${escapeAttr(n.id)}" data-type="${escapeAttr(n.type)}" data-hop="${n.hop}">
+        <circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="${r}" fill="${colourFor(n.type)}"/>
+        <text x="${n.x.toFixed(1)}" y="${(n.y - r - 4).toFixed(1)}" text-anchor="middle">${escapeHtml(n.title || n.id)}</text>
+        <title>${escapeHtml(n.title || n.id)}</title>
       </g>`;
     }
-
     svg += '</svg>';
     containerEl.innerHTML = svg;
+  }
+
+  function subRadius(d) {
+    const baseR = 4 + Math.sqrt((d.degree || 0) + 1) * 1.4;
+    if (d.hop === 0) return baseR + 2;
+    if (d.hop === 2) return Math.max(3, baseR - 1);
+    return baseR;
   }
 
   function clear() {
