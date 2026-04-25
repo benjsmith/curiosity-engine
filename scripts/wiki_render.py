@@ -83,6 +83,29 @@ _ITAL_RE = re.compile(r"(?<![*])\*([^*\n]+)\*(?![*])")
 _CODE_RE = re.compile(r"`([^`]+)`")
 _CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
 _BULLET_RE = re.compile(r"^(\s*)[-*]\s+(.+)$")
+# Image embeds: Obsidian transclusion `![[path]]` and standard markdown
+# `![alt](path)`. Both rewrite asset paths to bundle-relative form.
+_IMG_EMBED_RE = re.compile(r"!\[\[([^\]]+)\]\]")
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
+
+def _normalise_asset_path(path: str) -> str:
+    """Map a figure-asset path to its bundle-relative form.
+
+    Cases:
+      `figures/_assets/X.png`  → unchanged (already absolute-from-wiki)
+      `_assets/X.png`          → `figures/_assets/X.png` (figure-page-relative form)
+      `X.png` (no slash)       → `figures/_assets/X.png` (legacy short-form)
+      anything else            → unchanged
+    """
+    path = path.strip()
+    if path.startswith("figures/_assets/"):
+        return path
+    if path.startswith("_assets/"):
+        return "figures/" + path
+    if "/" not in path:
+        return "figures/_assets/" + path
+    return path
 
 
 def _render_inline(line: str, stems_to_path: dict[str, str]) -> str:
@@ -117,6 +140,25 @@ def _render_inline(line: str, stems_to_path: dict[str, str]) -> str:
         return f"\x00CODE{len(code_spans) - 1}\x00"
 
     line = _CODE_RE.sub(_code_stash, line)
+
+    # Image embeds before wikilinks — `![[X]]` would otherwise look like
+    # a wikilink with a `!` character outside it.
+    def _img_embed(m):
+        target = m.group(1)
+        # Obsidian's `![[X|alt]]` syntax — split on pipe if present.
+        alt = ""
+        if "|" in target:
+            target, alt = target.split("|", 1)
+        path = _normalise_asset_path(target)
+        return f'<img class="wiki-img" src="{_html_escape(path)}" alt="{_html_escape(alt)}">'
+
+    def _md_image(m):
+        alt = m.group(1)
+        path = _normalise_asset_path(m.group(2))
+        return f'<img class="wiki-img" src="{_html_escape(path)}" alt="{_html_escape(alt)}">'
+
+    line = _IMG_EMBED_RE.sub(_img_embed, line)
+    line = _MD_IMAGE_RE.sub(_md_image, line)
     line = WIKILINK_RE.sub(_wikilink, line)
     # Citations to vault sources — render as muted superscript-style link.
     def _cite(m):
@@ -328,6 +370,16 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "data.json").write_text(json.dumps(data, separators=(",", ":")))
+
+    # Mirror figure assets so the modal's <img> tags resolve. Folder
+    # is small (gitignored PNGs) and copies are cheap; copy every time
+    # so removed/renamed assets don't linger in the bundle.
+    assets_src = wiki_dir / "figures" / "_assets"
+    assets_dst = output_dir / "figures" / "_assets"
+    if assets_dst.exists():
+        shutil.rmtree(assets_dst)
+    if assets_src.is_dir():
+        shutil.copytree(assets_src, assets_dst)
 
     # Copy the static shell from the skill template tree.
     static_src = Path(__file__).resolve().parent.parent / "template" / "wiki-view"
