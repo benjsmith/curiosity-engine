@@ -40,10 +40,16 @@ window.Graph = (function () {
   let textSel = null;
   let focusId = null;       // hover OR modal target; null = idle
   let focusOrigin = null;   // 'hover' | 'modal' — for ordering rules
+  let _autoVisibleIds = new Set();    // cache: ids whose labels show in auto mode
+  let _autoRecomputeScheduled = false;
 
-  // Auto-mode label thresholds. Tighter than v1 (was 0.68 radius).
-  const MIN_NODE_RADIUS_FOR_LABEL_PX = 9;
-  const CENTRAL_FRAC = 0.35;   // labels in auto only show within 35% of min dim
+  // Source-type matcher: frontmatter says 'source', subdir name 'sources'.
+  function isSourceType(t) { return t === 'source' || t === 'sources'; }
+
+  // Minimum on-screen pixel size for a label to ever be considered.
+  const MIN_NODE_RADIUS_FOR_LABEL_PX = 7;
+  // Padding around each label's bounding box (px) when checking collisions.
+  const LABEL_PADDING_PX = 4;
 
   function nodeRadius(d) {
     return 4 + Math.sqrt((d.degree || 0) + 1) * 1.6;
@@ -102,18 +108,26 @@ window.Graph = (function () {
       .attr('dy', d => -nodeRadius(d) - 3)
       .text(d => d.title || d.id);
 
-    // Force simulation. Tuned for cluster separation:
-    //   - charge stronger and limited in range so distant clusters don't tug
-    //   - link distance longer so rooted hubs splay out
-    //   - collide expanded so dense clusters loosen
+    // Force simulation. Tuned for cluster separation; pre-warmed below
+    // so the user doesn't watch the layout flop into place on first paint.
     simulation = d3.forceSimulation(nodes)
       .force('link', d3.forceLink(edges).id(d => d.id).distance(85).strength(0.55))
       .force('charge', d3.forceManyBody().strength(-310).distanceMax(420))
       .force('center', d3.forceCenter().strength(0.04))
       .force('collide', d3.forceCollide(d => nodeRadius(d) + 7))
-      .alpha(1.4)
-      .alphaDecay(0.018)
-      .on('tick', tick);
+      .stop();   // halt the auto-loop while we hand-tick
+
+    // Pre-warm: 250 manual ticks land the layout very close to settled.
+    // No DOM updates happen during these ticks (we haven't bound 'tick'
+    // yet) so this is effectively free vs. animating each frame.
+    simulation.alpha(1).alphaDecay(0.05);
+    for (let i = 0; i < 250; i++) simulation.tick();
+
+    // Bind the per-tick render callback and gently restart with low
+    // alpha so the layout breathes without animating from scratch.
+    simulation.on('tick', tick);
+    simulation.alpha(0.25).alphaDecay(0.05).restart();
+    simulation.on('end', () => scheduleAutoRecompute());
 
     // Drag — Obsidian-style click-and-hold to move. Release lets physics
     // take over again (no pinning).
@@ -143,7 +157,8 @@ window.Graph = (function () {
       .on('zoom', (ev) => {
         zoomTransform = ev.transform;
         g.attr('transform', ev.transform);
-        applyVisibility();
+        scheduleAutoRecompute();
+        applyLabelOpacity();
       });
     svg.call(zoomBehavior);
 
@@ -178,6 +193,7 @@ window.Graph = (function () {
     const r = svg.node().getBoundingClientRect();
     svg.attr('viewBox', [-r.width / 2, -r.height / 2, r.width, r.height]);
     if (simulation) simulation.alpha(0.3).restart();
+    scheduleAutoRecompute();
     applyLabelOpacity();
   }
 
@@ -219,30 +235,28 @@ window.Graph = (function () {
       if (hasFocus) {
         if (d.id === focusId) return 'focus';
         if (focusSet.has(d.id)) return 'neighbour';
-        if (d.type === 'sources') return 'hidden';
+        if (isSourceType(d.type)) return 'hidden';
         return 'dim';
       }
-      // Idle: sources hidden, everything else visible.
-      if (d.type === 'sources') return 'hidden';
+      if (isSourceType(d.type)) return 'hidden';
       return null;
     });
 
     edgeSel.attr('data-vis', e => {
       const sId = (typeof e.source === 'object') ? e.source.id : e.source;
       const tId = (typeof e.target === 'object') ? e.target.id : e.target;
+      const sIsSource = isSourceType(nodeById.get(sId)?.type);
+      const tIsSource = isSourceType(nodeById.get(tId)?.type);
       if (hasFocus) {
         const touchesFocus = sId === focusId || tId === focusId;
-        const sourceVis = focusSet.has(sId) || (sId !== focusId && nodeById.get(sId)?.type !== 'sources');
-        const targetVis = focusSet.has(tId) || (tId !== focusId && nodeById.get(tId)?.type !== 'sources');
         if (touchesFocus) return 'focus';
-        // Dim non-focus edges; hide them entirely if a sources endpoint
-        // would be hidden in this state (avoids edges leading to nothing).
-        if (!sourceVis || !targetVis) return 'hidden';
+        // Hide edges whose source endpoint would itself be hidden in
+        // this focus state (avoids edges leading to nothing).
+        const sourceHidden = sIsSource && !focusSet.has(sId);
+        const targetHidden = tIsSource && !focusSet.has(tId);
+        if (sourceHidden || targetHidden) return 'hidden';
         return 'dim';
       }
-      // Idle: hide edges that touch a sources node (since sources are hidden).
-      const sIsSource = nodeById.get(sId)?.type === 'sources';
-      const tIsSource = nodeById.get(tId)?.type === 'sources';
       if (sIsSource || tIsSource) return 'hidden';
       return null;
     });
@@ -250,44 +264,118 @@ window.Graph = (function () {
     applyLabelOpacity();
   }
 
-  /* applyLabelOpacity — runs every tick + zoom + resize. Hot path; avoid
-   * DOM reads inside the loop. */
+  /* applyLabelOpacity — runs every tick + zoom + resize. Hot path; cheap
+   * lookups only. Auto-mode visibility is precomputed in
+   * `_autoVisibleIds` and reused until zoom/layout settles. */
   function applyLabelOpacity() {
     if (!textSel) return;
     const hasFocus = focusId != null;
     const focusSet = hasFocus
       ? (() => { const s = new Set(neighbours.get(focusId) || []); s.add(focusId); return s; })()
       : null;
-    const r = svg.node().getBoundingClientRect();
-    const minDim = Math.min(r.width, r.height);
-    const radiusBudget = (minDim * CENTRAL_FRAC) / 2;
-    const k = zoomTransform.k;
 
     textSel.style('opacity', function(d) {
-      // Hidden node → no label.
-      if (d.type === 'sources' && (!hasFocus || !focusSet.has(d.id))) return 0;
+      const isSource = isSourceType(d.type);
 
-      // Always show labels for focus + neighbours, regardless of mode.
+      // Source labels only show when the source itself is the focus —
+      // not when a source is just a 1-hop neighbour. Keeps the visible
+      // graph clear of source-title clutter when reading a non-source
+      // page.
+      if (isSource) {
+        return (hasFocus && d.id === focusId) ? 1 : 0;
+      }
+
+      // Non-sources: focus + neighbours always show, regardless of mode.
       if (hasFocus && focusSet.has(d.id)) return 1;
 
       if (labelMode === 'on')  return 1;
       if (labelMode === 'off') return 0;
 
-      // auto: must clear screen-radius bar AND sit in central area.
-      const screenR = nodeRadius(d) * k;
-      if (screenR < MIN_NODE_RADIUS_FOR_LABEL_PX) return 0;
-      const sx = d.x * k + zoomTransform.x;
-      const sy = d.y * k + zoomTransform.y;
-      const dist = Math.hypot(sx, sy);
-      const t = (dist - radiusBudget * 0.6) / (radiusBudget * 0.4);
-      return Math.max(0, Math.min(1, 1 - t));
+      // auto: collision-free greedy set computed in recomputeAutoVisible.
+      return _autoVisibleIds.has(d.id) ? 1 : 0;
     });
+  }
+
+  /* scheduleAutoRecompute coalesces zoom/resize/tick/end events into a
+   * single rAF-deferred recompute. The collision check is O(n²) in
+   * the candidate count which is fine at <300 candidates, but we don't
+   * want to run it on every tick. */
+  function scheduleAutoRecompute() {
+    if (_autoRecomputeScheduled) return;
+    _autoRecomputeScheduled = true;
+    requestAnimationFrame(() => {
+      _autoRecomputeScheduled = false;
+      recomputeAutoVisible();
+      applyLabelOpacity();
+    });
+  }
+
+  /* Greedy bbox-collision label placement.
+   *
+   * Candidate filter: node is non-source, on-screen radius >= MIN_PX.
+   * Candidates sorted by degree (largest = most connections first), so
+   * the most-connected nodes win label slots when they collide with
+   * smaller neighbours.
+   *
+   * Bounding box is approximated from character count (Inter at 11px is
+   * ~6.2 px/char). A fully accurate measure would call getBBox per
+   * label, which works but costs reflows; the heuristic is good enough.
+   */
+  function recomputeAutoVisible() {
+    if (!nodes) { _autoVisibleIds = new Set(); return; }
+    const r = svg.node().getBoundingClientRect();
+    const k = zoomTransform.k;
+
+    const candidates = [];
+    for (const d of nodes) {
+      if (isSourceType(d.type)) continue;     // sources never auto-label
+      if (d.x == null) continue;              // pre-tick guard
+      const screenR = nodeRadius(d) * k;
+      if (screenR < MIN_NODE_RADIUS_FOR_LABEL_PX) continue;
+      // Node centre in screen space (svg viewBox has origin at centre).
+      const sx = d.x * k + zoomTransform.x + r.width / 2;
+      const sy = d.y * k + zoomTransform.y + r.height / 2;
+      // Cull candidates outside the visible viewport (with a margin).
+      if (sx < -100 || sy < -100 || sx > r.width + 100 || sy > r.height + 100) continue;
+      const title = d.title || d.id;
+      const w = title.length * 6.2 + LABEL_PADDING_PX * 2;
+      const h = 14 + LABEL_PADDING_PX * 2;
+      candidates.push({
+        id: d.id,
+        degree: d.degree || 0,
+        // bbox above the node circle (text-anchor middle, dy = -r - 3)
+        x: sx - w / 2,
+        y: sy - screenR - 3 - h,
+        w, h,
+      });
+    }
+
+    candidates.sort((a, b) => b.degree - a.degree);
+
+    const placed = [];
+    const visibleIds = new Set();
+    for (const c of candidates) {
+      let collide = false;
+      for (let i = 0; i < placed.length; i++) {
+        const p = placed[i];
+        if (c.x < p.x + p.w && c.x + c.w > p.x &&
+            c.y < p.y + p.h && c.y + c.h > p.y) {
+          collide = true; break;
+        }
+      }
+      if (!collide) {
+        placed.push(c);
+        visibleIds.add(c.id);
+      }
+    }
+    _autoVisibleIds = visibleIds;
   }
 
   function setLabelMode(mode) {
     labelMode = mode;
     document.documentElement.dataset.labels = mode;
     if (modeStateEl) modeStateEl.textContent = mode;
+    if (mode === 'auto') recomputeAutoVisible();
     applyLabelOpacity();
   }
 

@@ -9,23 +9,41 @@
  * Empty query restores the grouped view.
  */
 window.Sidebar = (function () {
+  // Frontmatter uses singular type names (entity, fact, …); the plural
+  // form occasionally leaks in. Canonicalise to the singular so a page
+  // typed `entity` and one typed `entities` end up in the same section.
+  // Order is the human reading order; unknown types fall to alphabetical.
+  const TYPE_CANONICAL = {
+    analysis: 'analysis', analyses: 'analysis',
+    concept:  'concept',  concepts: 'concept',
+    entity:   'entity',   entities: 'entity',
+    evidence: 'evidence',
+    fact:     'fact',     facts:    'fact',
+    figure:   'figure',   figures:  'figure',
+    table:    'table',    tables:   'table',
+    source:   'source',   sources:  'source',
+    note:     'note',     notes:    'note',
+    todo:     'todo-list','todo-list': 'todo-list',
+  };
   const TYPE_ORDER = [
-    'analyses', 'concepts', 'concept', 'entities', 'evidence', 'facts',
-    'figures', 'tables', 'sources', 'notes', 'todo-list',
+    'analysis', 'concept', 'entity', 'evidence', 'fact', 'figure',
+    'table', 'source', 'note', 'todo-list',
   ];
   const TYPE_LABEL = {
-    analyses:    'Analyses',
-    concepts:    'Concepts',
+    analysis:    'Analyses',
     concept:     'Concepts',
-    entities:    'Entities',
+    entity:      'Entities',
     evidence:    'Evidence',
-    facts:       'Facts',
-    figures:     'Figures',
-    tables:      'Tables',
-    sources:     'Sources',
-    notes:       'Notes',
+    fact:        'Facts',
+    figure:      'Figures',
+    table:       'Tables',
+    source:      'Sources',
+    note:        'Notes',
     'todo-list': 'Todos',
   };
+  function canonicalType(t) {
+    return TYPE_CANONICAL[t] || t || 'default';
+  }
 
   let listEl, searchEl, fuse, allRecords, allPages;
   let collapsed = new Set();   // type names currently collapsed
@@ -94,7 +112,7 @@ window.Sidebar = (function () {
   function renderGrouped() {
     const byType = new Map();
     for (const rec of allRecords) {
-      const t = rec.type || 'default';
+      const t = canonicalType(rec.type);
       if (!byType.has(t)) byType.set(t, []);
       byType.get(t).push(rec);
     }

@@ -41,17 +41,28 @@ from naming import (  # noqa: E402
 # parse, and CSS keeps the same values via :root vars (kept in sync
 # manually; if they drift, the front-end's runtime palette wins).
 PALETTE = {
-    "sources":   "#6b8be8",  # electric blue
-    "entities":  "#e8a06b",  # amber
-    "concepts":  "#6be8b3",  # mint
-    "concept":   "#6be8b3",  # alias used by hub pages
-    "analyses":  "#e86b9b",  # pink
+    # Frontmatter `type:` values are singular (`entity`, `fact`, …);
+    # plural forms are subdir names that occasionally leak in. Both
+    # are listed so neither falls through to the grey default.
+    "source":    "#6b8be8",  # electric blue
+    "sources":   "#6b8be8",
+    "entity":    "#e8a06b",  # amber
+    "entities":  "#e8a06b",
+    "concept":   "#6be8b3",  # mint
+    "concepts":  "#6be8b3",
+    "analysis":  "#e86b9b",  # pink
+    "analyses":  "#e86b9b",
     "evidence":  "#e8d96b",  # yellow
-    "facts":     "#b36be8",  # violet
-    "tables":    "#6be8e8",  # cyan
-    "figures":   "#e86b6b",  # coral
-    "notes":     "#909090",  # silver
+    "fact":      "#b36be8",  # violet
+    "facts":     "#b36be8",
+    "table":     "#6be8e8",  # cyan
+    "tables":    "#6be8e8",
+    "figure":    "#e86b6b",  # coral
+    "figures":   "#e86b6b",
+    "note":      "#909090",  # silver
+    "notes":     "#909090",
     "todo-list": "#ffae42",  # amber accent
+    "todo":      "#ffae42",
     "default":   "#7a7a7a",  # neutral fallback
 }
 
