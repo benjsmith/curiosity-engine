@@ -56,6 +56,7 @@ window.Modal = (function () {
     backdrop.setAttribute('aria-hidden', 'false');
     document.body.dataset.modal = 'open';
     bodyEl.parentElement.scrollTop = 0;
+    if (window.Subgraph) Subgraph.render(pageId);
     return true;
   }
 
@@ -65,6 +66,7 @@ window.Modal = (function () {
     modal.setAttribute('aria-hidden', 'true');
     backdrop.setAttribute('aria-hidden', 'true');
     document.body.dataset.modal = '';
+    if (window.Subgraph) Subgraph.clear();
     if (typeof onClose === 'function') onClose();
     // Strip the page=… part of the hash if present, so closing leaves
     // a clean URL the user can bookmark for the graph view.

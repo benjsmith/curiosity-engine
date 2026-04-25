@@ -18,6 +18,7 @@
 
   Theme.init();
   Sidebar.init(data);
+  Subgraph.init(data);
   Modal.init(data);
   Graph.init(data);
 
