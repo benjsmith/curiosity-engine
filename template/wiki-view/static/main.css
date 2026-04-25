@@ -624,20 +624,22 @@ body[data-sidebar="collapsed"] #modal {
 }
 .sub-edge[data-kind="depicts"] { stroke-dasharray: 3 3; }
 
-.sub-node { cursor: pointer; }
-.sub-node.sub-center { cursor: default; }
-.sub-node circle {
+.sub-circle { cursor: pointer; }
+.sub-circle.sub-center { cursor: default; }
+.sub-circle circle {
   stroke: var(--bg-modal);
   stroke-width: 1.2px;
-  transition: stroke 100ms, opacity 120ms;
+  transition: stroke 100ms;
 }
-.sub-node[data-hop="2"] circle { opacity: 0.65; }
-.sub-node:not(.sub-center):hover circle {
+.sub-circle:not(.sub-center):hover circle {
   stroke: var(--accent);
   stroke-width: 1.8px;
-  opacity: 1;
 }
-.sub-node text {
+
+/* Labels live in a layer above all circles so they never paint
+ * behind a sibling node. Default opacity 0 — toggled on by the JS
+ * hover wiring or always-on for the centre. */
+.sub-label {
   fill: var(--text);
   font-size: 10px;
   font-weight: 500;
@@ -649,8 +651,8 @@ body[data-sidebar="collapsed"] #modal {
   opacity: 0;
   transition: opacity 90ms;
 }
-.sub-node:hover text { opacity: 1; }
-.sub-node.sub-center text {
+.sub-label[data-hover="true"] { opacity: 1; }
+.sub-label.sub-label-centre {
   opacity: 1;
   font-size: 11px;
   font-weight: 600;
