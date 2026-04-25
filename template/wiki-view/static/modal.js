@@ -65,9 +65,7 @@ window.Modal = (function () {
     modal.setAttribute('aria-hidden', 'true');
     backdrop.setAttribute('aria-hidden', 'true');
     document.body.dataset.modal = '';
-    if (typeof onClose === 'function') {
-      const cb = onClose; onClose = null; cb();
-    }
+    if (typeof onClose === 'function') onClose();
     // Strip the page=… part of the hash if present, so closing leaves
     // a clean URL the user can bookmark for the graph view.
     if (window.location.hash.startsWith('#page=')) {
@@ -75,6 +73,8 @@ window.Modal = (function () {
     }
   }
 
+  /* setOnClose registers a *persistent* close listener (not one-shot).
+   * main.js uses this to clear the graph focus on every close. */
   function setOnClose(cb) { onClose = cb; }
 
   function renderProperties(page) {

@@ -36,23 +36,23 @@ from naming import (  # noqa: E402
 )
 
 
-# Palette A — earthy scholarly. Single source of truth: this dict is
+# Palette B — modern saturated. Single source of truth: this dict is
 # emitted into data.json so the front-end can read it without a CSS
 # parse, and CSS keeps the same values via :root vars (kept in sync
 # manually; if they drift, the front-end's runtime palette wins).
 PALETTE = {
-    "sources":  "#8c7156",  # sepia
-    "entities": "#5c7a8c",  # dusty blue
-    "concepts": "#6b8c5c",  # moss
-    "analyses": "#8c5c6b",  # mauve
-    "evidence": "#c4ac6b",  # gold
-    "facts":    "#6b6b8c",  # periwinkle
-    "tables":   "#5c8c8c",  # eucalyptus
-    "figures":  "#8c6b8c",  # heather
-    "notes":    "#999999",  # silver  — notes/* hub + drain pages
-    "todo-list": "#c47b56", # rust   — todos/* hub + buckets
-    "concept": "#6b8c5c",   # alias used by some hub pages
-    "default":  "#7a7a7a",  # neutral fallback for unknown types
+    "sources":   "#6b8be8",  # electric blue
+    "entities":  "#e8a06b",  # amber
+    "concepts":  "#6be8b3",  # mint
+    "concept":   "#6be8b3",  # alias used by hub pages
+    "analyses":  "#e86b9b",  # pink
+    "evidence":  "#e8d96b",  # yellow
+    "facts":     "#b36be8",  # violet
+    "tables":    "#6be8e8",  # cyan
+    "figures":   "#e86b6b",  # coral
+    "notes":     "#909090",  # silver
+    "todo-list": "#ffae42",  # amber accent
+    "default":   "#7a7a7a",  # neutral fallback
 }
 
 

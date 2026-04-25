@@ -32,8 +32,13 @@
       }
     } else {
       Modal.close();
+      if (Graph.clearFocus) Graph.clearFocus();
     }
   }
+  // Modal's close paths (X button, backdrop click, ESC) replaceState
+  // and don't fire hashchange — let the modal tell us so we can
+  // un-focus the graph.
+  Modal.setOnClose(() => { if (Graph.clearFocus) Graph.clearFocus(); });
   window.addEventListener('hashchange', applyHash);
   applyHash();
 })();
