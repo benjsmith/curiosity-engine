@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Three-node graph favicon. Colours pulled from palette B:
+       mint (concept), amber (entity), violet (fact) — chosen for
+       distinctness at a tab-icon size. -->
+  <line x1="9" y1="22" x2="23" y2="22" stroke="#5a6068" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="9" y1="22" x2="16" y2="9"  stroke="#5a6068" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="23" y1="22" x2="16" y2="9" stroke="#5a6068" stroke-width="1.6" stroke-linecap="round"/>
+  <circle cx="16" cy="9"  r="5" fill="#6be8b3"/>
+  <circle cx="9"  cy="22" r="5" fill="#e8a06b"/>
+  <circle cx="23" cy="22" r="5" fill="#b36be8"/>
+</svg>
