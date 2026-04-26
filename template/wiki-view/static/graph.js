@@ -42,9 +42,46 @@ window.Graph = (function () {
   let focusOrigin = null;   // 'hover' | 'modal' — for ordering rules
   let _autoVisibleIds = new Set();    // cache: ids whose labels show in auto mode
   let _autoRecomputeScheduled = false;
+  let _isDragging = false;            // suppress hover-focus changes mid-drag
 
   // Source-type matcher: frontmatter says 'source', subdir name 'sources'.
   function isSourceType(t) { return t === 'source' || t === 'sources'; }
+
+  // Types whose labels stay silent unless the node is directly hovered
+  // or selected. Sources are noisy because there are many of them; fact
+  // and analysis pages often carry long titles that dominate the screen.
+  // The nodes themselves remain fully visible — only their labels are
+  // gated.
+  const QUIET_LABEL_TYPES = new Set([
+    'source', 'sources',
+    'fact', 'facts',
+    'analysis', 'analyses',
+  ]);
+  function isQuietLabelType(t) { return QUIET_LABEL_TYPES.has(t); }
+
+  // Title parsing + wrapping. Frontmatter titles often start with a
+  // bracketed type abbreviation (e.g. `[ana] Pretraining Data Curation`).
+  // We pull the prefix out so it can be rendered in a muted colour on
+  // its own line above the title body, and we wrap the body to at most
+  // 2 words per line per the user's spec.
+  const TITLE_PREFIX_RE = /^(\[[^\]]+\])\s+(.+)$/;
+  function parseTitle(title) {
+    const m = TITLE_PREFIX_RE.exec(title);
+    if (m) return { prefix: m[1], rest: m[2] };
+    return { prefix: '', rest: title };
+  }
+  function wrapTitleBody(text, wordsPerLine) {
+    const wpl = wordsPerLine || 2;
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines = [];
+    for (let i = 0; i < words.length; i += wpl) {
+      lines.push(words.slice(i, i + wpl).join(' '));
+    }
+    return lines.length ? lines : [''];
+  }
+
+  // Line height for multi-line label rendering (matches CSS font-size 11px).
+  const LABEL_LINE_HEIGHT_SVG = 12;
 
   // Physics defaults — exposed via the settings panel as live sliders.
   // Values bumped from previous round for more spread between clusters.
@@ -99,8 +136,15 @@ window.Graph = (function () {
         .attr('class', 'node')
         .attr('data-id', d => d.id)
         .attr('data-type', d => d.type)
-        .on('mouseenter', (ev, d) => setFocus(d.id, 'hover'))
+        .on('mouseenter', (ev, d) => {
+          // Skip during drag — sliding the cursor over neighbour nodes
+          // mid-drag was firing hover focus changes and making labels
+          // flash in/out unpredictably.
+          if (_isDragging) return;
+          setFocus(d.id, 'hover');
+        })
         .on('mouseleave', () => {
+          if (_isDragging) return;
           if (focusOrigin === 'hover') setFocus(null);
         })
         .on('click', (ev, d) => {
@@ -112,19 +156,44 @@ window.Graph = (function () {
       .attr('r', d => d.r = nodeRadius(d))
       .attr('fill', d => colourFor(d.type, palette));
 
-    textSel = nodeSel.append('text')
-      .attr('dy', d => -nodeRadius(d) - 3)
-      .text(d => d.title || d.id);
+    textSel = nodeSel.append('text');
+    textSel.each(function(d) {
+      const t = d3.select(this);
+      const { prefix, rest } = parseTitle(d.title || d.id);
+      const lines = wrapTitleBody(rest, 2);
+      const numLines = lines.length + (prefix ? 1 : 0);
+      d._labelLineCount = numLines;
+      // Position the text element so the bottom line baseline sits at
+      // -r - 3 (just above the circle). Since first tspan inherits y
+      // and subsequent tspans accumulate dy, place y at the topmost
+      // baseline.
+      const r = nodeRadius(d);
+      t.attr('y', -r - 3 - (numLines - 1) * LABEL_LINE_HEIGHT_SVG);
+      if (prefix) {
+        t.append('tspan')
+          .attr('class', 'label-prefix')
+          .attr('x', 0)
+          .text(prefix);
+      }
+      lines.forEach((line, i) => {
+        const ts = t.append('tspan').attr('x', 0).text(line);
+        // First tspan inherits y; subsequent ones add LINE_HEIGHT.
+        if (prefix || i > 0) ts.attr('dy', LABEL_LINE_HEIGHT_SVG);
+      });
+    });
 
-    // Measure each label's natural width once so the auto-mode collision
-    // check uses real widths instead of a character-count estimate.
-    // getComputedTextLength returns SVG user units; multiply by zoom k
-    // to convert to screen px during collision testing.
+    // Measure each label's natural bbox once so the auto-mode collision
+    // check uses real (multi-line) dimensions. getBBox returns SVG user
+    // units; multiplied by zoom k for screen px during collision testing.
     textSel.each(function(d) {
       try {
-        d._labelW = this.getComputedTextLength();
+        const b = this.getBBox();
+        d._labelW = b.width;
+        d._labelH = b.height;
       } catch (e) {
-        d._labelW = (d.title || d.id).length * 6.5;
+        const longest = (d.title || d.id).split(/\s+/).slice(0, 2).join(' ');
+        d._labelW = longest.length * 6.5;
+        d._labelH = (d._labelLineCount || 1) * LABEL_LINE_HEIGHT_SVG;
       }
     });
 
@@ -158,6 +227,7 @@ window.Graph = (function () {
       d3.drag()
         .clickDistance(5)
         .on('start', (ev, d) => {
+          _isDragging = true;
           if (!ev.active) simulation.alphaTarget(0.3).restart();
           d.fx = d.x; d.fy = d.y;
         })
@@ -165,6 +235,7 @@ window.Graph = (function () {
           d.fx = ev.x; d.fy = ev.y;
         })
         .on('end', (ev, d) => {
+          _isDragging = false;
           if (!ev.active) simulation.alphaTarget(0);
           d.fx = null; d.fy = null;
         })
@@ -365,17 +436,15 @@ window.Graph = (function () {
       : null;
 
     textSel.style('opacity', function(d) {
-      const isSource = isSourceType(d.type);
-
-      // Source labels only show when the source itself is the focus —
-      // not when a source is just a 1-hop neighbour. Keeps the visible
-      // graph clear of source-title clutter when reading a non-source
-      // page.
-      if (isSource) {
+      // Quiet types (sources, facts, analyses) only show their label
+      // when the node itself is the focus — they're either too numerous
+      // (sources) or carry long titles (fact/analysis) and dominate the
+      // screen otherwise.
+      if (isQuietLabelType(d.type)) {
         return (hasFocus && d.id === focusId) ? 1 : 0;
       }
 
-      // Non-sources: focus + neighbours always show, regardless of mode.
+      // Other types: focus + neighbours always show, regardless of mode.
       if (hasFocus && focusSet.has(d.id)) return 1;
 
       if (labelMode === 'on')  return 1;
@@ -422,15 +491,15 @@ window.Graph = (function () {
     // Soft zoom gate. SVG text inside the zoomed group renders at
     // LABEL_FONT_SVG * k screen pixels — gate when that's below
     // legibility threshold.
-    const labelHScreen = LABEL_FONT_SVG * k;
-    if (labelHScreen < MIN_LABEL_TEXT_HEIGHT_PX) {
+    const minLineHScreen = LABEL_FONT_SVG * k;
+    if (minLineHScreen < MIN_LABEL_TEXT_HEIGHT_PX) {
       _autoVisibleIds = new Set();
       return;
     }
 
     const candidates = [];
     for (const d of nodes) {
-      if (isSourceType(d.type)) continue;
+      if (isQuietLabelType(d.type)) continue;   // never auto-label
       if (d.x == null) continue;
       const screenR = nodeRadius(d) * k;
       if (screenR < MIN_NODE_RADIUS_FOR_LABEL_PX) continue;
@@ -438,6 +507,7 @@ window.Graph = (function () {
       const sy = d.y * k + zoomTransform.y + r.height / 2;
       if (sx < -100 || sy < -100 || sx > r.width + 100 || sy > r.height + 100) continue;
       const labelWScreen = (d._labelW || (d.title || d.id).length * 6.5) * k;
+      const labelHScreen = (d._labelH || LABEL_LINE_HEIGHT_SVG) * k;
       const w = labelWScreen + LABEL_PADDING_PX * 2;
       const h = labelHScreen + LABEL_PADDING_PX * 2;
       candidates.push({

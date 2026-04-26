@@ -298,6 +298,14 @@ body[data-sidebar="collapsed"] .sidebar-restore { display: inline-flex; }
   stroke-linejoin: round;
   letter-spacing: -0.005em;
 }
+/* Bracketed type prefix on its own line, muted so the title body reads
+ * as the dominant text. */
+.node text .label-prefix,
+.sub-label .label-prefix {
+  fill: var(--text-faint);
+  font-weight: 400;
+  font-size: 9.5px;
+}
 
 /* Node visibility states. The graph.js code sets:
  *   data-vis="hidden" — completely invisible (default for sources w/o focus)

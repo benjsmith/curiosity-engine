@@ -25,6 +25,43 @@ window.Subgraph = (function () {
   let neighbours = new Map();
   let containerEl = null, headEl = null;
 
+  // Title parsing + wrapping (mirrors main graph).
+  const TITLE_PREFIX_RE = /^(\[[^\]]+\])\s+(.+)$/;
+  function parseTitle(t) {
+    const m = TITLE_PREFIX_RE.exec(t);
+    if (m) return { prefix: m[1], rest: m[2] };
+    return { prefix: '', rest: t };
+  }
+  function wrapTitleBody(text, wpl) {
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines = [];
+    for (let i = 0; i < words.length; i += wpl) {
+      lines.push(words.slice(i, i + wpl).join(' '));
+    }
+    return lines.length ? lines : [''];
+  }
+  const SUB_LINE_HEIGHT = 12;
+
+  function buildLabelTspans(title, x) {
+    const { prefix, rest } = parseTitle(title);
+    const lines = wrapTitleBody(rest, 2);
+    const parts = [];
+    if (prefix) {
+      parts.push(`<tspan class="label-prefix" x="${x}">${escapeHtml(prefix)}</tspan>`);
+    }
+    lines.forEach((line, i) => {
+      const dy = (prefix || i > 0) ? ` dy="${SUB_LINE_HEIGHT}"` : '';
+      parts.push(`<tspan x="${x}"${dy}>${escapeHtml(line)}</tspan>`);
+    });
+    return parts.join('');
+  }
+
+  function labelLineCount(title) {
+    const { prefix, rest } = parseTitle(title);
+    const body = wrapTitleBody(rest, 2);
+    return body.length + (prefix ? 1 : 0);
+  }
+
   function init(data) {
     allNodes = data.nodes;
     allEdges = data.edges || [];
@@ -163,12 +200,18 @@ window.Subgraph = (function () {
     // ── Labels (top layer) ──
     // Centre's label is permanently visible; others toggle to opacity 1
     // when their corresponding circle is hovered (data-hover="true").
+    // Multi-tspan rendering: grey [type] prefix on its own line, body
+    // wrapped at ≤2 words per line.
     svg += '<g class="sub-labels">';
     for (const n of subNodes) {
       const r = subRadius(n);
       const isCenter = n.id === centerId;
       const cls = isCenter ? 'sub-label sub-label-centre' : 'sub-label';
-      svg += `<text class="${cls}" data-id="${escapeAttr(n.id)}" x="${n.x.toFixed(1)}" y="${(n.y - r - 5).toFixed(1)}" text-anchor="middle">${escapeHtml(n.title || n.id)}</text>`;
+      const title = n.title || n.id;
+      const numLines = labelLineCount(title);
+      const xStr = n.x.toFixed(1);
+      const yStr = (n.y - r - 5 - (numLines - 1) * SUB_LINE_HEIGHT).toFixed(1);
+      svg += `<text class="${cls}" data-id="${escapeAttr(n.id)}" x="${xStr}" y="${yStr}" text-anchor="middle">${buildLabelTspans(title, xStr)}</text>`;
     }
     svg += '</g>';
 
