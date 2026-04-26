@@ -57,8 +57,13 @@ window.Modal = (function () {
     document.body.dataset.modal = 'open';
     bodyEl.parentElement.scrollTop = 0;
     if (window.Subgraph) Subgraph.render(pageId);
+    if (window.Edit) Edit.updateForPage(page);
     return true;
   }
+
+  /* Refresh the cached `pages` dict (called after a successful edit
+   * so the modal shows the rebuilt body_html on next open). */
+  function refresh(data) { pages = data.pages || {}; }
 
   function close() {
     modal.classList.add('hidden');
@@ -133,5 +138,5 @@ window.Modal = (function () {
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
 
-  return { init, open, close, setOnClose };
+  return { init, open, close, setOnClose, refresh };
 })();

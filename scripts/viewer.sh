@@ -98,9 +98,8 @@ case "$cmd" in
         build
         port="$(_pick_port "${2:-8090}")" || exit 1
         echo "Wiki viewer serving $OUTPUT_DIR at http://localhost:$port"
-        echo "(Ctrl+C to stop; rerun 'viewer.sh build' to refresh after wiki edits)"
-        cd "$OUTPUT_DIR"
-        uv run --no-project python3 -m http.server "$port" --bind 127.0.0.1
+        echo "(Ctrl+C to stop; in-viewer edits and uploads write directly back to wiki/ + vault/raw/)"
+        uv run --no-project python3 "$SCRIPT_DIR/viewer_server.py" "$OUTPUT_DIR" "$WORKSPACE" "$port"
         ;;
     open)
         build
@@ -110,8 +109,7 @@ case "$cmd" in
         (sleep 1 && (command -v open >/dev/null && open "$url" || \
                      command -v xdg-open >/dev/null && xdg-open "$url" || \
                      echo "(open $url manually)")) &
-        cd "$OUTPUT_DIR"
-        uv run --no-project python3 -m http.server "$port" --bind 127.0.0.1
+        uv run --no-project python3 "$SCRIPT_DIR/viewer_server.py" "$OUTPUT_DIR" "$WORKSPACE" "$port"
         ;;
     *)
         echo "Usage: viewer.sh {build|serve [port]|open [port]}" >&2

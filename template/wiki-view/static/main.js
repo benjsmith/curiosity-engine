@@ -22,6 +22,27 @@
   Modal.init(data);
   Graph.init(data);
 
+  /* refetchData — called after the Edit module saves a page. Pulls a
+   * fresh data.json (the server rebuilds the bundle on every write)
+   * and re-paints the modules that hold page state. The graph layout
+   * is left alone so an in-flight save doesn't yank the camera. */
+  async function refetchData(currentPageId) {
+    try {
+      const res = await fetch('data.json?t=' + Date.now());
+      data = await res.json();
+    } catch (e) {
+      console.warn('refetchData failed:', e);
+      return;
+    }
+    if (Modal.refresh)    Modal.refresh(data);
+    if (Subgraph.init)    Subgraph.init(data);   // re-binds neighbour map
+    if (currentPageId && Modal.open) {
+      Modal.open(currentPageId);
+      if (Sidebar.setActive) Sidebar.setActive(currentPageId);
+    }
+  }
+  if (window.Edit) Edit.init(data, refetchData);
+
   function applyHash() {
     const m = window.location.hash.match(/^#page=([^&]+)$/);
     if (m) {

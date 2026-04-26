@@ -449,6 +449,7 @@ else
         "scripts/update.sh"                  # post-in-session-update allowlist
         "scripts/naming.py"                  # post-naming-allowlist-gap fix
         "scripts/viewer.sh"                  # post-custom-viewer allowlist
+        "scripts/viewer_server.py"           # post-edit-mode allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -541,6 +542,7 @@ EOF
       "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/wiki_render.py:*)",
+      "Bash(uv run python3 $root/scripts/viewer_server.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
       "Bash(bash $root/scripts/viewer.sh:*)",
       "Bash(bash $root/scripts/update.sh:*)",
