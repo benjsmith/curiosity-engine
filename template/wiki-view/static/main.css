@@ -33,29 +33,31 @@
 }
 
 :root {
-  /* Palette B — modern saturated. Mirror of PALETTE in wiki_render.py.
-   * Both singular and plural forms because frontmatter uses singular
-   * (entity, fact, …) while subdir names are plural. */
-  --type-source:    #6b8be8;
-  --type-sources:   #6b8be8;
-  --type-entity:    #e8a06b;
-  --type-entities:  #e8a06b;
-  --type-concept:   #6be8b3;
-  --type-concepts:  #6be8b3;
-  --type-analysis:  #e86b9b;
-  --type-analyses:  #e86b9b;
-  --type-evidence:  #e8d96b;
-  --type-fact:      #b36be8;
-  --type-facts:     #b36be8;
-  --type-table:     #6be8e8;
-  --type-tables:    #6be8e8;
-  --type-figure:    #e86b6b;
-  --type-figures:   #e86b6b;
-  --type-note:      #909090;
-  --type-notes:     #909090;
-  --type-todo:      #ffae42;
-  --type-todo-list: #ffae42;
-  --type-default:   #7a7a7a;
+  /* Palette — Tableau-10-derived, all 10 hues + unclassified clearly
+   * separable. Mirror of PALETTE in wiki_render.py. Singular and
+   * plural forms because frontmatter uses singular while subdir names
+   * are plural. */
+  --type-source:        #4a7ab8;
+  --type-sources:       #4a7ab8;
+  --type-entity:        #f28e2b;
+  --type-entities:      #f28e2b;
+  --type-concept:       #59a14f;
+  --type-concepts:      #59a14f;
+  --type-analysis:      #a76aaa;
+  --type-analyses:      #a76aaa;
+  --type-evidence:      #e8c547;
+  --type-fact:          #d44a47;
+  --type-facts:         #d44a47;
+  --type-table:         #4ec0c5;
+  --type-tables:        #4ec0c5;
+  --type-figure:        #e377c2;
+  --type-figures:       #e377c2;
+  --type-note:          #9aa0a8;
+  --type-notes:         #9aa0a8;
+  --type-todo:          #c8744a;
+  --type-todo-list:     #c8744a;
+  --type-unclassified:  #6b7080;
+  --type-default:       #7a7a7a;
 
   --sidebar-w:    280px;
 
@@ -220,8 +222,9 @@ body[data-sidebar="collapsed"] #sidebar > * { display: none; }
 .dot.dot-figures   { background: var(--type-figures); }
 .dot.dot-note      { background: var(--type-note); }
 .dot.dot-notes     { background: var(--type-notes); }
-.dot.dot-todo      { background: var(--type-todo); }
-.dot.dot-todo-list { background: var(--type-todo-list); }
+.dot.dot-todo         { background: var(--type-todo); }
+.dot.dot-todo-list    { background: var(--type-todo-list); }
+.dot.dot-unclassified { background: var(--type-unclassified); }
 
 .sidebar-foot {
   display: flex;

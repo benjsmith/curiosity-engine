@@ -36,35 +36,48 @@ from naming import (  # noqa: E402
 )
 
 
-# Palette B — modern saturated. Single source of truth: this dict is
-# emitted into data.json so the front-end can read it without a CSS
-# parse, and CSS keeps the same values via :root vars (kept in sync
-# manually; if they drift, the front-end's runtime palette wins).
+# Palette — derived from Tableau 10 with a few adjustments so all 10
+# canonical types + Unclassified are clearly distinguishable. Single
+# source of truth: this dict is emitted into data.json so the front-end
+# can read it without a CSS parse; CSS mirrors the values via :root
+# vars (manually kept in sync — runtime palette from data.json wins
+# at SVG fill time).
 PALETTE = {
-    # Frontmatter `type:` values are singular (`entity`, `fact`, …);
-    # plural forms are subdir names that occasionally leak in. Both
-    # are listed so neither falls through to the grey default.
-    "source":    "#6b8be8",  # electric blue
-    "sources":   "#6b8be8",
-    "entity":    "#e8a06b",  # amber
-    "entities":  "#e8a06b",
-    "concept":   "#6be8b3",  # mint
-    "concepts":  "#6be8b3",
-    "analysis":  "#e86b9b",  # pink
-    "analyses":  "#e86b9b",
-    "evidence":  "#e8d96b",  # yellow
-    "fact":      "#b36be8",  # violet
-    "facts":     "#b36be8",
-    "table":     "#6be8e8",  # cyan
-    "tables":    "#6be8e8",
-    "figure":    "#e86b6b",  # coral
-    "figures":   "#e86b6b",
-    "note":      "#909090",  # silver
-    "notes":     "#909090",
-    "todo-list": "#ffae42",  # amber accent
-    "todo":      "#ffae42",
-    "default":   "#7a7a7a",  # neutral fallback
+    "source":       "#4a7ab8",  # steel blue
+    "sources":      "#4a7ab8",
+    "entity":       "#f28e2b",  # bright orange
+    "entities":     "#f28e2b",
+    "concept":      "#59a14f",  # green
+    "concepts":     "#59a14f",
+    "analysis":     "#a76aaa",  # mauve purple
+    "analyses":     "#a76aaa",
+    "evidence":     "#e8c547",  # golden yellow
+    "fact":         "#d44a47",  # crimson red
+    "facts":        "#d44a47",
+    "table":        "#4ec0c5",  # cyan-teal
+    "tables":       "#4ec0c5",
+    "figure":       "#e377c2",  # rose pink
+    "figures":      "#e377c2",
+    "note":         "#9aa0a8",  # silver
+    "notes":        "#9aa0a8",
+    "todo":         "#c8744a",  # terracotta
+    "todo-list":    "#c8744a",
+    "unclassified": "#6b7080",  # slate grey — pages whose type doesn't
+                                  # match a canonical category yet
+    "default":      "#7a7a7a",  # neutral fallback (rarely visible)
 }
+
+# Canonical type set. Pages whose frontmatter `type:` isn't here get
+# bucketed as `unclassified` in the rendered viewer so they don't
+# disappear into the silent `default` grey. The on-disk frontmatter is
+# never rewritten — this is render-time normalisation only.
+KNOWN_TYPES = frozenset({
+    "source", "sources", "entity", "entities",
+    "concept", "concepts", "analysis", "analyses",
+    "evidence", "fact", "facts", "table", "tables",
+    "figure", "figures", "note", "notes",
+    "todo", "todo-list",
+})
 
 
 def _output_root() -> Path:
@@ -327,7 +340,11 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
         text = p.read_text(errors="replace")
         fm, body = read_frontmatter(text)
         title = fm.get("title", Path(rel).stem) if isinstance(fm, dict) else Path(rel).stem
-        ptype = fm.get("type", "default") if isinstance(fm, dict) else "default"
+        raw_type = (fm.get("type", "") if isinstance(fm, dict) else "") or ""
+        # Normalise unknown / missing types into a single Unclassified
+        # bucket so the viewer surfaces them for human review instead
+        # of letting them sink into the silent `default` grey.
+        ptype = raw_type if raw_type in KNOWN_TYPES else "unclassified"
         page_id = rel[:-3] if rel.endswith(".md") else rel
         # Frontmatter property table for the modal header. Skip keys
         # already shown elsewhere or that aren't user-meaningful.
@@ -350,10 +367,17 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
 
     nodes, edges = _build_graph(wiki_dir, page_paths)
 
-    # Drop any node whose id isn't in page_data (graph drift). Drop
-    # any edge whose endpoint isn't in the surviving node set.
+    # Drop any node whose id isn't in page_data (graph drift) and
+    # reconcile each surviving node's type/title with the freshly-
+    # parsed frontmatter — kuzu can carry stale values from a build
+    # done before the file was re-seeded, and on-disk wins.
     page_ids = set(page_data.keys())
     nodes = [n for n in nodes if n["id"] in page_ids]
+    for n in nodes:
+        fresh = page_data.get(n["id"])
+        if fresh:
+            n["type"] = fresh["type"]
+            n["title"] = fresh["title"]
     surviving = {n["id"] for n in nodes}
     edges = [e for e in edges if e["source"] in surviving and e["target"] in surviving]
 

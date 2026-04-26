@@ -133,7 +133,15 @@ def read_frontmatter(text: str) -> tuple:
     lines = fm_block.split("\n")
     i = 0
     while i < len(lines):
-        line = lines[i].strip()
+        raw = lines[i]
+        # Lines indented under a parent (e.g. column rows inside a
+        # `table:` block) are NOT top-level keys. Without this guard a
+        # column like `      type: string` was getting parsed as the
+        # page's `type` and overwriting the real value.
+        if raw and raw[0] in (" ", "\t"):
+            i += 1
+            continue
+        line = raw.strip()
         if not line or ":" not in line:
             i += 1
             continue

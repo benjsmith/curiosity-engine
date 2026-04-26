@@ -48,16 +48,17 @@ window.Graph = (function () {
   // names plural; collapse to a single key per type so the user-facing
   // filter operates on one axis.
   const TYPE_CANONICAL = {
-    analysis: 'analysis', analyses: 'analysis',
-    concept:  'concept',  concepts: 'concept',
-    entity:   'entity',   entities: 'entity',
-    evidence: 'evidence',
-    fact:     'fact',     facts:    'fact',
-    figure:   'figure',   figures:  'figure',
-    table:    'table',    tables:   'table',
-    source:   'source',   sources:  'source',
-    note:     'note',     notes:    'note',
-    todo:     'todo',     'todo-list': 'todo',
+    analysis:     'analysis',     analyses: 'analysis',
+    concept:      'concept',      concepts: 'concept',
+    entity:       'entity',       entities: 'entity',
+    evidence:     'evidence',
+    fact:         'fact',         facts:    'fact',
+    figure:       'figure',       figures:  'figure',
+    table:        'table',        tables:   'table',
+    source:       'source',       sources:  'source',
+    note:         'note',         notes:    'note',
+    todo:         'todo',         'todo-list': 'todo',
+    unclassified: 'unclassified',
   };
   function canonicalType(t) { return TYPE_CANONICAL[t] || t || 'default'; }
 
@@ -73,6 +74,7 @@ window.Graph = (function () {
   const ALL_LABEL_TYPES = [
     'concept', 'entity', 'evidence', 'fact', 'analysis',
     'figure',  'table',  'source',   'note', 'todo',
+    'unclassified',
   ];
   let _labelTypeFilter = (() => {
     try {

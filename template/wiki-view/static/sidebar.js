@@ -14,32 +14,34 @@ window.Sidebar = (function () {
   // typed `entity` and one typed `entities` end up in the same section.
   // Order is the human reading order; unknown types fall to alphabetical.
   const TYPE_CANONICAL = {
-    analysis: 'analysis', analyses: 'analysis',
-    concept:  'concept',  concepts: 'concept',
-    entity:   'entity',   entities: 'entity',
-    evidence: 'evidence',
-    fact:     'fact',     facts:    'fact',
-    figure:   'figure',   figures:  'figure',
-    table:    'table',    tables:   'table',
-    source:   'source',   sources:  'source',
-    note:     'note',     notes:    'note',
-    todo:     'todo-list','todo-list': 'todo-list',
+    analysis:     'analysis',     analyses: 'analysis',
+    concept:      'concept',      concepts: 'concept',
+    entity:       'entity',       entities: 'entity',
+    evidence:     'evidence',
+    fact:         'fact',         facts:    'fact',
+    figure:       'figure',       figures:  'figure',
+    table:        'table',        tables:   'table',
+    source:       'source',       sources:  'source',
+    note:         'note',         notes:    'note',
+    todo:         'todo-list',    'todo-list': 'todo-list',
+    unclassified: 'unclassified',
   };
   const TYPE_ORDER = [
     'analysis', 'concept', 'entity', 'evidence', 'fact', 'figure',
-    'table', 'source', 'note', 'todo-list',
+    'table', 'source', 'note', 'todo-list', 'unclassified',
   ];
   const TYPE_LABEL = {
-    analysis:    'Analyses',
-    concept:     'Concepts',
-    entity:      'Entities',
-    evidence:    'Evidence',
-    fact:        'Facts',
-    figure:      'Figures',
-    table:       'Tables',
-    source:      'Sources',
-    note:        'Notes',
-    'todo-list': 'Todos',
+    analysis:     'Analyses',
+    concept:      'Concepts',
+    entity:       'Entities',
+    evidence:     'Evidence',
+    fact:         'Facts',
+    figure:       'Figures',
+    table:        'Tables',
+    source:       'Sources',
+    note:         'Notes',
+    'todo-list':  'Todos',
+    unclassified: 'Unclassified',
   };
   function canonicalType(t) {
     return TYPE_CANONICAL[t] || t || 'default';
