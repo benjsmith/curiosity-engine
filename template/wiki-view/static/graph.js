@@ -122,6 +122,11 @@ window.Graph = (function () {
     svg = d3.select(container).append('svg');
     g = svg.append('g').attr('class', 'viewport');
 
+    // ── Layer order ──
+    //   edges (bottom) → circles → labels (top)
+    // Labels live in their own g so they paint after every circle —
+    // a sibling node's circle can no longer cover an earlier node's
+    // label text.
     edgeSel = g.append('g').attr('class', 'edges')
       .selectAll('line')
       .data(edges)
@@ -137,9 +142,6 @@ window.Graph = (function () {
         .attr('data-id', d => d.id)
         .attr('data-type', d => d.type)
         .on('mouseenter', (ev, d) => {
-          // Skip during drag — sliding the cursor over neighbour nodes
-          // mid-drag was firing hover focus changes and making labels
-          // flash in/out unpredictably.
           if (_isDragging) return;
           setFocus(d.id, 'hover');
         })
@@ -156,17 +158,20 @@ window.Graph = (function () {
       .attr('r', d => d.r = nodeRadius(d))
       .attr('fill', d => colourFor(d.type, palette));
 
-    textSel = nodeSel.append('text');
+    textSel = g.append('g').attr('class', 'node-labels')
+      .selectAll('text')
+      .data(nodes, d => d.id)
+      .enter().append('text')
+        .attr('class', 'node-label')
+        .attr('data-id', d => d.id);
     textSel.each(function(d) {
       const t = d3.select(this);
       const { prefix, rest } = parseTitle(d.title || d.id);
       const lines = wrapTitleBody(rest, 2);
       const numLines = lines.length + (prefix ? 1 : 0);
       d._labelLineCount = numLines;
-      // Position the text element so the bottom line baseline sits at
-      // -r - 3 (just above the circle). Since first tspan inherits y
-      // and subsequent tspans accumulate dy, place y at the topmost
-      // baseline.
+      // y so the bottom-line baseline sits at -r - 3 (just above the
+      // circle) once the text is translated to the node's position.
       const r = nodeRadius(d);
       t.attr('y', -r - 3 - (numLines - 1) * LABEL_LINE_HEIGHT_SVG);
       if (prefix) {
@@ -177,7 +182,6 @@ window.Graph = (function () {
       }
       lines.forEach((line, i) => {
         const ts = t.append('tspan').attr('x', 0).text(line);
-        // First tspan inherits y; subsequent ones add LINE_HEIGHT.
         if (prefix || i > 0) ts.attr('dy', LABEL_LINE_HEIGHT_SVG);
       });
     });
@@ -354,6 +358,7 @@ window.Graph = (function () {
       .attr('x2', d => d.target.x)
       .attr('y2', d => d.target.y);
     nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+    textSel.attr('transform', d => `translate(${d.x},${d.y})`);
     applyLabelOpacity();
   }
 
@@ -444,14 +449,22 @@ window.Graph = (function () {
         return (hasFocus && d.id === focusId) ? 1 : 0;
       }
 
-      // Other types: focus + neighbours always show, regardless of mode.
+      // Focus + 1-hop neighbours always show full opacity.
       if (hasFocus && focusSet.has(d.id)) return 1;
 
-      if (labelMode === 'on')  return 1;
-      if (labelMode === 'off') return 0;
+      // Decide raw visibility (would-be-shown, ignoring dim).
+      let visible;
+      if (labelMode === 'on')       visible = true;
+      else if (labelMode === 'off') visible = false;
+      else                          visible = _autoVisibleIds.has(d.id);
+      if (!visible) return 0;
 
-      // auto: collision-free greedy set computed in recomputeAutoVisible.
-      return _autoVisibleIds.has(d.id) ? 1 : 0;
+      // Visible non-neighbour during a focus state → dim the label so
+      // attention follows the highlighted neighbourhood. Labels live in
+      // a separate layer now so they don't inherit the node-group dim
+      // CSS — apply equivalent opacity here.
+      if (hasFocus) return 0.18;
+      return 1;
     });
   }
 
