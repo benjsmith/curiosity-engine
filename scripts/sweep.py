@@ -998,6 +998,89 @@ def cmd_backfill_figure_sourcelinks(wiki_dir: Path):
     }, indent=2))
 
 
+def cmd_consolidate_todos_page(wiki_dir: Path):
+    """Earlier skill versions kept the todos class-table schema on
+    `wiki/entities/todos.md` (an entity page) AND a separate concept
+    hub at `wiki/todos.md`. The two coexisted, which surfaced as a
+    duplicate in the viewer. The schema now lives on the concept hub
+    so there's a single source of truth for "todos".
+
+    Migration: if the entity page exists, copy its `table:` block into
+    the concept hub's frontmatter (when the hub doesn't already carry
+    one), then delete the entity page. Idempotent.
+    """
+    entity_page = wiki_dir / "entities" / "todos.md"
+    hub_page = wiki_dir / "todos.md"
+    if not entity_page.exists():
+        print(json.dumps({"ok": True, "note": "entity page already absent"}))
+        return
+    if not hub_page.exists():
+        print(json.dumps({
+            "ok": False,
+            "note": "wiki/todos.md missing — refusing to delete entity page",
+        }))
+        return
+
+    entity_text = entity_page.read_text()
+    hub_text = hub_page.read_text()
+    hub_fm, hub_body = read_frontmatter(hub_text)
+    if not hub_text.startswith("---"):
+        print(json.dumps({"ok": False, "note": "wiki/todos.md frontmatter missing"}))
+        return
+
+    # Copy the `table:` block from the entity page if (a) the entity
+    # page has one and (b) the hub doesn't already carry one. Cheap
+    # text-level merge: find the `table:` line and its indented
+    # continuation lines, splice them in just before the hub's closing
+    # `---`. Avoids depending on yaml.dump for fidelity.
+    needs_table_inject = "table:" not in hub_text.split("---", 2)[1]
+    if needs_table_inject and "table:" in entity_text:
+        ent_lines = entity_text.split("\n")
+        # Locate the table block within the entity frontmatter.
+        try:
+            ent_fm_end = ent_lines.index("---", 1)  # index of closing ---
+        except ValueError:
+            ent_fm_end = len(ent_lines)
+        table_block = []
+        in_table = False
+        for ln in ent_lines[1:ent_fm_end]:
+            if ln.startswith("table:"):
+                in_table = True
+                table_block.append(ln)
+                continue
+            if in_table:
+                if ln and (ln.startswith(" ") or ln.startswith("\t")):
+                    table_block.append(ln)
+                else:
+                    in_table = False
+        if table_block:
+            hub_lines = hub_text.split("\n")
+            try:
+                hub_fm_end = hub_lines.index("---", 1)
+            except ValueError:
+                hub_fm_end = -1
+            if hub_fm_end > 0:
+                # Insert just before the closing `---`.
+                hub_lines = (
+                    hub_lines[:hub_fm_end]
+                    + table_block
+                    + hub_lines[hub_fm_end:]
+                )
+                hub_page.write_text("\n".join(hub_lines))
+
+    # Now safe to remove the entity page.
+    entity_page.unlink()
+    # Drop the entities/ folder if it's empty (only the .gitkeep).
+    parent = entity_page.parent
+    leftover = [p for p in parent.iterdir() if p.name != ".gitkeep"]
+    print(json.dumps({
+        "ok": True,
+        "schema_merged_into_hub": needs_table_inject,
+        "entity_page_removed": True,
+        "remaining_in_entities_dir": len(leftover),
+    }, indent=2))
+
+
 def cmd_purge_template_todo_artefacts(wiki_dir: Path):
     """One-shot: undo pollution from the pre-fix sync-todos that parsed
     template syntax-examples inside fenced code blocks as real todos.
@@ -1349,7 +1432,7 @@ def cmd_sync_todos(wiki_dir: Path):
 
     if not tables_db.exists():
         print(json.dumps({"ok": False,
-                          "note": "tables.db missing — run tables.py sync wiki/entities/todos.md first"}))
+                          "note": "tables.db missing — run tables.py sync wiki/todos.md first"}))
         return
 
     try:
@@ -1357,7 +1440,7 @@ def cmd_sync_todos(wiki_dir: Path):
         conn.execute("SELECT 1 FROM todos LIMIT 1").fetchone()
     except sqlite3.OperationalError:
         print(json.dumps({"ok": False,
-                          "note": "todos table missing — run tables.py sync wiki/entities/todos.md"}))
+                          "note": "todos table missing — run tables.py sync wiki/todos.md"}))
         return
 
     pages = wiki_pages(wiki_dir)
@@ -2272,7 +2355,7 @@ def main():
         "fix-frontmatter-quotes", "dedupe-self-citations",
         "convert-image-embeds", "migrate-asset-location",
         "backfill-figure-sourcelinks", "backfill-bucket-hubs",
-        "purge-template-todo-artefacts",
+        "purge-template-todo-artefacts", "consolidate-todos-page",
         "sync-todos", "sync-notes", "normalize-vault-suffixes",
         "scan-references", "resync-stems", "resync-prefixes",
         "concept-candidates",
@@ -2333,6 +2416,8 @@ def main():
         cmd_backfill_bucket_hubs(wiki_dir)
     elif args.command == "purge-template-todo-artefacts":
         cmd_purge_template_todo_artefacts(wiki_dir)
+    elif args.command == "consolidate-todos-page":
+        cmd_consolidate_todos_page(wiki_dir)
     elif args.command == "scan-references":
         cmd_scan_references(wiki_dir)
     elif args.command == "resync-stems":

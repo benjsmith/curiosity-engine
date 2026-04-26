@@ -492,7 +492,7 @@ Or header-style for multi-line:
 
 ### TODOS — "/day X", "/month X", "/year X", "/todo X", conversational capture
 
-Canonical class-table (`wiki/entities/todos.md` declares the schema; rows live in `.curator/tables.db`). Status / priority / due stored relationally; page mentions are display views.
+Canonical class-table (`wiki/todos.md` declares the schema in its frontmatter; rows live in `.curator/tables.db`). Status / priority / due stored relationally; page mentions are display views. The hub doubles as the readable concept overview — there's no separate entity page.
 
 **Folders:**
 - `wiki/todos/day.md` — active day-priority bucket

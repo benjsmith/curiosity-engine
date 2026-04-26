@@ -1,5 +1,8 @@
 # Curiosity Engine
 
+![An example knowledge graph displayed by the skill's built-in viewer.](docs/viewer-graph.png)
+*An example knowledge graph displayed by the skill's built-in viewer.*
+
 Autonomously and collaboratively organizes and improves personal knowledge bases with you.
 
 Built for use with frontier coding agents. Primary target is [Claude Code](https://claude.com/claude-code); OpenClaude, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code all work with minor adjustments. Worker and reviewer models are plain strings in `.curator/config.json` — swap Anthropic defaults for Gemini, OpenAI, or a fully-local Ollama endpoint. The wiki is plain markdown — open it in Obsidian, browse the graph, edit by hand. Everything's git-tracked.

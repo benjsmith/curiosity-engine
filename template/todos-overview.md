@@ -3,11 +3,37 @@ title: "[con] Todos"
 type: concept
 created: 2026-04-22
 updated: 2026-04-22
+table:
+  name: todos
+  primary_key: id
+  columns:
+    - name: id
+      type: string
+    - name: text
+      type: string
+    - name: status
+      type: enum
+      values: [open, done, deleted, delegated]
+      default: open
+    - name: priority
+      type: enum
+      values: [day, month, year]
+      default: year
+    - name: created
+      type: date
+    - name: done_at
+      type: date
+      optional: true
+    - name: due
+      type: date
+      optional: true
+    - name: origin
+      type: string
 ---
 
 # Todos
 
-Priority-bucket to-do surface. Canonical state lives in the `todos` class table (`.curator/tables.db`); pages under `wiki/todos/` are mention-site views — readable in Obsidian, editable by hand, synced to the table by `sweep.py sync-todos` on each CURATE sweep.
+Priority-bucket to-do surface. Canonical state lives in the `todos` class table (`.curator/tables.db`) — the schema is declared in this page's frontmatter above, applied to SQLite via `tables.py sync wiki/todos.md`. Pages under `wiki/todos/` are mention-site views — readable in Obsidian, editable by hand, synced to the table by `sweep.py sync-todos` on each CURATE sweep.
 
 ## Priority buckets (active)
 

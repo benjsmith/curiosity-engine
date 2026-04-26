@@ -212,15 +212,12 @@ done
 mkdir -p .curator
 mkdir -p .claude/commands
 
-# Seed the canonical todos entity page (first-class class-table schema
-# shipped by the skill) + the notes/todos staging pages. Skip if already
-# present so user edits are preserved.
-if [ ! -f wiki/entities/todos.md ] && [ -f "$TEMPLATE_DIR/entities/todos.md" ]; then
-    cp "$TEMPLATE_DIR/entities/todos.md" wiki/entities/todos.md
-    echo "  Seeded wiki/entities/todos.md (canonical todos table schema)"
-fi
+# Notes/todos staging pages. The todos class-table schema lives on the
+# concept hub `wiki/todos.md` (seeded a few lines below from
+# template/todos-overview.md) — there's no separate entity page. Skip
+# if already present so user edits are preserved.
 _seed_notes_or_todos_stub() {
-    local path="$1"; local title="$2"; local type="$3"; local hub="$4"
+    local path="$1"; local title="$2"; local type="$3"; local hub="$4"; local intro="$5"
     if [ ! -f "$path" ]; then
         cat > "$path" <<EOF
 ---
@@ -232,13 +229,17 @@ updated: $(date +%Y-%m-%d)
 
 Part of [[$hub]].
 
+$intro
+
 ## active
 
 EOF
     fi
 }
-_seed_notes_or_todos_stub wiki/notes/new.md          '[note] new (default /note landing; curator drains)' note notes
-_seed_notes_or_todos_stub wiki/notes/for-attention.md '[note] for-attention (notes awaiting user topic)'   note notes
+_seed_notes_or_todos_stub wiki/notes/new.md '[note] new (default /note landing; curator drains)' note notes \
+    'Default landing for `/note` without a topic cue. Drop free-form bullets here — the curator drains them into topic files (`notes/<topic>.md`) on the next sweep, routed by the first `[[wikilink]]` in the bullet, by an explicit `topic: <slug>` tag, or to [[for-attention]] if neither.'
+_seed_notes_or_todos_stub wiki/notes/for-attention.md '[note] for-attention (notes awaiting user topic)' note notes \
+    'Notes the auto-router could not classify (no `[[wikilink]]`, no `topic:` tag). Add a `[[wikilink]]` or a `topic: <slug>` to a bullet to route it on the next sweep, or wait for the curator to infer the topic during a CURATE run.'
 
 # Landing + hub pages. `[ ! -s ]` covers both absent AND zero-byte
 # (an Obsidian click-artefact or a pre-hub-era empty stub) so the
@@ -260,10 +261,14 @@ if [ ! -s wiki/todos.md ] && [ -f "$TEMPLATE_DIR/todos-overview.md" ]; then
     cp "$TEMPLATE_DIR/todos-overview.md" wiki/todos.md
     echo "  Seeded wiki/todos.md (todos surface overview)"
 fi
-_seed_notes_or_todos_stub wiki/todos/day.md           '[todo] day-priority'   todo-list todos
-_seed_notes_or_todos_stub wiki/todos/month.md         '[todo] month-priority' todo-list todos
-_seed_notes_or_todos_stub wiki/todos/year.md          '[todo] year-priority'  todo-list todos
-_seed_notes_or_todos_stub wiki/todos/unfiled.md       '[todo] unfiled (priority pending)' todo-list todos
+_seed_notes_or_todos_stub wiki/todos/day.md '[todo] day-priority' todo-list todos \
+    'Todos for today or the next few days. Add a `- [ ]` line below; tick the box to mark it done — the curator will move completed items to this year archive on the next sweep.'
+_seed_notes_or_todos_stub wiki/todos/month.md '[todo] month-priority' todo-list todos \
+    'Todos for the coming month. Add directly here, or add to [[unfiled]] with a `priority: month` tag and the curator will move it on the next sweep.'
+_seed_notes_or_todos_stub wiki/todos/year.md '[todo] year-priority' todo-list todos \
+    'Todos for this year — the catch-all bucket and the default destination for `/todo` when no temporal cue is given. Add directly, or add to [[unfiled]] without a priority tag and the curator will land them here.'
+_seed_notes_or_todos_stub wiki/todos/unfiled.md '[todo] unfiled (priority pending)' todo-list todos \
+    'New todos that have not yet been filed. Add a `- [ ]` line below; include an optional `priority: day`, `priority: month`, or `priority: year` tag and the curator will move it to the matching bucket on the next sweep. No tag → defaults to year.'
 
 # Copy slash commands into the workspace's .claude/commands/ directory.
 # These register /day, /month, /year, /todo, /note for Claude Code
@@ -743,15 +748,24 @@ if [ -d wiki/.git ]; then
         # find the bad lines; orphan sqlite rows are purged too.
         # Idempotent no-op once clean.
         uv run python3 "$SCRIPT_DIR/sweep.py" purge-template-todo-artefacts wiki >/dev/null 2>&1 || true
+        # Earlier skill versions seeded the todos class-table on
+        # wiki/entities/todos.md alongside the wiki/todos.md hub —
+        # consolidate to a single source of truth on the hub.
+        # Idempotent no-op once the entity page is gone.
+        uv run python3 "$SCRIPT_DIR/sweep.py" consolidate-todos-page wiki >/dev/null 2>&1 || true
         # One-shot migration for vault files ingested before the
         # local_ingest suffix-doubling fix (foo.pdf.pdf → foo.pdf).
         # Idempotent no-op once applied.
         uv run python3 "$SCRIPT_DIR/sweep.py" normalize-vault-suffixes wiki >/dev/null 2>&1 || true
         # Sync the canonical todos class-table schema (idempotent — creates
         # the table on first run, re-hashes on schema change) and drain any
-        # user-authored todos / notes into their structured homes.
-        if [ -f wiki/entities/todos.md ]; then
-            uv run python3 "$SCRIPT_DIR/tables.py" sync wiki/entities/todos.md >/dev/null 2>&1 || true
+        # user-authored todos / notes into their structured homes. The
+        # schema lives on wiki/todos.md (concept hub). Earlier skill
+        # versions seeded a separate wiki/entities/todos.md; if both
+        # files coexist in an existing workspace, consolidate-todos-page
+        # below merges and removes the stale entity copy.
+        if [ -f wiki/todos.md ]; then
+            uv run python3 "$SCRIPT_DIR/tables.py" sync wiki/todos.md >/dev/null 2>&1 || true
         fi
         uv run python3 "$SCRIPT_DIR/sweep.py" sync-todos wiki >/dev/null 2>&1 || true
         uv run python3 "$SCRIPT_DIR/sweep.py" sync-notes wiki >/dev/null 2>&1 || true
