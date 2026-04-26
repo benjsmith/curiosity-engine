@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # viewer.sh — build/serve the custom wiki viewer (graph-first, D3-based).
 #
-# This is the curiosity-engine-native alternative to quartz.sh. The
-# build script (wiki_render.py) walks wiki/, queries the kuzu graph,
+# Curiosity-engine-native browser-based wiki view. The build script
+# (wiki_render.py) walks wiki/, queries the kuzu graph,
 # and emits a single static-site bundle into
 #   ~/.cache/curiosity-engine/wiki-view/<workspace>/
 #

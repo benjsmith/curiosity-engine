@@ -60,7 +60,6 @@ Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompt
 2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
-5. `bash <skill_path>/scripts/quartz.sh ...` — legacy Quartz viewer (see §Operations → QUARTZ-VIEW)
 5. `date ...`
 
 `<skill_path>` is Claude Code's per-session substitution for the skill's physical directory. On coding-agent CLIs that don't perform that substitution (Codex CLI, Gemini CLI, Copilot Chat), export `CURIOSITY_ENGINE_SCRIPTS_DIR=<absolute-path-to-scripts>` once per shell or workspace; all bash invocations above work unchanged when `<skill_path>/scripts` is replaced by `$CURIOSITY_ENGINE_SCRIPTS_DIR`.
@@ -134,7 +133,7 @@ The npx-skills slug is read from `.curator/config.json`'s `update_source_slug` k
 | graph | `.curator/graph.kuzu` | kuzu property graph | WikiLink / Cites / typed-data-reference edges |
 | class tables | `.curator/tables.db` | SQLite standard tables | entity-class instance data with schema from entity pages |
 
-**Figure asset PNGs** (`wiki/figures/_assets/`) — Binary files for `wiki/figures/*.md` pages. Lives inside the wiki at a `_`-prefixed subfolder (the `_` signals "supporting files, not content") so assets are inside the Obsidian vault scope + Quartz content directory — inline rendering works in both without any reconfiguration. NOT git-tracked: `wiki/.gitignore` excludes `/figures/_assets/` because the binaries are regenerable from vault PDFs via `figures.py regen`. A fresh clone re-materialises the folder on the first setup.sh run.
+**Figure asset PNGs** (`wiki/figures/_assets/`) — Binary files for `wiki/figures/*.md` pages. Lives inside the wiki at a `_`-prefixed subfolder (the `_` signals "supporting files, not content") so assets are inside the Obsidian vault scope; the static viewer mirrors the folder into its bundle so `<img>` tags resolve over HTTP without any reconfiguration. NOT git-tracked: `wiki/.gitignore` excludes `/figures/_assets/` because the binaries are regenerable from vault PDFs via `figures.py regen`. A fresh clone re-materialises the folder on the first setup.sh run.
 
 Read `.curator/schema.md` before any operation.
 
@@ -169,7 +168,7 @@ Read `.curator/schema.md` before any operation.
 - **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
 - **orphan_dominance_threshold** — Phase 1 flips to wire mode when the summed orphan-rate contribution exceeds this fraction of residual composite (default 0.6). Wire mode runs a LINK-style pass across the whole wiki instead of a worker fan-out.
 - **figure_extract_min_citers** — minimum `distinct_citers` on a `figure-candidates` entry for figure-extract mode to fire (default 2). Raise to 3+ if the wiki has many low-demand PDF sources you don't want auto-extracted. Set to 0 to disable figure-extract mode entirely.
-- **wiki_viewer_mode** — `"obsidian"` (default) or `"vscode"`. Controls the format of image-embed syntax in figure pages. Obsidian mode uses `![[<filename>.png]]` (filename-resolution — our unique timestamp-prefixed asset names make this reliable; renders inline in Obsidian and Quartz). VS Code mode uses `![<filename>.png](_assets/<filename>.png)` (standard markdown with a relative path from the figure page, renders in VS Code's built-in preview, GitHub web UI, and most other renderers). Assets live at `wiki/figures/_assets/` in either mode. Setup.sh's migration pass reads this value and runs `sweep.py convert-image-embeds --target <mode>` to align figure pages with the selected mode. Idempotent — toggling back switches the syntax back.
+- **wiki_viewer_mode** — `"obsidian"` (default) or `"vscode"`. Controls the format of image-embed syntax in figure pages. Obsidian mode uses `![[<filename>.png]]` (filename-resolution — our unique timestamp-prefixed asset names make this reliable; renders inline in Obsidian and the curiosity-engine static viewer). VS Code mode uses `![<filename>.png](_assets/<filename>.png)` (standard markdown with a relative path from the figure page, renders in VS Code's built-in preview, GitHub web UI, and most other renderers). Assets live at `wiki/figures/_assets/` in either mode. Setup.sh's migration pass reads this value and runs `sweep.py convert-image-embeds --target <mode>` to align figure pages with the selected mode. Idempotent — toggling back switches the syntax back.
 - **spot_audit_interval** — every Nth wave (default 20), Phase 3 dispatches a single-page adversarial spot auditor against a random accepted edit. Set to 0 to disable. Catches subtle source misrepresentation the praise-mode batch reviewer doesn't flag.
 - **embedding_enabled** / **embedding_model** — opt-in semantic vault search. When `true`, `vault_index.py` computes an embedding alongside every FTS5 row (stored in sqlite-vec), and `vault_search.py --mode hybrid` merges FTS5 + cosine rankings via RRF. Default model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim, ~80MB). Install the deps (`uv pip install sentence-transformers sqlite-vec`) before flipping `embedding_enabled` to true. Setup prompts for this at bootstrap time. When enabled, `sweep.py sync-notes` also runs semantic dedup on notes (see below).
 - **notes_semantic_dedup_threshold** — cosine-similarity floor for `sync-notes` to merge a new note onto an existing note's ID rather than mint a fresh one (default 0.92). Active only when `embedding_enabled: true`. Lower values (e.g. 0.85) catch more fuzzy dupes at the cost of occasionally merging distinct-but-related thoughts; higher (0.95+) is stricter. Two-stage pipeline: content-hash first (free, catches verbatim dupes), embedding comparison only on miss.
@@ -343,7 +342,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 2. **Pre-render pages.** For each selected source, run `uv run python3 <skill_path>/scripts/figures.py render-all <vault_pdf> --wiki wiki`. Idempotent — skipped when the pages are already in `assets/figures/`. Keeps the multimodal worker input deterministic.
 3. **Dispatch workers.** Dispatch one fresh-context sonnet Agent per source with the `figure_extractor` template in `.curator/prompts.md`, passing the source path + absolute paths of the rendered PNGs. Each worker returns `{"source": "<path>", "figures": [{figure_number, page, caption_first_line, brief_description, concepts_illustrated, suggested_stem}, ...]}`.
 4. **Create figure pages.** For each returned spec, build the figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <basename>.png`, `source_path`, `source_page`, `extraction_method: pdf_page_render`, `sources: [<extracted_md>]`, `relates_to: []`. Body MUST include:
-   - The image embed. Obsidian mode: `![[figures/_assets/<basename>.png]]` (path-form works in both Obsidian and Quartz). VS Code mode: `![<basename>.png](_assets/<basename>.png)`.
+   - The image embed. Obsidian mode: `![[figures/_assets/<basename>.png]]` (path-form resolves cleanly in both Obsidian and the static viewer). VS Code mode: `![<basename>.png](_assets/<basename>.png)`.
    - An explicit `[[<source-stub-stem>]]` wikilink to the vault-source stub. Compute the stem via `naming.citation_stem(parse_source_meta(vault_extraction_path))` — this is the same canonical stem `fix-source-stubs` assigns, so the link always resolves to `wiki/sources/<stem>.md`. If the stub doesn't exist yet, the link still lands; the next `fix-source-stubs` run backfills it.
    - The canonical caption sentence, the `[[<source-stem>]]` wikilink, and a closing `(vault:<extracted_md>)` citation.
 
@@ -460,24 +459,13 @@ Do not ask about every field or have long back-and-forth per row; batch updates 
 
 ### VIEWER — "view the wiki", "open the graph", "browse the wiki"
 
-Graph-first static viewer purpose-built for the curiosity-engine schema. Walks `wiki/`, queries `.curator/graph.kuzu`, and emits a single static-site bundle into `~/.cache/curiosity-engine/wiki-view/<workspace>/`. D3 force-directed graph at the centre, narrow content browser on the left with Fuse.js fuzzy search, click-to-open doc viewer modal sized 68% × 90% of the graph pane. Light/dark theming, palette-A type colours, auto/on/off label modes. No Node.js dependency — pure Python build + vanilla JS frontend with vendored D3 + Fuse.
+Graph-first static viewer purpose-built for the curiosity-engine schema. Walks `wiki/`, queries `.curator/graph.kuzu`, and emits a single static-site bundle into `~/.cache/curiosity-engine/wiki-view/<workspace>/`. D3 force-directed graph at the centre, narrow type-grouped content browser on the left with Fuse.js fuzzy search, click-to-open doc viewer modal (figure pages render the asset PNG inline, every page carries a 1-hop subgraph navigator at the bottom for hop-by-hop exploration). Live physics knobs in a top-right settings panel. Light/dark theming, palette-B type colours, auto/on/off label modes. No Node.js dependency — pure Python build + vanilla JS frontend with vendored D3 + Fuse.
 
 1. **Build + serve.** `bash <skill_path>/scripts/viewer.sh serve` from the workspace root. Default port 8090; stays running until `^C`.
 2. **Open browser.** `bash <skill_path>/scripts/viewer.sh open` — same as serve but opens the URL automatically.
 3. **Rebuild only.** `bash <skill_path>/scripts/viewer.sh build` — re-emits the bundle without serving. Run after wiki edits; the page must be reloaded to pick them up.
 
-Vendor libraries (D3 + Fuse) download once into `~/.cache/curiosity-engine/wiki-view-vendor/` and copy into each workspace bundle so the rendered site is self-contained.
-
-### QUARTZ-VIEW — "quartz view", "open quartz", "old viewer"
-
-Legacy static-site viewer kept for users who prefer Quartz's exact layout. Use `viewer.sh` (above) for the curiosity-engine native viewer. Quartz (https://quartz.jzhao.xyz/) renders the wiki to `http://localhost:8080`. Shared install at `~/.cache/curiosity-engine/quartz/`; each workspace's wiki is symlinked into Quartz's `content/` at build time.
-
-1. **Precondition.** `~/.cache/curiosity-engine/quartz/node_modules` exists (set up by setup.sh's interactive prompt).
-2. **Build + serve.** `bash <skill_path>/scripts/quartz.sh serve`.
-3. **Open browser.** `bash <skill_path>/scripts/quartz.sh open`.
-4. **Rebuild only.** `bash <skill_path>/scripts/quartz.sh build`.
-
-Both viewers pick up curator writes only on the next build; for live-updating previews use Obsidian or VS Code + Foam.
+Vendor libraries (D3 + Fuse) download once into `~/.cache/curiosity-engine/wiki-view-vendor/` and copy into each workspace bundle so the rendered site is self-contained. The viewer picks up curator writes only on the next build; for live-updating previews use Obsidian.
 
 ### NOTES — "/note X", "add a note", free-form user input
 
@@ -651,7 +639,7 @@ relates_to: [concepts/attention-mechanism.md, evidence/attention-layer-6.md]
 *[[attention-mechanism|Self-attention]] weights at layer 6. `[CLS]` focuses on subject-noun positions — from [[vaswani-2017-attention]] (vault:papers/attention.extracted.md).*
 ```
 
-The Obsidian-form embed uses the wiki-root-relative path `![[figures/_assets/<file>]]` so the asset resolves cleanly in both Obsidian (vault-root-relative) and Quartz (content-root-relative). VS Code mode (via `wiki_viewer_mode: "vscode"`) rewrites to `![<file>](_assets/<file>)` — a file-relative path that renders in VS Code's built-in markdown preview, GitHub web UI, and other standard markdown viewers.
+The Obsidian-form embed uses the wiki-root-relative path `![[figures/_assets/<file>]]` so the asset resolves cleanly in both Obsidian (vault-root-relative) and the curiosity-engine static viewer (bundle-root-relative — the build copies the assets folder into the served bundle). VS Code mode (via `wiki_viewer_mode: "vscode"`) rewrites to `![<file>](_assets/<file>)` — a file-relative path that renders in VS Code's built-in markdown preview, GitHub web UI, and other standard markdown viewers.
 
 The `[[<source-stub-stem>]]` wikilink in the body is mandatory on every figure page: it's a mechanical action by the orchestrator when the figure is created, derived from `naming.citation_stem(parse_source_meta(<extracted_md>))`. Always resolves to `wiki/sources/<stem>.md` — the source stub backfill pass keeps the target alive.
 

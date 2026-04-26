@@ -80,8 +80,10 @@ def _workspace_root(wiki_dir: Path) -> Path:
 
 def _assets_dir(wiki_dir: Path) -> Path:
     """Figure asset PNGs live inside the wiki at `figures/_assets/` so
-    they're inside the Obsidian vault + Quartz content dir scope. The
-    folder is gitignored (assets are regenerable via figures.py regen).
+    they're inside the Obsidian vault scope (clean inline rendering)
+    and the static viewer mirrors the folder into its bundle so its
+    <img> tags resolve. The folder is gitignored (assets are
+    regenerable via figures.py regen).
     """
     return wiki_dir.resolve() / FIGURE_SUBDIR / ASSETS_SUBDIR
 

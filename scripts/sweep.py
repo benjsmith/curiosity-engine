@@ -907,11 +907,9 @@ def cmd_convert_image_embeds(wiki_dir: Path, target: str):
             new_text = _OBSIDIAN_EMBED_RE.sub(obs_to_vs, text)
         else:  # obsidian
             # Obsidian mode uses the wiki-root-relative path form
-            # `![[figures/_assets/<filename>.png]]`. Both Obsidian and
-            # Quartz resolve this reliably; filename-only works in
-            # Obsidian via its filename index but Quartz's wikilink
-            # transformer can miss it when a bare filename isn't in
-            # the content tree at the top level.
+            # `![[figures/_assets/<filename>.png]]`. Resolves reliably
+            # in Obsidian and in the static viewer's bundle (which
+            # mirrors `wiki/figures/_assets/` at the same path).
             def vs_to_obs(m):
                 path = m.group(2)
                 if not _is_figure_asset_ref(path):

@@ -281,14 +281,14 @@ if [ -d "$TEMPLATE_DIR/claude-commands" ]; then
 fi
 
 # Figure asset PNGs live inside the wiki at wiki/figures/_assets/ so
-# they're inside the Obsidian vault + Quartz content dir scope (clean
-# inline rendering in both). The folder is gitignored in the wiki
-# repo because the binaries are regenerable from vault PDFs via
-# figures.py regen — committing them would bloat the repo for no
-# portability gain. The `_` prefix is a widely-recognised "supporting
-# files, not content" convention that also makes it easy for users to
-# hide the folder from Obsidian's graph view with a `-path:_assets`
-# filter.
+# they're inside the Obsidian vault scope (clean inline rendering)
+# and inside the static viewer's bundle path so its <img> tags resolve.
+# The folder is gitignored in the wiki repo because the binaries are
+# regenerable from vault PDFs via figures.py regen — committing them
+# would bloat the repo for no portability gain. The `_` prefix is a
+# widely-recognised "supporting files, not content" convention that
+# also makes it easy for users to hide the folder from Obsidian's
+# graph view with a `-path:_assets` filter.
 mkdir -p wiki/figures/_assets
 _wiki_gitignore="wiki/.gitignore"
 _gitignore_line="/figures/_assets/"
@@ -464,6 +464,12 @@ else
     if [ -z "$missing_canary" ] && grep -qF 'Read($root/**)' .claude/settings.json; then
         missing_canary='Read($root/**) (stale: broken variable-expansion in pre-fix allowlist generator)'
     fi
+    # Quartz was removed in favour of the curiosity-engine-native viewer;
+    # workspaces still listing scripts/quartz.sh in their allowlist need
+    # regen so that stale entry is dropped.
+    if [ -z "$missing_canary" ] && grep -qF 'scripts/quartz.sh' .claude/settings.json; then
+        missing_canary='scripts/quartz.sh (stale: Quartz removed, viewer.sh replaces it)'
+    fi
     if [ -n "$missing_canary" ]; then
         echo "  Existing .claude/settings.json is missing canonical allowlist"
         echo "  entry matching: $missing_canary"
@@ -531,7 +537,6 @@ EOF
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/wiki_render.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
-      "Bash(bash $root/scripts/quartz.sh:*)",
       "Bash(bash $root/scripts/viewer.sh:*)",
       "Bash(bash $root/scripts/update.sh:*)",
 EOF
@@ -588,53 +593,6 @@ fi
 if [ ! -d wiki/.git ]; then
     (cd wiki && git init -q && git add -A && git commit -q -m "init: curiosity engine wiki")
     echo "  Initialized wiki git repo"
-fi
-
-# Optional: install Quartz for a static-site view of the wiki.
-# Shared install at ~/.cache/curiosity-engine/quartz so multiple
-# workspaces only pay the ~500 MB node_modules cost once. In
-# interactive mode, prompt; in non-interactive mode, install silently
-# (gracefully skipping if Node can't be made available). Script
-# scripts/quartz.sh wraps the build + serve flow.
-_quartz_dir="$HOME/.cache/curiosity-engine/quartz"
-_install_quartz() {
-    mkdir -p "$(dirname "$_quartz_dir")"
-    if [ ! -d "$_quartz_dir" ]; then
-        echo "  Cloning Quartz into $_quartz_dir ..."
-        git clone --quiet --depth 1 https://github.com/jackyzha0/quartz.git "$_quartz_dir" \
-            || { echo "  Quartz clone failed; skipping."; return 1; }
-    fi
-    if command -v node >/dev/null 2>&1; then
-        echo "  Installing Quartz node_modules (one-time, ~500 MB) ..."
-        (cd "$_quartz_dir" && npm install --silent --no-audit --no-fund --no-progress 2>&1 \
-            | tail -5) || echo "  (npm install reported issues; Quartz may still work)"
-    else
-        echo "  Node.js not found — Quartz needs Node 18+."
-        echo "  Install user-locally via nvm (no admin needed):"
-        echo "    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
-        echo "    . ~/.nvm/nvm.sh && nvm install --lts"
-        echo "  Then rerun setup.sh; Quartz's npm install will complete."
-        return 1
-    fi
-}
-if [ ! -d "$_quartz_dir/node_modules" ]; then
-    if [ -t 0 ] && [ -t 1 ]; then
-        echo ""
-        printf "Install Quartz (static-site view of the wiki, ~500 MB)? [Y/n] "
-        read -r reply_quartz || reply_quartz="y"
-        case "$reply_quartz" in
-            ""|y|Y|yes|YES)
-                _install_quartz || true
-                ;;
-            *)
-                echo "  Skipping Quartz. Install later by rerunning setup.sh."
-                ;;
-        esac
-    else
-        # Non-interactive default: attempt install silently. Gracefully skip
-        # if the machine can't support it.
-        _install_quartz >/dev/null 2>&1 || true
-    fi
 fi
 
 # Optional: install the caveman compression skill.
