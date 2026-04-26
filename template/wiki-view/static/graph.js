@@ -44,20 +44,54 @@ window.Graph = (function () {
   let _autoRecomputeScheduled = false;
   let _isDragging = false;            // suppress hover-focus changes mid-drag
 
-  // Source-type matcher: frontmatter says 'source', subdir name 'sources'.
-  function isSourceType(t) { return t === 'source' || t === 'sources'; }
+  // Type canonicalization — frontmatter uses singular forms, subdir
+  // names plural; collapse to a single key per type so the user-facing
+  // filter operates on one axis.
+  const TYPE_CANONICAL = {
+    analysis: 'analysis', analyses: 'analysis',
+    concept:  'concept',  concepts: 'concept',
+    entity:   'entity',   entities: 'entity',
+    evidence: 'evidence',
+    fact:     'fact',     facts:    'fact',
+    figure:   'figure',   figures:  'figure',
+    table:    'table',    tables:   'table',
+    source:   'source',   sources:  'source',
+    note:     'note',     notes:    'note',
+    todo:     'todo',     'todo-list': 'todo',
+  };
+  function canonicalType(t) { return TYPE_CANONICAL[t] || t || 'default'; }
 
-  // Types whose labels stay silent unless the node is directly hovered
-  // or selected. Sources are noisy because there are many of them; fact
-  // and analysis pages often carry long titles that dominate the screen.
-  // The nodes themselves remain fully visible — only their labels are
-  // gated.
-  const QUIET_LABEL_TYPES = new Set([
-    'source', 'sources',
-    'fact', 'facts',
-    'analysis', 'analyses',
-  ]);
-  function isQuietLabelType(t) { return QUIET_LABEL_TYPES.has(t); }
+  // Types whose labels are eligible for display under the global label
+  // mode (auto/on/off). Types absent from the set behave like the old
+  // quiet list — node visible, label only on direct hover. Defaults
+  // chosen so the static-graph view stays readable: concept + entity
+  // are the structural hubs, note + todo are user input. Source / fact
+  // / analysis / evidence / figure / table carry too many or too long
+  // titles to show by default. Persisted in localStorage; user toggles
+  // via the label-types popover.
+  const LABEL_TYPE_DEFAULTS = ['concept', 'entity', 'note', 'todo'];
+  const ALL_LABEL_TYPES = [
+    'concept', 'entity', 'evidence', 'fact', 'analysis',
+    'figure',  'table',  'source',   'note', 'todo',
+  ];
+  let _labelTypeFilter = (() => {
+    try {
+      const raw = localStorage.getItem('curiosity-engine.label-types');
+      if (raw) return new Set(JSON.parse(raw));
+    } catch (e) {}
+    return new Set(LABEL_TYPE_DEFAULTS);
+  })();
+  function isLabelTypeAllowed(t) {
+    return _labelTypeFilter.has(canonicalType(t));
+  }
+  function persistLabelTypes() {
+    try {
+      localStorage.setItem(
+        'curiosity-engine.label-types',
+        JSON.stringify([..._labelTypeFilter]),
+      );
+    } catch (e) {}
+  }
 
   // Title parsing + wrapping. Frontmatter titles often start with a
   // bracketed type abbreviation (e.g. `[ana] Pretraining Data Curation`).
@@ -271,6 +305,7 @@ window.Graph = (function () {
     modeStateEl = document.querySelector('#label-mode-state');
     document.querySelector('#label-mode').addEventListener('click', cycleLabelMode);
     initSettingsPanel();
+    initLabelTypesPanel();
 
     applyVisibility();
 
@@ -349,6 +384,67 @@ window.Graph = (function () {
     setOut('phys-charge-val',  PHYSICS.charge);
     setOut('phys-link-val',    PHYSICS.link);
     setOut('phys-collide-val', PHYSICS.collide);
+  }
+
+  /* Label-types popover. Lets the user pick which page types' labels
+   * are eligible for display under the global label mode. Toggling a
+   * type off makes its labels hover-only (the previous "quiet" rule).
+   * State is persisted in localStorage and applied on next render. */
+  function initLabelTypesPanel() {
+    const trigger = document.querySelector('#label-types');
+    const panel = document.querySelector('#label-types-panel');
+    const stateEl = document.querySelector('#label-types-state');
+    if (!trigger || !panel) return;
+
+    function paintCount() {
+      if (stateEl) stateEl.textContent =
+        `${_labelTypeFilter.size}/${ALL_LABEL_TYPES.length}`;
+    }
+
+    function applyChange() {
+      persistLabelTypes();
+      paintCount();
+      scheduleAutoRecompute();
+      applyLabelOpacity();
+    }
+
+    panel.querySelectorAll('.label-types-row').forEach(row => {
+      const t = row.dataset.type;
+      const cb = row.querySelector('input[type=checkbox]');
+      if (!cb) return;
+      cb.checked = _labelTypeFilter.has(t);
+      cb.addEventListener('change', () => {
+        if (cb.checked) _labelTypeFilter.add(t);
+        else _labelTypeFilter.delete(t);
+        applyChange();
+      });
+    });
+
+    trigger.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      panel.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (ev) => {
+      if (panel.classList.contains('hidden')) return;
+      if (panel.contains(ev.target)) return;
+      if (trigger.contains(ev.target)) return;
+      panel.classList.add('hidden');
+    });
+
+    const resetBtn = document.querySelector('#label-types-reset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        _labelTypeFilter = new Set(LABEL_TYPE_DEFAULTS);
+        panel.querySelectorAll('.label-types-row').forEach(row => {
+          const t = row.dataset.type;
+          const cb = row.querySelector('input[type=checkbox]');
+          if (cb) cb.checked = _labelTypeFilter.has(t);
+        });
+        applyChange();
+      });
+    }
+
+    paintCount();
   }
 
   function tick() {
@@ -441,11 +537,10 @@ window.Graph = (function () {
       : null;
 
     textSel.style('opacity', function(d) {
-      // Quiet types (sources, facts, analyses) only show their label
-      // when the node itself is the focus — they're either too numerous
-      // (sources) or carry long titles (fact/analysis) and dominate the
-      // screen otherwise.
-      if (isQuietLabelType(d.type)) {
+      // Types the user has filtered out → label only on direct hover.
+      // Defaults to concept/entity/note/todo; user toggles others via
+      // the label-types popover.
+      if (!isLabelTypeAllowed(d.type)) {
         return (hasFocus && d.id === focusId) ? 1 : 0;
       }
 
@@ -512,7 +607,7 @@ window.Graph = (function () {
 
     const candidates = [];
     for (const d of nodes) {
-      if (isQuietLabelType(d.type)) continue;   // never auto-label
+      if (!isLabelTypeAllowed(d.type)) continue;  // user-filtered → never auto-label
       if (d.x == null) continue;
       const screenR = nodeRadius(d) * k;
       if (screenR < MIN_NODE_RADIUS_FOR_LABEL_PX) continue;
