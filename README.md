@@ -5,7 +5,7 @@
 
 Autonomously and collaboratively organizes and improves personal knowledge bases with you.
 
-Built for use with frontier coding agents. Primary target is [Claude Code](https://claude.com/claude-code); OpenClaude, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code all work with minor adjustments. Worker and reviewer models are plain strings in `.curator/config.json` — swap Anthropic defaults for Gemini, OpenAI, or a fully-local Ollama endpoint. The wiki is plain markdown — open it in Obsidian, browse the graph, edit by hand. Everything's git-tracked.
+Built for use with frontier coding agents. Primary target is [Claude Code](https://claude.com/claude-code); OpenClaude, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code all work with minor adjustments. Worker and reviewer models are plain strings in `.curator/config.json` — swap Anthropic defaults for Gemini, OpenAI, or a fully-local Ollama endpoint. The wiki is plain markdown — open it in the built-in viewer, or Obsidian, browse the graph, edit by hand. Everything's git-tracked.
 
 ## How it works
 
@@ -164,10 +164,11 @@ See `template/config.example.json` for working variants:
 ## When to use (and when not)
 
 **Fits well when:**
-- You're reading 30–300 substantial sources in a domain over weeks or months.
+- You're reading hundreds or thousands of substantial sources in a domain over weeks or months.
 - You care about provenance — every claim traceable to a vault file.
 - You want cross-source connections surfaced, not just stored.
 - You want the understanding to persist across sessions and compound.
+- You don't mind waiting a minute for accurate answers.
 
 Good fits: personal research, literature reviews, research notebooks, due-diligence analysts, cross-field synthesis.
 
