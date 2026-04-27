@@ -246,16 +246,20 @@ window.Graph = (function () {
       .force('collide', d3.forceCollide(d => nodeRadius(d) + PHYSICS.collide))
       .stop();   // halt the auto-loop while we hand-tick
 
-    // Pre-warm: 250 manual ticks land the layout very close to settled.
+    // Pre-warm: 350 manual ticks land the layout almost fully settled.
     // No DOM updates happen during these ticks (we haven't bound 'tick'
     // yet) so this is effectively free vs. animating each frame.
     simulation.alpha(1).alphaDecay(0.05);
-    for (let i = 0; i < 250; i++) simulation.tick();
+    for (let i = 0; i < 350; i++) simulation.tick();
 
     // Bind the per-tick render callback and gently restart with low
     // alpha so the layout breathes without animating from scratch.
+    // 0.15 gets us ~50 visible ticks before alpha decays below 0.001 —
+    // enough to see things gently relax, short enough that any per-tick
+    // cost (314 transform writes + 1675 edge attr writes on a typical
+    // wiki) doesn't manifest as a stutter.
     simulation.on('tick', tick);
-    simulation.alpha(0.25).alphaDecay(0.05).restart();
+    simulation.alpha(0.15).alphaDecay(0.05).restart();
     simulation.on('end', () => scheduleAutoRecompute());
 
     // Drag — Obsidian-style click-and-hold to move. Release lets physics
@@ -449,6 +453,17 @@ window.Graph = (function () {
     paintCount();
   }
 
+  /* tick — hot path during simulation settle and drag.
+   *
+   * Deliberately NOT calling applyLabelOpacity here. Opacity only
+   * changes on focus / zoom / type-filter / auto-recompute events,
+   * none of which fire during a layout settle, so re-running ~314
+   * inline-style writes every frame is pure waste. The opacity is
+   * kept correct via:
+   *   - applyVisibility() on focus changes
+   *   - the zoom handler
+   *   - scheduleAutoRecompute() on resize and on simulation 'end'
+   */
   function tick() {
     edgeSel
       .attr('x1', d => d.source.x)
@@ -457,7 +472,6 @@ window.Graph = (function () {
       .attr('y2', d => d.target.y);
     nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
     textSel.attr('transform', d => `translate(${d.x},${d.y})`);
-    applyLabelOpacity();
   }
 
   function resize() {
