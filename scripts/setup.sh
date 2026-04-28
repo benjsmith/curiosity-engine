@@ -722,6 +722,13 @@ if [ -d wiki/.git ]; then
         echo ""
         echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
+        # Add or correct the canonical [con]/[ent]/[tbl]/... bracket
+        # prefix on every page title, picking the value from
+        # naming.TYPE_PREFIX. Catches summary-table pages a worker built
+        # without the [tbl] tag and legacy pages with `[concept]` /
+        # `[entity]` (full-word) prefixes from earlier skill versions.
+        # Idempotent no-op once every title is canonical.
+        uv run python3 "$SCRIPT_DIR/sweep.py" resync-title-prefixes wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" dedupe-self-citations wiki >/dev/null
         # Sweep up zero-byte .md files at wiki/ root — almost always
         # Obsidian click-artefacts from unresolved wikilinks (e.g. a

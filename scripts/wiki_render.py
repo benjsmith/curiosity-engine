@@ -100,6 +100,41 @@ _BULLET_RE = re.compile(r"^(\s*)[-*]\s+(.+)$")
 # `![alt](path)`. Both rewrite asset paths to bundle-relative form.
 _IMG_EMBED_RE = re.compile(r"!\[\[([^\]]+)\]\]")
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+# Pipe-table block: a header row, a separator row of dashes (with
+# optional `:` alignment markers), and one or more body rows. The
+# leading/trailing pipes are optional in CommonMark; we require both
+# header and separator to start with `|` to keep parsing tractable.
+_TABLE_SEP_RE = re.compile(r"^\|?\s*:?-{2,}:?(?:\s*\|\s*:?-{2,}:?)*\s*\|?\s*$")
+
+
+def _split_table_row(raw: str) -> list[str]:
+    """Split a pipe-table row on `|`, stripping the optional leading
+    and trailing pipes and whitespace around each cell."""
+    s = raw.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _parse_table_alignments(sep: str) -> list[str]:
+    """Parse `| :--- | :---: | ---: |` into per-column alignment hints
+    (`left` / `center` / `right` / `""`)."""
+    aligns = []
+    for cell in _split_table_row(sep):
+        cell = cell.strip()
+        left = cell.startswith(":")
+        right = cell.endswith(":")
+        if left and right:
+            aligns.append("center")
+        elif right:
+            aligns.append("right")
+        elif left:
+            aligns.append("left")
+        else:
+            aligns.append("")
+    return aligns
 
 
 def _normalise_asset_path(path: str) -> str:
@@ -192,10 +227,48 @@ def _html_escape(s: str) -> str:
              .replace('"', "&quot;"))
 
 
+def _render_table(
+    header: str, sep: str, body_rows: list[str],
+    stems_to_path: dict[str, str],
+) -> str:
+    """Render a GFM pipe-table block to a `<table>`. Header cells get
+    `<th>`, body cells get `<td>`, and per-column `align="…"` attrs
+    are emitted when the separator row carries `:` alignment markers."""
+    aligns = _parse_table_alignments(sep)
+    head_cells = _split_table_row(header)
+    # Pad alignments out / truncate so each header cell has one.
+    if len(aligns) < len(head_cells):
+        aligns = aligns + [""] * (len(head_cells) - len(aligns))
+
+    def _td(tag: str, cell: str, align: str) -> str:
+        attr = f' align="{align}"' if align else ""
+        return f"<{tag}{attr}>{_render_inline(cell, stems_to_path)}</{tag}>"
+
+    out = ['<table class="md-table">', "<thead><tr>"]
+    for i, cell in enumerate(head_cells):
+        out.append(_td("th", cell, aligns[i] if i < len(aligns) else ""))
+    out.append("</tr></thead>")
+    out.append("<tbody>")
+    for row in body_rows:
+        cells = _split_table_row(row)
+        # Pad / truncate cells to the header width so a malformed row
+        # doesn't desync column alignment.
+        if len(cells) < len(head_cells):
+            cells = cells + [""] * (len(head_cells) - len(cells))
+        elif len(cells) > len(head_cells):
+            cells = cells[:len(head_cells)]
+        out.append("<tr>")
+        for i, cell in enumerate(cells):
+            out.append(_td("td", cell, aligns[i] if i < len(aligns) else ""))
+        out.append("</tr>")
+    out.append("</tbody></table>")
+    return "".join(out)
+
+
 def _render_body(body: str, stems_to_path: dict[str, str]) -> str:
     """Minimal markdown-to-HTML renderer. Block-level: headings, bullet
-    lists (one level), code fences, paragraphs. Inline: as
-    `_render_inline`. No tables, no nested lists, no images-in-prose —
+    lists (one level), code fences, GFM pipe tables, paragraphs.
+    Inline: as `_render_inline`. No nested lists, no images-in-prose —
     we ship a small subset on purpose; deeper formatting goes through
     Obsidian or VS Code preview, not the static viewer.
     """
@@ -216,7 +289,10 @@ def _render_body(body: str, stems_to_path: dict[str, str]) -> str:
             out.append("<p>" + " ".join(para_buf) + "</p>")
             para_buf.clear()
 
-    for raw in body.split("\n"):
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
         if _FENCE_RE.match(raw):
             if in_code:
                 out.append(f'<pre><code class="lang-{_html_escape(code_lang)}">'
@@ -230,9 +306,11 @@ def _render_body(body: str, stems_to_path: dict[str, str]) -> str:
                 flush_para()
                 in_code = True
                 code_lang = raw[3:].strip()
+            i += 1
             continue
         if in_code:
             code_buf.append(raw)
+            i += 1
             continue
 
         m = _HEADING_RE.match(raw)
@@ -242,21 +320,46 @@ def _render_body(body: str, stems_to_path: dict[str, str]) -> str:
             level = len(m.group(1))
             text = _render_inline(m.group(2), stems_to_path)
             out.append(f"<h{level}>{text}</h{level}>")
+            i += 1
+            continue
+
+        # Pipe-table detection — header line + separator on the next
+        # line. Body rows continue until a non-pipe / blank line.
+        # Doing this before the bullet check avoids a `| - |` row from
+        # being mistaken for a list item.
+        if "|" in raw and i + 1 < len(lines) and _TABLE_SEP_RE.match(lines[i + 1]):
+            flush_list()
+            flush_para()
+            header = raw
+            sep = lines[i + 1]
+            body_rows: list[str] = []
+            j = i + 2
+            while j < len(lines):
+                nxt = lines[j]
+                if not nxt.strip() or "|" not in nxt:
+                    break
+                body_rows.append(nxt)
+                j += 1
+            out.append(_render_table(header, sep, body_rows, stems_to_path))
+            i = j
             continue
 
         bm = _BULLET_RE.match(raw)
         if bm:
             flush_para()
             list_buf.append(_render_inline(bm.group(2), stems_to_path))
+            i += 1
             continue
 
         if not raw.strip():
             flush_list()
             flush_para()
+            i += 1
             continue
 
         flush_list()
         para_buf.append(_render_inline(raw, stems_to_path))
+        i += 1
 
     flush_list()
     flush_para()

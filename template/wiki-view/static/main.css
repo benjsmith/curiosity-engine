@@ -776,6 +776,53 @@ body[data-sidebar="collapsed"] #modal {
   border: 1px solid var(--line);
 }
 
+/* GFM pipe-table renderer — used for summary-table page bodies and any
+ * markdown table that appears in prose. Mirrors the modal's properties
+ * table: zebra rows, muted borders, tight padding, monospace numerics. */
+#modal-body .md-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 14px 0 18px;
+  font-size: 13px;
+  background: var(--bg-modal);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  table-layout: auto;
+}
+#modal-body .md-table thead th {
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+#modal-body .md-table tbody td {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+#modal-body .md-table tbody tr:first-child td {
+  border-top: none;
+}
+#modal-body .md-table tbody tr:nth-child(even) td {
+  background: color-mix(in oklab, var(--bg-elev), transparent 60%);
+}
+#modal-body .md-table th[align="right"],
+#modal-body .md-table td[align="right"]  { text-align: right; }
+#modal-body .md-table th[align="center"],
+#modal-body .md-table td[align="center"] { text-align: center; }
+#modal-body .md-table th[align="left"],
+#modal-body .md-table td[align="left"]   { text-align: left; }
+
 /* Subgraph pane — radial 1-hop neighbourhood viewer below the body. */
 .subgraph-pane {
   margin-top: 32px;

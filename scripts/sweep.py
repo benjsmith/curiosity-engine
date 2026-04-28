@@ -808,6 +808,95 @@ def cmd_fix_frontmatter_quotes(wiki_dir: Path):
                         "paths": touched[:20]}, indent=2))
 
 
+# Captures the entire title line, splitting it into the leading
+# `title:` key, an optional opening quote, an optional bracketed prefix,
+# the rest of the title text, and an optional closing quote. Tolerates
+# both quoting styles plus unquoted values. Used by
+# `cmd_resync_title_prefixes` to rewrite the bracket portion in place
+# without disturbing the rest of the line.
+_TITLE_PREFIX_RE = re.compile(
+    r'^(?P<key>title:\s*)(?P<q>["\']?)'
+    r'(?:\[(?P<bracket>[^\]\n]+)\]\s*)?'
+    r'(?P<rest>[^"\'\n]*?)'
+    r'(?P=q)\s*$',
+    re.MULTILINE,
+)
+
+
+def cmd_resync_title_prefixes(wiki_dir: Path):
+    """Add or correct the `[xxx]` doc-type prefix on every page title.
+
+    Reads each page's frontmatter `type:` and ensures the title starts
+    with the canonical `naming.TYPE_PREFIX` value for that type. Three
+    cases handled:
+
+      1. Title already carries the canonical prefix → no change.
+      2. Title carries a wrong/legacy prefix (e.g. ``[concept]`` for a
+         concept page that should read ``[con]``, or no prefix at all
+         on a freshly-built ``summary-table`` page that the worker
+         skipped) → the bracketed segment is replaced.
+      3. Title has no prefix → the canonical prefix is prepended.
+
+    Every rewritten title is double-quoted so strict YAML parsers
+    (PyYAML, Obsidian) don't read a leading ``[con]`` as a flow
+    sequence. Idempotent — pages already in canonical form are left
+    alone.
+
+    Skips pages whose `type:` is missing or absent from `TYPE_PREFIX`
+    (e.g. unclassified scratch pages, hub indexes); they get no prefix
+    by design and the legacy bracket text — if any — is preserved.
+    """
+    from naming import TYPE_PREFIX
+
+    touched = []
+    skipped_unknown_type = []
+    for p in wiki_pages(wiki_dir):
+        text = p.read_text()
+        if not text.startswith("---\n"):
+            continue
+        fm_end = text.find("\n---\n", 4)
+        if fm_end == -1:
+            continue
+        fm_block = text[:fm_end]
+        fm, _ = read_frontmatter(text)
+        page_type = fm.get("type", "") if isinstance(fm, dict) else ""
+        canonical = TYPE_PREFIX.get(page_type)
+        if not canonical:
+            skipped_unknown_type.append(str(p.relative_to(wiki_dir)))
+            continue
+
+        m = _TITLE_PREFIX_RE.search(fm_block)
+        if not m:
+            continue
+
+        bracket = (m.group("bracket") or "").strip()
+        rest = m.group("rest").strip()
+        # Already canonical — preserve verbatim.
+        if f"[{bracket}]" == canonical and m.group("q") == '"':
+            continue
+
+        # Build rewritten title. Drop the legacy bracket entirely; the
+        # canonical one takes its place. Re-quote with double quotes so
+        # the value parses as a string under PyYAML.
+        new_value = f"{canonical} {rest}".strip()
+        # Escape any embedded double quotes by downgrading to single
+        # quotes — same convention as `cmd_fix_source_stubs`.
+        new_value = new_value.replace('"', "'")
+        replacement = f'{m.group("key")}"{new_value}"'
+        new_fm = fm_block[:m.start()] + replacement + fm_block[m.end():]
+        if new_fm == fm_block:
+            continue
+        new_text = new_fm + text[fm_end:]
+        p.write_text(new_text)
+        touched.append(str(p.relative_to(wiki_dir)))
+
+    print(json.dumps({
+        "touched": len(touched),
+        "paths": touched[:20],
+        "skipped_unknown_type": len(skipped_unknown_type),
+    }, indent=2))
+
+
 def cmd_normalize_vault_suffixes(wiki_dir: Path):
     """Rename any vault/<name>.pdf.pdf binary to <name>.pdf and update
     its paired extraction's `kept_as:` frontmatter field.
@@ -2358,6 +2447,7 @@ def main():
         "purge-template-todo-artefacts", "consolidate-todos-page",
         "sync-todos", "sync-notes", "normalize-vault-suffixes",
         "scan-references", "resync-stems", "resync-prefixes",
+        "resync-title-prefixes",
         "concept-candidates",
         "evidence-candidates", "figure-candidates",
         "pending-multimodal", "pending-figures",
@@ -2424,6 +2514,8 @@ def main():
         cmd_resync_stems(wiki_dir)
     elif args.command == "resync-prefixes":
         cmd_resync_prefixes(wiki_dir)
+    elif args.command == "resync-title-prefixes":
+        cmd_resync_title_prefixes(wiki_dir)
     elif args.command == "concept-candidates":
         cmd_concept_candidates(wiki_dir, min_inbound=args.min_inbound,
                                 limit=args.limit)
