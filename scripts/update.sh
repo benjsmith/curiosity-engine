@@ -11,18 +11,19 @@
 #     `.curator/config.json`. Defaults to the upstream value seeded by
 #     setup.sh; fork users edit the key once in their workspace config.
 #
-# Typical agent flow:
+# Flow (identical for humans and agents — strictly two-step):
 #
 #   1. User: "update the skill"
-#   2. Agent calls update.sh (no args) — prints release notes (git install)
-#      or update plan (npx install), exits 0 without changes because
-#      non-interactive callers need --yes.
-#   3. Agent shows the output to the user; user confirms.
-#   4. Agent re-invokes update.sh --yes — auto-commits any dirty wiki
-#      edits, applies the update, runs setup.sh's migration pass.
-#
-# A human running in a terminal sees the output and gets a [y/N]
-# prompt instead of the --yes requirement.
+#   2. Caller invokes update.sh (no args) — prints release notes (git
+#      install) or update plan (npx install), then exits 0 without
+#      changes. The script never prompts: a TTY-based [y/N] prompt would
+#      hang under coding-agent CLIs that allocate a PTY but can't
+#      forward keystrokes (notably GitHub Copilot Chat in VS Code).
+#   3. Caller shows the output; user confirms.
+#   4. Caller re-invokes update.sh --yes — auto-commits any dirty wiki
+#      edits, applies the update, runs setup.sh's migration pass with
+#      CURIOSITY_ENGINE_NONINTERACTIVE=1 exported so its prompts also
+#      stay non-blocking.
 
 set -e
 
@@ -117,22 +118,20 @@ else
     echo ""
 fi
 
-# ── Approval gate (shared across methods).
+# ── Approval gate (strictly two-step, no TTY prompt).
+#
+# Older revisions tried a [y/N] prompt when both stdin and stdout were
+# TTYs. That hangs under GitHub Copilot Chat in VS Code: Copilot
+# allocates a PTY for the bash subprocess (so the TTY check passes) but
+# has no channel to forward user keystrokes into it, so `read` blocks
+# forever. The two-step flow is universal — humans just copy-paste the
+# `--yes` re-invocation echoed below.
 APPROVED=0
 for arg in "$@"; do
     case "$arg" in
         --yes|-y) APPROVED=1 ;;
     esac
 done
-if [ "$APPROVED" = "0" ]; then
-    if [ -t 0 ] && [ -t 1 ]; then
-        printf "Apply update? [y/N] "
-        read -r reply || reply="n"
-        case "$reply" in
-            y|Y|yes|YES) APPROVED=1 ;;
-        esac
-    fi
-fi
 if [ "$APPROVED" = "0" ]; then
     echo "Update not applied. Re-run with --yes to proceed:"
     echo "  bash $SCRIPT_DIR/update.sh --yes"
@@ -173,7 +172,10 @@ fi
 
 echo ""
 echo "Running setup.sh (migration pass) ..."
-bash "$SCRIPT_DIR/setup.sh"
+# Force non-interactive mode so setup.sh's prompts can't reintroduce the
+# Copilot-PTY hang we just removed above. setup.sh treats this as
+# equivalent to a non-TTY shell and uses each prompt's documented default.
+CURIOSITY_ENGINE_NONINTERACTIVE=1 bash "$SCRIPT_DIR/setup.sh"
 
 echo ""
 echo "=== Update complete ==="

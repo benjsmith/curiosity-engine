@@ -3,6 +3,18 @@ set -e
 
 echo "=== Curiosity Engine Setup ==="
 
+# Interactive-mode predicate. The historical check was a bare
+# `[ -t 0 ] && [ -t 1 ]`, but that misfires under coding-agent CLIs that
+# allocate a PTY for the subprocess without any way to forward user
+# keystrokes (GitHub Copilot Chat in VS Code is the prominent case):
+# every `read -r reply` then blocks indefinitely. Callers — most
+# importantly update.sh's migration pass — set
+# CURIOSITY_ENGINE_NONINTERACTIVE=1 to force the non-TTY branch
+# regardless of what isatty(3) reports.
+_is_interactive() {
+    [ "${CURIOSITY_ENGINE_NONINTERACTIVE:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]
+}
+
 # Pre-flight checks. Fail fast with clear messages instead of failing
 # cryptically deep in the script. The three hard requirements: git (the
 # wiki IS a git repo), python3 ≥ 3.9 (scripts use `from __future__ import
@@ -94,7 +106,7 @@ done
 # `uv run python3 ...`, which auto-discovers the workspace `.venv`. Without
 # uv the allowlist won't match and every python command triggers approval.
 if ! command -v uv >/dev/null 2>&1; then
-    if [ -t 0 ] && [ -t 1 ]; then
+    if _is_interactive; then
         printf "uv not found. Install uv from astral.sh? [Y/n] "
         read -r reply_uv || reply_uv="y"
     else
@@ -132,7 +144,7 @@ if [ -d .venv ]; then
         _cur_mm="${_py_major}.${_py_minor}"
         if [ -n "$_venv_mm" ] && [ "$_venv_mm" != "$_cur_mm" ]; then
             _drift_reason=".venv is on Python $_venv_py; current python3 is $_py_version"
-            if [ -t 0 ] && [ -t 1 ]; then
+            if _is_interactive; then
                 echo ""
                 echo "  $_drift_reason"
                 printf "  Rebuild .venv on Python $_py_version? [y/N] "
@@ -338,7 +350,7 @@ refresh_template_md() {
     echo "  $dst differs from the skill template."
     echo "  Backed up to: $backup"
     local reply_merge="n"
-    if [ -t 0 ] && [ -t 1 ]; then
+    if _is_interactive; then
         printf "  Auto-merge workspace edits with the refreshed template (union merge via git merge-file)? [y/N] "
         read -r reply_merge || reply_merge="n"
     fi
@@ -479,7 +491,7 @@ else
     if [ -n "$missing_canary" ]; then
         echo "  Existing .claude/settings.json is missing canonical allowlist"
         echo "  entry matching: $missing_canary"
-        if [ -t 0 ] && [ -t 1 ]; then
+        if _is_interactive; then
             printf "  Regenerate it now? (backs up old file to .claude/settings.json.bak) [Y/n] "
             read -r reply_regen || reply_regen="y"
         else
@@ -606,7 +618,7 @@ fi
 # Caveman strips predictable grammar tokens (articles, filler adverbs, etc.)
 # so the curator burns less context. Used at read-time (ultra: ~30-40% fewer
 # input tokens) and write-time (ultra for most pages, lite for analyses).
-if [ -t 0 ] && [ -t 1 ]; then
+if _is_interactive; then
     echo ""
     printf "Install caveman skill to save tokens by using terse telegraphic language for reads and writes? [Y/i/n] "
     read -r reply || reply="y"
@@ -641,7 +653,7 @@ fi
 # Most small vaults (<500 sources) don't need this — FTS5 keyword
 # search covers the common case. Opt in when you start hitting
 # paraphrased queries that miss with keyword alone.
-if [ -t 0 ] && [ -t 1 ]; then
+if _is_interactive; then
     echo ""
     printf "Install semantic vault search (sentence-transformers + sqlite-vec, ~200MB)? [y/N] "
     read -r reply_embed || reply_embed="n"
