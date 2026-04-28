@@ -197,6 +197,8 @@ For the full design rationale (why not RAG, how the ratchet works, where the ski
 
 For vaults above a few hundred sources where keyword search starts missing fuzzy matches, an optional MiniLM embedding index layered over sqlite-vec gives the curator a semantic fallback. Setup prompts to install `sentence-transformers` + `sqlite-vec` (~200MB model download); opt in only if you need it. Embeddings augment FTS5, never replace — keyword stays primary.
 
+A C compiler must be on PATH at install time — `pysqlite3` (pulled in alongside sqlite-vec to give macOS system Python a sqlite build with loadable extensions enabled) compiles from source. Install it before opting in: `xcode-select --install` on macOS, `apt install build-essential` on Debian/Ubuntu, `dnf groupinstall 'Development Tools'` on Fedora/RHEL.
+
 ## Inspired by
 
 | From | Idea taken |
