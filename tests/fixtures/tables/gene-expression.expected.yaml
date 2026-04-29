@@ -1,0 +1,13 @@
+fixture: gene-expression.csv
+kind: csv
+description: 5 genes x 4 columns. Adversarial for any extractor that lower-cases or strips short symbols.
+must_contain:
+  - "TP53"
+  - "BRCA1"
+  - "MYC"
+  - "KRAS"
+  - "EGFR"
+  - "0.0001"
+precision_check:
+  min_pipe_rows: 5
+  min_word_count: 15

@@ -1,0 +1,12 @@
+fixture: pptx-3x3.pptx
+kind: pptx
+description: 1 slide titled "Architecture comparison" with a 4x3 model-comparison table.
+must_contain:
+  - "Architecture comparison"
+  - "BERT"
+  - "LLaMA-2"
+  - "1.5B"
+  - "2T"
+precision_check:
+  min_pipe_rows: 4
+  min_word_count: 15

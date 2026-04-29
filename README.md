@@ -142,7 +142,7 @@ See `template/config.example.json` for working variants:
 }
 ```
 
-**Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` the models above, edit `.curator/config.json` to match. Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers).
+**Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` the models above, edit `.curator/config.json` to match. Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers). On-demand scientific-table extraction is the one workflow where open-weight models materially underperform — frontier models only (Voinea et al. 2026, see Acknowledgements & Citation).
 
 **Enterprise notes.** No code sends wiki/vault content anywhere except to the model API your CLI drives; swap to Ollama for fully on-prem. PyPI access is required at setup time; HuggingFace egress is required only if you opt into semantic search (can be pre-staged via `HF_HOME`).
 
@@ -152,6 +152,16 @@ See `template/config.example.json` for working variants:
 - **Backup & restore.** `wiki/` is a git repo — push it wherever you back up code. `vault/` holds your raw sources — back it up like any data folder; re-ingest is expensive (it's what you pay the curator to do). `vault.db`, `graph.kuzu`, and `wiki/figures/_assets/` are all derived and auto-regenerate from vault + wiki on the next `setup.sh` / `graph.py rebuild` / `figures.py regen` run (the asset folder is gitignored inside the wiki repo for the same reason). The one non-regeneratable store is `.curator/tables.db` (class-entity row data is source-of-truth in SQLite, not derivable from git-tracked files) — back it up separately if you've used class tables.
 - **Rendering on GitHub and raw markdown viewers.** By default, wiki figure and summary-table pages use Obsidian's `![[asset.png]]` transclusion syntax. The built-in graph viewer and Obsidian both render these inline; GitHub and generic markdown viewers show them as literal text. Set `wiki_viewer_mode: "vscode"` in `.curator/config.json` and re-run setup.sh to convert embeds to standard `![](path)` syntax for VS Code / Foam / GitHub renderers — the underlying PNGs are unchanged.
 - **No-network / air-gapped install.** `setup.sh` uses `curl … | sh` to install `uv` when missing. For environments where that's blocked, pre-install uv via `pip install uv` first and re-run `setup.sh` — it'll detect the existing uv and skip the curl step. Same applies to pypdfium2 / Pillow / kuzu / pyyaml — pre-populate a PyPI mirror and `pip install` them; setup.sh uses `uv pip install` which respects `UV_INDEX_URL` / `PIP_INDEX_URL` for internal mirrors.
+
+### Wiring orphan sources after a bulk ingest
+
+After a large `local_ingest.py` run, most newly-created `wiki/sources/*.md` stubs have zero inbound wikilinks. Say "wire up orphan sources" or just "link" — both map to the LINK pass, which now pre-ranks orphan stubs as `priority_targets` and instructs the proposer to spend ≥60% of its proposal budget on them. If a weaker reviewer model still misses them, run
+
+```
+uv run python3 <skill_path>/scripts/sweep.py orphan-sources wiki --limit 30
+```
+
+and paste the output into chat. It returns the worst-orphaned source stubs alongside up to 3 best-fit concept/entity pages each, so the agent can wire them directly without inferring the frontier from prose.
 
 ## What makes it different
 
@@ -221,3 +231,15 @@ A C compiler must be on PATH at install time — `pysqlite3` (pulled in alongsid
 ## License
 
 MIT
+
+## Acknowledgements & Citation
+
+The scientific-table extraction direction in this skill (test fixtures under `tests/fixtures/tables/`, the documented Docling → on-demand frontier-LLM YAML → post-process pipeline, and the prompt-design principles applied to `summary_table_builder`) is based on the methodology of:
+
+> Voinea, A.; Thöni, A. C. M.; Veenman, E.; Huck, W. T. S.; Kachman, T.; Mabesoone, M. F. J. *BigMixSolDB: Extraction of a solubility database in solvent mixtures with an uncertainty-quantified large language model-based pipeline*. ChemRxiv preprint, 2026. DOI: [10.26434/chemrxiv.15001616/v1](https://doi.org/10.26434/chemrxiv.15001616/v1)
+>
+> Original code & data: <https://github.com/BigChemistry-RobotLab/BigMixSolDB> · Zenodo: [10.5281/zenodo.19388678](https://doi.org/10.5281/zenodo.19388678)
+
+Note: this skill applies an **extract-then-process-on-demand** adaptation of the paper's methodology — Docling-quality Markdown is produced at ingest, and the structured frontier-LLM YAML extraction is invoked later, only when a downstream worker needs structured rows. This avoids paying the per-document LLM cost across sources that never get mined for tabular data.
+
+If you use this skill's scientific-extraction pipeline in published work, please cite the paper above.

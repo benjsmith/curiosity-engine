@@ -93,6 +93,16 @@ Subcommands
         Default min-inbound=3, same threshold as concept-candidates.
         Ranked JSON (top 20 by default).
 
+    sweep.py orphan-sources [wiki_dir] [--limit N]
+        Source stubs ranked by inbound-link starvation (worst first).
+        For each orphan stub, suggests up to 3 best-fit concept/entity
+        pages as candidate link sources via stem substring-matching
+        against the stub body + linked vault extraction. Direct input
+        to LINK / wire mode: orchestrator inlines this list under
+        `priority_targets` in the link_proposer prompt so a weaker
+        model gets an explicit ranked frontier instead of advisory
+        prose. Default --limit 30. Pure read op.
+
     sweep.py pending-multimodal [wiki_dir]
         List vault extractions tagged `multimodal_recommended: true` in
         their frontmatter — PDFs where the fast pypdf pass either failed
@@ -2362,6 +2372,86 @@ def cmd_concept_candidates(wiki_dir: Path, min_inbound: int = 3,
     print(json.dumps({"candidates": candidates[:limit]}, indent=2))
 
 
+def cmd_orphan_sources(wiki_dir: Path, limit: int = 30) -> None:
+    """Source stubs ranked by inbound-link starvation (worst first).
+
+    For each `wiki/sources/*.md` stub, report the inbound-link count
+    (how many non-source wiki pages link to it) plus up to 3 best-fit
+    concept/entity pages that would be plausible link sources. The
+    candidate ranking is a substring-match score: count occurrences of
+    each concept/entity stem (hyphens replaced with spaces, word-bounded)
+    in the source stub's body and the linked vault extraction. Top hits
+    win.
+
+    Used as direct input to LINK / wire mode: the orchestrator inlines
+    this list under `priority_targets` in the link_proposer prompt, so a
+    weaker model gets an explicit ranked frontier instead of advisory
+    prose. Read-only — no graph or index writes.
+    """
+    pages = wiki_pages(wiki_dir)
+    _, _, inbound = scan_wikilinks(pages)
+    sources = [p for p in pages if p.parent.name == "sources"]
+    if not sources:
+        print(json.dumps({"orphan_sources": []}, indent=2))
+        return
+
+    concept_entity_pages = [
+        p for p in pages
+        if p.parent.name in ("concepts", "entities")
+    ]
+    candidates_by_stem = {p.stem.lower(): p for p in concept_entity_pages}
+    stem_word_patterns = {
+        stem: re.compile(
+            r"\b" + re.escape(stem.replace("-", " ")) + r"\b",
+            re.IGNORECASE,
+        )
+        for stem in candidates_by_stem
+        if len(stem) >= 3
+    }
+
+    vault_dir = wiki_dir.parent / "vault"
+
+    def _candidate_targets(stub: Path) -> list:
+        text_chunks = [stub.read_text()]
+        fm, _ = read_frontmatter(text_chunks[0])
+        raw = fm.get("sources", "")
+        extraction_names = []
+        if isinstance(raw, list):
+            extraction_names = [n for n in raw if n.endswith(".extracted.md")]
+        else:
+            extraction_names = re.findall(r"[\w./-]+\.extracted\.md", raw)
+        for name in extraction_names[:1]:
+            ext_path = vault_dir / name
+            if ext_path.exists():
+                try:
+                    text_chunks.append(ext_path.read_text()[:8000])
+                except OSError:
+                    pass
+        body = "\n".join(text_chunks)
+        scores = []
+        for stem, pat in stem_word_patterns.items():
+            n = len(pat.findall(body))
+            if n > 0:
+                scores.append((n, stem))
+        scores.sort(key=lambda t: (-t[0], t[1]))
+        return [
+            str(candidates_by_stem[s].relative_to(wiki_dir))
+            for _, s in scores[:3]
+        ]
+
+    ranked = sorted(sources, key=lambda p: inbound.get(p.stem.lower(), 0))
+    out = []
+    for stub in ranked[:limit]:
+        own = stub.stem.lower()
+        out.append({
+            "stub": str(stub.relative_to(wiki_dir)),
+            "stem": own,
+            "inbound": inbound.get(own, 0),
+            "candidate_targets": _candidate_targets(stub),
+        })
+    print(json.dumps({"orphan_sources": out}, indent=2))
+
+
 def cmd_scan_references(wiki_dir: Path):
     """Log external references (arXiv / DOI) not yet in the vault.
 
@@ -2450,6 +2540,7 @@ def main():
         "resync-title-prefixes",
         "concept-candidates",
         "evidence-candidates", "figure-candidates",
+        "orphan-sources",
         "pending-multimodal", "pending-figures",
     ])
     ap.add_argument("--target", choices=["obsidian", "vscode"],
@@ -2530,6 +2621,8 @@ def main():
         cmd_pending_figures(wiki_dir)
     elif args.command == "pending-multimodal":
         cmd_pending_multimodal(wiki_dir)
+    elif args.command == "orphan-sources":
+        cmd_orphan_sources(wiki_dir, limit=args.limit)
 
 
 if __name__ == "__main__":

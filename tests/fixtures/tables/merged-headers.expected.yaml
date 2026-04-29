@@ -1,0 +1,13 @@
+fixture: merged-headers.xlsx
+kind: xlsx
+description: 1 sheet, A1:D1 merged super-header + column headers + 3 data rows. Tests merged-cell handling.
+must_contain:
+  - "Trial outcomes"
+  - "Dose"
+  - "Survival"
+  - "Control"
+  - "0.001"
+  - "120"
+precision_check:
+  min_pipe_rows: 4
+  min_word_count: 20

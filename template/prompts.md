@@ -381,6 +381,20 @@ clean context; does NOT see prior CURATE or LINK history.
 > <PAGE_SUMMARIES_JSON>
 > ```
 >
+> Priority targets (orphan source stubs ranked worst-first, from
+> `sweep.py orphan-sources`):
+> ```
+> <ORPHAN_SOURCES_JSON>
+> ```
+>
+> **At least 60% of your proposals must use a `priority_targets` entry as
+> the `target`.** These source stubs are the highest-orphan-rate pages in
+> the wiki and need wiring most. Each priority target carries up to 3
+> `candidate_targets` — concept/entity pages whose stems already appear in
+> the source's body — those are strong candidates for the proposal's
+> `source` page. Spend the remaining proposal budget on substantive
+> cross-subdirectory connections after the floor is met.
+>
 > Propose up to 150 wikilink insertions. Each proposal:
 > - **source**: path of the page that gets the new link (e.g. `concepts/transformer.md`).
 > - **target**: path of the linked-to page.

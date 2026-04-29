@@ -1,0 +1,9 @@
+fixture: prose.pdf
+kind: pdf
+description: Text-only control PDF. Confirms the prose path doesn't regress when backends add table-aware steps.
+must_contain:
+  - "Lorem ipsum"
+must_not_contain:
+  - "|---|"   # no table markup expected
+precision_check:
+  min_word_count: 30
