@@ -208,6 +208,28 @@ if ! uv run --no-project python3 -c "import PIL" >/dev/null 2>&1; then
     echo "  Installing Pillow (PNG encoding for pypdfium2) into .venv ..."
     uv pip install Pillow
 fi
+# pdfplumber: layered on top of pypdf in local_ingest.py to recover
+# bordered tables as GFM under `## Extracted tables`. Bordered tables
+# (chemistry buffers, gene-expression grids, benchmark scores) recover
+# well; borderless / multi-line-cell layouts fall through to the
+# multimodal-upgrade flag. ~10 MB; only PDF-related.
+if ! uv run --no-project python3 -c "import pdfplumber" >/dev/null 2>&1; then
+    echo "  Installing pdfplumber (PDF table extraction) into .venv ..."
+    uv pip install pdfplumber
+fi
+# openpyxl: stdlib-equivalent for the spreadsheet world. local_ingest.py
+# uses it to convert .xlsx workbooks to per-sheet GFM tables. Pure
+# Python (~5 MB).
+if ! uv run --no-project python3 -c "import openpyxl" >/dev/null 2>&1; then
+    echo "  Installing openpyxl (XLSX extraction) into .venv ..."
+    uv pip install openpyxl
+fi
+# python-pptx: needed for slide-table extraction in local_ingest.py.
+# Reads .pptx natively without LibreOffice; ~3 MB.
+if ! uv run --no-project python3 -c "import pptx" >/dev/null 2>&1; then
+    echo "  Installing python-pptx (PPTX extraction) into .venv ..."
+    uv pip install python-pptx
+fi
 
 # Working directory layout:
 #   vault/                 raw sources

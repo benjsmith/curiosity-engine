@@ -34,7 +34,8 @@ WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
-                      "fact", "summary-table", "figure", "note", "todo-list"}
+                      "fact", "summary-table", "extracted-table", "figure",
+                      "note", "todo-list"}
 
 # Allowlist of frontmatter keys the curator actually reads. Unknown keys are
 # dropped by read_frontmatter so an adversarial source cannot smuggle
@@ -71,6 +72,20 @@ ALLOWED_FM_KEYS = frozenset({
     # regardless of whether any figures were produced. Absence means
     # pending work; presence suppresses re-extraction.
     "figures_extracted",
+    # Table-extraction signals (on vault extractions, on
+    # `wiki/tables/tab-*.md` extracted-table pages, and on the source
+    # stubs they link to). `has_tables` / `tables_extracted` /
+    # `tables_present` are written by local_ingest.py; `extracted_from`
+    # / `table_index` / `row_count` / `db_table` / `is_snapshot` /
+    # `extraction_sha` annotate the `[tab]` wiki pages produced by
+    # `sweep.py promote-extracted-tables`.
+    "has_tables", "tables_extracted", "tables_present",
+    "extracted_from", "table_index", "row_count",
+    "db_table", "is_snapshot", "extraction_sha",
+    # Multimodal-upgrade flag (vault extractions): pypdf failed sanity
+    # OR the doc has math/tables the text extractor mangled.
+    "multimodal_recommended", "has_math", "sanity_note",
+    "extraction_method", "extraction_quality",
 })
 
 TYPE_PREFIX = {
@@ -81,6 +96,7 @@ TYPE_PREFIX = {
     "evidence": "[evi]",
     "fact": "[fact]",
     "summary-table": "[tbl]",
+    "extracted-table": "[tab]",
     "figure": "[fig]",
     "note": "[note]",
     "todo-list": "[todo]",
@@ -89,8 +105,11 @@ TYPE_PREFIX = {
 # Filename stem prefixes for the page types that live in dedicated
 # subdirectories (`wiki/tables/`, `wiki/figures/`). Helps Obsidian
 # quick-switcher group them and disambiguates stems across the wiki.
+# `tab-` for extracted-table pages keeps them lexicographically
+# adjacent to `tbl-` summary tables but visually distinct.
 STEM_PREFIX = {
     "summary-table": "tbl-",
+    "extracted-table": "tab-",
     "figure": "fig-",
 }
 

@@ -142,7 +142,7 @@ See `template/config.example.json` for working variants:
 }
 ```
 
-**Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` the models above, edit `.curator/config.json` to match. Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers). On-demand scientific-table extraction is the one workflow where open-weight models materially underperform — frontier models only (Voinea et al. 2026, see Acknowledgements & Citation).
+**Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` the models above, edit `.curator/config.json` to match. Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers). The deterministic table-extraction tier (`local_ingest.py` + `sweep.py promote-extracted-tables`) runs purely on local Python libraries (pdfplumber / openpyxl / python-pptx) and is unaffected by model choice; if you later add a worker-model pass to interpret extracted scientific tables, that pass benefits from frontier models per the design principles cited under [Acknowledgements & Citation](#acknowledgements--citation).
 
 **Enterprise notes.** No code sends wiki/vault content anywhere except to the model API your CLI drives; swap to Ollama for fully on-prem. PyPI access is required at setup time; HuggingFace egress is required only if you opt into semantic search (can be pre-staged via `HF_HOME`).
 
@@ -234,12 +234,17 @@ MIT
 
 ## Acknowledgements & Citation
 
-The scientific-table extraction direction in this skill (test fixtures under `tests/fixtures/tables/`, the documented Docling → on-demand frontier-LLM YAML → post-process pipeline, and the prompt-design principles applied to `summary_table_builder`) is based on the methodology of:
+The skill's table-handling design — store extracted tables as canonical `[tab]` wiki pages with the full row data in the rdb, treat numeric values as literal transcriptions never to be derived from, and keep extraction-time work cheap and deterministic — was informed by the design principles described in the BigMixSolDB paper:
 
 > Voinea, A.; Thöni, A. C. M.; Veenman, E.; Huck, W. T. S.; Kachman, T.; Mabesoone, M. F. J. *BigMixSolDB: Extraction of a solubility database in solvent mixtures with an uncertainty-quantified large language model-based pipeline*. ChemRxiv preprint, 2026. DOI: [10.26434/chemrxiv.15001616/v1](https://doi.org/10.26434/chemrxiv.15001616/v1)
 >
 > Original code & data: <https://github.com/BigChemistry-RobotLab/BigMixSolDB> · Zenodo: [10.5281/zenodo.19388678](https://doi.org/10.5281/zenodo.19388678)
 
-Note: this skill applies an **extract-then-process-on-demand** adaptation of the paper's methodology — Docling-quality Markdown is produced at ingest, and the structured frontier-LLM YAML extraction is invoked later, only when a downstream worker needs structured rows. This avoids paying the per-document LLM cost across sources that never get mined for tabular data.
+What this skill **does not** borrow: the paper's Docling + frontier-LLM-YAML extraction stack itself. We use `pypdf` + `pdfplumber` for table extraction (alongside `openpyxl` and `python-pptx` for spreadsheets and slide decks), all running locally with no model call at ingest. Concretely transferred from the paper's design:
 
-If you use this skill's scientific-extraction pipeline in published work, please cite the paper above.
+- **Extract literally; never derive.** Numeric values in extracted-table pages are flagged with a literal-transcription notice; downstream workers are instructed not to unit-convert or compute when citing.
+- **Per-table page artefacts with full provenance.** Each pdfplumber-recovered table becomes its own `wiki/tables/tab-<source>-t<n>.md` page citing the source via the standard `(vault:...)` DSL, mirroring the paper's per-source structured artefact.
+- **Snapshot + summary above a row threshold** (default 100 rows). Page becomes a 10-row snapshot plus per-column summary (numeric min/max or distinct-value sample); the full table lands in `.curator/tables.db` for queryable access. This mirrors the paper's separation of "human-readable artefact" from "machine-queryable database."
+- **Row-level provenance in the rdb.** Every row in `_extracted_tables` carries `source_stub`, `source_extraction`, and `extraction_sha`, so the database is reproducible from the git-tracked corpus.
+
+If you use this skill's scientific-extraction pipeline in published work, please cite the paper above to credit the design principles. The implementation is the curiosity-engine project's own.

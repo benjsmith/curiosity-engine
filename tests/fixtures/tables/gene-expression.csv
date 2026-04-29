@@ -1,6 +1,0 @@
-gene,fold_change,p_value,context
-TP53,2.3,0.001,colorectal
-BRCA1,-1.8,0.02,breast
-MYC,4.5,0.0001,lymphoma
-KRAS,3.1,0.003,pancreatic
-EGFR,2.7,0.005,lung

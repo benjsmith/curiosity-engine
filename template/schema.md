@@ -57,7 +57,7 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
 ```
 ---
 title: "[con] Page Title"
-type: entity | concept | source | analysis | evidence | fact | summary-table | figure
+type: entity | concept | source | analysis | evidence | fact | summary-table | extracted-table | figure
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 sources: [path/to/source.extracted.md]
@@ -78,10 +78,24 @@ markdown link; it renders as plain parenthesised text in Obsidian
 by design (keeps the marker parseable everywhere).
 
 Pages in `wiki/tables/` and `wiki/figures/` carry stem prefixes
-(`tbl-`, `fig-`) so Obsidian groups them cleanly. Figure pages
+(`tbl-`, `tab-`, `fig-`) so Obsidian groups them cleanly. Figure pages
 additionally record `asset`, `origin`, `source_page`,
 `extraction_method`, and `relates_to` so `figures.py regen` can
 rebuild a missing asset deterministically from its vault source.
+
+`wiki/tables/tab-*.md` (`type: extracted-table`) are deterministic
+verbatim transcriptions of tables found in source PDFs / spreadsheets /
+slide decks during ingest, distinct from `wiki/tables/tbl-*.md`
+(`type: summary-table`) which are curator-authored comparisons across
+sources. Extracted-table pages are produced by
+`sweep.py promote-extracted-tables`. Pages with row count ≤ 100 carry
+the full GFM table; pages with > 100 rows carry a 10-row snapshot plus
+a small summary (column count, dtype hint, min/max where numeric) and
+defer the full data to `.curator/tables.db`. Frontmatter records
+`extracted_from` (source-stub stem), `table_index`, `row_count`,
+`is_snapshot`, and `db_table` (the SQLite table holding the rows).
+Source citation goes through the standard `(vault:...)` DSL so
+`graph.py rebuild` picks the page up as a normal Cites edge.
 
 ## Rules
 - If caveman is installed, write at the configured level: ultra for most page

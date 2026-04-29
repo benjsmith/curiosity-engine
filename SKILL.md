@@ -48,7 +48,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
    - **Drop folder (recommended):** user drops files into `vault/raw/`, then `uv run python3 <skill_path>/scripts/local_ingest.py` (no args) extracts each file, moves the original into `vault/`, and removes it from the drop folder.
    - **External directory:** `uv run python3 <skill_path>/scripts/local_ingest.py <dir>` copies files from any directory into the vault.
 
-   Text formats (`.md`, `.txt`, `.rst`, `.html`, `.json`, `.yaml`, `.org`) are UTF-8-decoded directly. PDFs go through a two-tier extractor: `pypdf` handles the fast path, and anything that fails sanity (printable-ratio, word-count floor) OR has math/table heuristics triggering gets `multimodal_recommended: true` in its frontmatter for a later quality pass via `sweep.py pending-multimodal` + agent multimodal read. Other rich formats (DOCX, images, PPTX) still need the manual INGEST operation with multimodal agent reads.
+   Text formats (`.md`, `.txt`, `.rst`, `.html`, `.json`, `.yaml`, `.org`) are UTF-8-decoded directly. Structured spreadsheet/slide formats (`.csv`, `.xlsx`, `.pptx`) are emitted as GFM tables — stdlib `csv`, `openpyxl`, and `python-pptx` respectively — with `tables_present: true` set in the extraction's frontmatter. PDFs go through pypdf for prose plus pdfplumber for bordered-table reconstruction; both passes are layered into the same `.extracted.md`, with any recovered tables appearing under a `## Extracted tables` heading and `tables_extracted: <n>` in frontmatter. Anything that fails sanity (printable-ratio, word-count floor) and yields zero pdfplumber tables gets `multimodal_recommended: true` for a later quality pass via `sweep.py pending-multimodal` + agent multimodal read. Other rich formats (DOCX, scanned images, audio) still need the manual INGEST operation with multimodal agent reads.
 
    All modes wrap extractions with `untrusted: true` and `<!-- BEGIN/END FETCHED CONTENT -->` markers. `scrub_check.py --mode vault` runs on each extraction at ingest time to surface injection markers before any wiki page is built from the source.
 
@@ -131,7 +131,7 @@ The npx-skills slug is read from `.curator/config.json`'s `update_source_slug` k
 |---|---|---|---|
 | vault index | `vault/vault.db` | SQLite FTS5 (+ sqlite-vec) | full-text + semantic search over source extractions |
 | graph | `.curator/graph.kuzu` | kuzu property graph | WikiLink / Cites / typed-data-reference edges |
-| class tables | `.curator/tables.db` | SQLite standard tables | entity-class instance data with schema from entity pages |
+| class tables | `.curator/tables.db` | SQLite standard tables | entity-class instance data with schema from entity pages, plus the `_extracted_tables` system table holding verbatim row data for `wiki/tables/tab-*.md` extracted-table pages |
 
 **Figure asset PNGs** (`wiki/figures/_assets/`) — Binary files for `wiki/figures/*.md` pages. Lives inside the wiki at a `_`-prefixed subfolder (the `_` signals "supporting files, not content") so assets are inside the Obsidian vault scope; the static viewer mirrors the folder into its bundle so `<img>` tags resolve over HTTP without any reconfiguration. NOT git-tracked: `wiki/.gitignore` excludes `/figures/_assets/` because the binaries are regenerable from vault PDFs via `figures.py regen`. A fresh clone re-materialises the folder on the first setup.sh run.
 
@@ -193,18 +193,19 @@ INGEST stays lean. Evidence and fact pages emerge later, via CURATE reads.
 5. Identify key entities, concepts, claims.
 6. Create or update wiki pages in appropriate subdirectory (`entities/`, `concepts/`, etc.). For filenames: `citation_stem(parse_source_meta(vault_path))`. For display titles: `TYPE_PREFIX[type] + " " + source_display_title(meta)`. Never invent ad-hoc naming schemes — all stems and titles come from `naming.py`.
 7. Backfill source stubs: `uv run python3 <skill_path>/scripts/sweep.py fix-source-stubs wiki`. This calls `naming.py` internally so stubs get `[src]`-prefixed titles and citation-style stems (`attention-vaswani-2017`, `deep-learning-wikipedia-2026`).
-8. Refresh the index: `uv run python3 <skill_path>/scripts/sweep.py fix-index wiki` (writes `.curator/index.md`).
-9. Rebuild the knowledge graph: `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
-10. **Multimodal upgrade pass (optional quality tier).** `local_ingest.py` runs a fast `pypdf` extractor on PDFs and tags frontmatter with `multimodal_recommended: true` when either (a) the fast extractor produced too little usable text, or (b) the doc contains math symbols / table references the text extractor tends to mangle. Query the queue: `uv run python3 <skill_path>/scripts/sweep.py pending-multimodal wiki` → JSON list of `{extracted, original, extraction_quality, has_math, has_tables}`. For each entry, read the `original` file multimodally, overwrite the corresponding `.extracted.md` body with clean markdown, and update its frontmatter: `extraction_method: multimodal`, `multimodal_recommended: false`. Re-run `vault_index.py` on the updated paths (or `--rebuild` if many). Skip this step on non-PDF ingests — the queue will be empty.
-11. **Figure-extraction pass (PDFs only, Sonnet-driven).** When the source is a PDF and the ingested wiki page gained ≥1 `[[wikilink]]` inbound from existing wiki material (or the user explicitly asks), extract its figures:
+8. **Promote extracted tables (deterministic).** `uv run python3 <skill_path>/scripts/sweep.py promote-extracted-tables wiki`. Walks every `vault/*.extracted.md` whose frontmatter records `tables_extracted > 0` (PDFs run through pdfplumber by `local_ingest.py`) or `tables_present: true` (csv/xlsx/pptx structured-format extractions), parses every GFM pipe-table block out of the body, and writes one `wiki/tables/tab-<source-stub-stem>-t<n>.md` page per table. Pages with row count ≤ 100 (configurable via `--row-threshold`) carry the full GFM transcription; pages with > 100 rows carry a 10-row snapshot plus a column summary (numeric min/max or distinct-value sample) and set `is_snapshot: true`. Either way the full row data is written to `.curator/tables.db._extracted_tables` (long format) so structured queries hit the rdb, and the page's `[[<source-stub>]]` wikilink + `(vault:<extraction>)` citation feed the kuzu graph rebuild as standard `WikiLink` and `Cites` edges. Idempotent — re-running with unchanged extractions is a no-op. Run AFTER `fix-source-stubs` so each extraction has a stub to link back to.
+9. Refresh the index: `uv run python3 <skill_path>/scripts/sweep.py fix-index wiki` (writes `.curator/index.md`).
+10. Rebuild the knowledge graph: `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
+11. **Multimodal upgrade pass (optional quality tier).** `local_ingest.py` runs `pypdf` (prose) plus `pdfplumber` (bordered tables) on every PDF; when the prose pass fails sanity AND pdfplumber recovered nothing, the extraction gets `multimodal_recommended: true`. The same flag fires when math symbols are detected in a prose-OK PDF, or when a table reference (`Table 1`) appears in prose but pdfplumber could not recover a bordered table from it. Query the queue: `uv run python3 <skill_path>/scripts/sweep.py pending-multimodal wiki` → JSON list of `{extracted, original, extraction_quality, has_math, has_tables}`. For each entry, read the `original` file multimodally, overwrite the corresponding `.extracted.md` body with clean markdown (preserve any `## Extracted tables` block produced by pdfplumber unless you can do strictly better), and update its frontmatter: `extraction_method: multimodal`, `multimodal_recommended: false`. Re-run `vault_index.py` on the updated paths (or `--rebuild` if many). Re-run `sweep.py promote-extracted-tables` afterwards if you reauthored the table block.
+12. **Figure-extraction pass (PDFs only, Sonnet-driven).** When the source is a PDF and the ingested wiki page gained ≥1 `[[wikilink]]` inbound from existing wiki material (or the user explicitly asks), extract its figures:
     1. Render every page: `uv run python3 <skill_path>/scripts/figures.py render-all <vault_pdf_path> --wiki wiki`. Idempotent — no-op on rerun.
     2. Dispatch ONE fresh-context **sonnet** Agent with the `figure_extractor` template in `.curator/prompts.md`. Give it the source path + the list of rendered PNG paths. It returns `{"source": "...", "figures": [{figure_number, page, caption_first_line, brief_description, concepts_illustrated, suggested_stem}, ...]}`.
     3. For each figure spec, build a figure page using `naming.prefixed_stem("figure", spec["suggested_stem"])` for the filename. Frontmatter: `type: figure`, `origin: extracted`, `asset: <basename>.png`, `source_path: <vault_pdf_path>`, `source_page: <N>`, `extraction_method: pdf_page_render`, `sources: [<extracted_md_path>]`, `relates_to: []` (filled as the wiki grows). Body MUST contain the image embed AND an inline `[[<source-stub-stem>]]` wikilink to the source stub (stem from `naming.citation_stem(parse_source_meta(extraction))`) — see step 4 in the figure-extract wave's execute phase below for the canonical body template.
     4. Validate each page via `score_diff.py --new-page` (figures floor: ≥1 citation, 0 wikilinks, ≥10 words).
     5. The rendered page PNGs that no figure spec pointed at stay in `assets/figures/` — unreferenced-page GC is a later hygiene pass (see `figures.py check`); cost is trivial.
-12. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
-13. Append an ingest-summary entry to `.curator/log.md` with timestamp.
-14. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
+13. Scan for missing references: `uv run python3 <skill_path>/scripts/sweep.py scan-references wiki`. Walks vault extractions for arXiv / DOI citations not represented by any vault file's `source_url`; appends them to `## source-requests` in `.curator/log.md` for the human to acquire. Dedups across runs via `.curator/.requested-refs`.
+14. Append an ingest-summary entry to `.curator/log.md` with timestamp.
+15. `git -C wiki add -A && git -C wiki commit -m "ingest: <filename>"`
 
 ### QUERY — "what do I know about X", "search for Y"
 
@@ -613,6 +614,37 @@ Cite the table itself via `(table:deals?query=top-deals-q2-2026)` if used by ano
 ```
 
 When to produce one: a comparison table across sources ("benchmark X across 5 papers"), a top-N slice of a class table ("deals over £500k this quarter"), or a cross-section summary. When NOT to: if the table has >50 rows it should be a class table (SQLite) with the summary-table becoming a query-pinned view of it. Summary tables follow the same wikilink + citation conventions as analyses.
+
+### Extracted tables (`wiki/tables/tab-*.md`)
+
+Deterministic, verbatim transcriptions of tables found in source PDFs / spreadsheets / slide decks at ingest time. Distinct from `[tbl]` summary tables (curator-authored comparisons across sources): `[tab]` pages are produced mechanically by `sweep.py promote-extracted-tables` and never edited by CURATE workers — they are the canonical source-of-truth view of the underlying table.
+
+```markdown
+---
+title: "[tab] Buffer composition — chem-buffer-2026"
+type: extracted-table
+created: 2026-04-29
+updated: 2026-04-29
+sources: [20260429-...-chem-buffer.pdf.extracted.md]
+extracted_from: chem-buffer-2026          # source-stub stem (the [src] page)
+table_index: 1                            # 1-based index of this table within the source
+row_count: 4
+is_snapshot: false                        # true when the table exceeded --row-threshold
+db_table: tab_chem_buffer_2026_t1         # SQLite stem in `_extracted_tables`
+extraction_sha: <vault sha256>
+---
+
+Extracted from [[chem-buffer-2026]] (vault:...). Numeric values are literal transcriptions — do not derive or unit-convert when citing this page.
+
+| Component | Concentration | Role |
+|---|---|---|
+| Na2HPO4·7H2O | 5.36 mM | buffer |
+...
+```
+
+Pages with row count > `--row-threshold` (default 100) carry a 10-row snapshot plus a column-by-column summary (numeric min/max for numeric columns, distinct-value sample otherwise) in place of the full table; the body explicitly points at the SQLite store for the full data.
+
+The full row data is stored in `.curator/tables.db._extracted_tables` (long format: `table_stem`, `source_stub`, `source_extraction`, `headers_json`, `row_idx`, `cells_json`, `extraction_sha`) regardless of whether the page itself carries the full table or a snapshot. This is a parallel mechanism to the class-tables layer (`tables.py sync`/`insert`) which is reserved for entity-instance data with declared schemas. Extracted-table rows are not citable via `(table:<name>#id=<id>)` — cite the wiki page (`[[tab-...]]`) and let the graph carry the relationship to the source stub.
 
 ### Figures (`wiki/figures/`)
 

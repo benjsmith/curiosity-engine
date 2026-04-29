@@ -23,15 +23,22 @@ Text formats (`.md`, `.txt`, `.rst`, `.html`, `.json`, `.yaml`, `.yml`,
 
 PDF (`.pdf`): two-tier extraction. First-tier uses `pypdf` for a fast
 text pass — fine for prose-heavy papers. Sanity-checked against a
-printable-ratio / word-count floor. If the fast pass fails sanity OR the
-doc looks like it has math/tables (LaTeX markers, Table refs, math
-symbols), the frontmatter is tagged `multimodal_recommended: true` so
-the agent can re-read the source multimodally in a quality pass.
-`sweep.py pending-multimodal` lists the queue.
+printable-ratio / word-count floor. If the table heuristic fires
+(`Table N` references, or markdown-style row markers in the prose
+output), `pdfplumber` is layered on to recover bordered tables as GFM
+under a `## Extracted tables` block. The frontmatter records
+`tables_extracted: <n>`; when the heuristic fired but pdfplumber
+recovered nothing, `multimodal_recommended: true` is kept as the
+fallback. `sweep.py pending-multimodal` lists the multimodal queue.
 
-Other rich formats (DOCX, images, PPTX) still go through the manual
-INGEST operation which reads files natively via Claude's multimodal
-layer.
+Structured spreadsheet/slide formats (`.csv`, `.xlsx`, `.pptx`): cells
+are emitted as GFM tables directly — `csv` via stdlib, `xlsx` via
+`openpyxl`, `pptx` via `python-pptx`. Frontmatter carries
+`tables_present: true` so downstream workers can find them with a
+simple scan. No multimodal flag (the format already exposes structure).
+
+Other rich formats (DOCX, images) still go through the manual INGEST
+operation which reads files natively via Claude's multimodal layer.
 
 Usage:
     local_ingest.py                        # process vault/raw/ drop folder
@@ -63,7 +70,7 @@ except ImportError:
     _vault_index_add = None
 
 DEFAULT_EXTS = {".md", ".txt", ".rst", ".html", ".htm", ".json", ".yaml",
-                 ".yml", ".org", ".pdf"}
+                 ".yml", ".org", ".pdf", ".csv", ".xlsx", ".pptx"}
 # Raw-size cap: 50 MB. Real scientific PDFs with figures can approach this;
 # setting it too low rejects legitimate input. Extraction size is the
 # downstream cap that actually bounds indexing cost.
@@ -124,6 +131,132 @@ def _extract_pdf(raw_bytes: bytes) -> tuple[str, str]:
         return "\n\n".join(pages), ""
     except Exception as e:
         return "", f"pypdf_error:{type(e).__name__}"
+
+
+def _gfm_table(rows: list) -> str:
+    """Render a list of cell-row lists as a GFM pipe-table string.
+
+    None / missing cells become empty. Pipe and newline characters
+    inside cells are escaped so they don't break the row structure.
+    """
+    if not rows:
+        return ""
+    width = max(len(r) for r in rows)
+    norm = [
+        [("" if c is None else str(c).strip().replace("|", "\\|").replace("\n", " "))
+         for c in list(r) + [""] * (width - len(r))]
+        for r in rows
+    ]
+    out = ["| " + " | ".join(norm[0]) + " |",
+           "|" + "|".join(["---"] * width) + "|"]
+    for r in norm[1:]:
+        out.append("| " + " | ".join(r) + " |")
+    return "\n".join(out)
+
+
+def _extract_pdf_tables(raw_bytes: bytes) -> tuple[str, int, str]:
+    """Per-table GFM blocks via pdfplumber. Returns (markdown, n_tables, note).
+
+    Layered ON TOP of `_extract_pdf` to add structure to the prose pass.
+    Bordered tables are pdfplumber's strong case (chemistry buffers,
+    benchmark grids, gene-expression tables); borderless / multi-line-cell
+    layouts often need multimodal upgrade — fall through to the existing
+    `multimodal_recommended` flag in that case. Missing pdfplumber
+    returns "" markdown with note='pdfplumber_missing' so the caller can
+    skip the table-pass without aborting the ingest.
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        return "", 0, "pdfplumber_missing"
+    chunks = []
+    n_tables = 0
+    try:
+        with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
+            for page_idx, page in enumerate(pdf.pages, 1):
+                tables = page.extract_tables() or []
+                for tbl in tables:
+                    if not tbl or not any(
+                        any(c for c in r if c is not None) for r in tbl
+                    ):
+                        continue
+                    chunks.append(f"\n### Table p.{page_idx}\n")
+                    chunks.append(_gfm_table(tbl))
+                    n_tables += 1
+    except Exception as e:
+        return "", n_tables, f"pdfplumber_error:{type(e).__name__}"
+    return "\n".join(chunks), n_tables, ""
+
+
+def _extract_csv(raw_bytes: bytes) -> tuple[str, str]:
+    """CSV → GFM table via stdlib `csv`. Returns (markdown, note)."""
+    import csv as _csv
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw_bytes.decode("utf-8", errors="replace")
+    try:
+        rows = list(_csv.reader(io.StringIO(text)))
+    except Exception as e:
+        return "", f"csv_error:{type(e).__name__}"
+    if not rows:
+        return "", "csv_empty"
+    return _gfm_table(rows), ""
+
+
+def _extract_xlsx(raw_bytes: bytes) -> tuple[str, str]:
+    """XLSX → one GFM table per sheet via openpyxl. Returns (markdown, note).
+
+    Reads merged-cell ranges in their source position (top-left holds the
+    value, other cells in the range read empty) which is the same
+    behaviour Markdown renderers expect — no special handling.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        return "", "openpyxl_missing"
+    try:
+        wb = openpyxl.load_workbook(
+            io.BytesIO(raw_bytes), data_only=True, read_only=True
+        )
+    except Exception as e:
+        return "", f"xlsx_error:{type(e).__name__}"
+    chunks = []
+    for sheet in wb.worksheets:
+        rows = [list(r) for r in sheet.iter_rows(values_only=True)]
+        if not rows or not any(any(c is not None for c in r) for r in rows):
+            continue
+        chunks.append(f"\n## Sheet: {sheet.title}\n")
+        chunks.append(_gfm_table(rows))
+    return "\n".join(chunks), ""
+
+
+def _extract_pptx(raw_bytes: bytes) -> tuple[str, str]:
+    """PPTX → per-slide text + GFM tables via python-pptx. Returns (markdown, note)."""
+    try:
+        from pptx import Presentation
+    except ImportError:
+        return "", "pptx_missing"
+    try:
+        prs = Presentation(io.BytesIO(raw_bytes))
+    except Exception as e:
+        return "", f"pptx_error:{type(e).__name__}"
+    chunks = []
+    for i, slide in enumerate(prs.slides, 1):
+        chunks.append(f"\n## Slide {i}\n")
+        for shape in slide.shapes:
+            if getattr(shape, "has_text_frame", False):
+                t = shape.text_frame.text.strip()
+                if t:
+                    chunks.append(t)
+            if getattr(shape, "has_table", False):
+                rows = [
+                    [cell.text.strip() for cell in row.cells]
+                    for row in shape.table.rows
+                ]
+                if rows:
+                    chunks.append(_gfm_table(rows))
+    return "\n".join(chunks), ""
 
 
 def _sanity_check(text: str) -> tuple[bool, str]:
@@ -202,30 +335,50 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
         else:
             shutil.copyfile(path, kept_path)
 
-        # Dispatch on extension: PDFs get a real extractor + sanity pass;
-        # other supported extensions are UTF-8-decoded as before. Anything
-        # that fails sanity gets tagged for multimodal upgrade — the fast
-        # ingest completes either way so the pipeline doesn't block on a
-        # single bad file.
-        is_pdf = raw_ext.lower() == "pdf"
+        # Dispatch on extension. PDFs get pypdf (+ pdfplumber when the
+        # math/table heuristic fires) plus a sanity pass; structured
+        # spreadsheet/slide formats (csv/xlsx/pptx) get their respective
+        # extractors emitting GFM tables; the remaining text formats are
+        # UTF-8-decoded directly. Anything that fails sanity gets tagged
+        # for multimodal upgrade — the fast ingest completes either way
+        # so the pipeline doesn't block on a single bad file.
+        ext_lower = raw_ext.lower()
+        is_pdf = ext_lower == "pdf"
+        is_structured = ext_lower in ("csv", "xlsx", "pptx")
         has_math = False
         has_tables = False
         multimodal_recommended = False
         extraction_method = "utf8"
         extraction_quality = "good"
         sanity_note = ""
+        tables_extracted = 0
 
         if is_pdf:
             text, pdf_note = _extract_pdf(raw)
             ok, sanity_note = _sanity_check(text)
+            # Run pdfplumber unconditionally on PDFs — its output is
+            # additive (only enriches when it finds bordered tables) and
+            # works on the raw bytes independently of pypdf's text-layer.
+            # A short PDF that fails the word-count gate may still expose
+            # a recoverable table; capture it instead of punting to
+            # multimodal-only.
+            tables_md, n_tables, _pp_note = _extract_pdf_tables(raw)
+
             if ok:
                 extraction_method = "pypdf"
                 extraction_quality = "good"
                 has_math = _detect_math(text)
                 has_tables = _detect_tables(text)
-                # Math/tables get tagged so the agent can do a quality
-                # pass multimodally after the cheap work is done.
-                multimodal_recommended = has_math or has_tables
+            elif n_tables > 0:
+                # Prose failed sanity, but pdfplumber rescued tables —
+                # drop the (likely garbled) pypdf prose; the table block
+                # below becomes the body. Common pattern: chemistry
+                # datasheets, benchmark-only PDFs, certificate PDFs.
+                extraction_method = "pdfplumber-only"
+                extraction_quality = "good"
+                text = ""
+                has_math = False
+                has_tables = True
             else:
                 extraction_method = "pypdf_failed"
                 extraction_quality = "failed"
@@ -240,6 +393,72 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
                     f"See `sweep.py pending-multimodal wiki`; the original "
                     f"is at `{kept_path.name}`.)"
                 )
+
+            if n_tables > 0:
+                # Frame the GFM block so downstream workers know to
+                # treat values as literal transcriptions — applies the
+                # extract-literally / never-derive principle from the
+                # design referenced in README's Acknowledgements.
+                preface = (
+                    f"_{n_tables} table(s) reconstructed via pdfplumber. "
+                    f"Treat numeric values as literal transcriptions; "
+                    f"do not derive or unit-convert when citing._\n\n"
+                )
+                joiner = "\n\n" if text else ""
+                text = (
+                    f"{text}{joiner}## Extracted tables\n\n"
+                    f"{preface}{tables_md}\n"
+                )
+                if extraction_method == "pypdf":
+                    extraction_method = "pypdf+pdfplumber"
+                tables_extracted = n_tables
+
+            # Recommend multimodal when math is present OR the heuristic
+            # fired on `Table N` prose references with no recoverable
+            # bordered table. Quiet the flag when pdfplumber captured at
+            # least one table; preserve the failed-sanity branch's True.
+            if extraction_method != "pypdf_failed":
+                multimodal_recommended = has_math or (
+                    has_tables and tables_extracted == 0
+                )
+        elif is_structured:
+            # Structured spreadsheet/slide formats already expose cell
+            # boundaries — emit them as GFM tables directly. No math/
+            # table detection (the format IS the table) and no
+            # multimodal-upgrade flag (no ambiguity to resolve).
+            if ext_lower == "csv":
+                text, ext_note = _extract_csv(raw)
+                extraction_method = "csv-stdlib" if not ext_note else f"csv_failed:{ext_note}"
+            elif ext_lower == "xlsx":
+                text, ext_note = _extract_xlsx(raw)
+                if ext_note == "openpyxl_missing":
+                    extraction_method = "xlsx_failed"
+                    extraction_quality = "failed"
+                    multimodal_recommended = True
+                    text = (
+                        "(XLSX extraction unavailable — `openpyxl` not "
+                        "installed. Install it in the workspace venv "
+                        "(`uv pip install openpyxl`) and re-run "
+                        f"`local_ingest.py`. Original is at `{kept_path.name}`.)"
+                    )
+                else:
+                    extraction_method = "openpyxl" if not ext_note else f"xlsx_failed:{ext_note}"
+            else:  # pptx
+                text, ext_note = _extract_pptx(raw)
+                if ext_note == "pptx_missing":
+                    extraction_method = "pptx_failed"
+                    extraction_quality = "failed"
+                    multimodal_recommended = True
+                    text = (
+                        "(PPTX extraction unavailable — `python-pptx` not "
+                        "installed. Install it in the workspace venv "
+                        "(`uv pip install python-pptx`) and re-run "
+                        f"`local_ingest.py`. Original is at `{kept_path.name}`.)"
+                    )
+                else:
+                    extraction_method = "python-pptx" if not ext_note else f"pptx_failed:{ext_note}"
+            if not text and extraction_quality != "failed":
+                extraction_quality = "empty"
         else:
             try:
                 text = raw.decode("utf-8")
@@ -272,10 +491,19 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
             fm_lines.extend([
                 f"has_math: {str(has_math).lower()}",
                 f"has_tables: {str(has_tables).lower()}",
+                f"tables_extracted: {tables_extracted}",
                 f"multimodal_recommended: {str(multimodal_recommended).lower()}",
             ])
             if sanity_note:
                 fm_lines.append(f"sanity_note: {sanity_note}")
+        elif is_structured:
+            # Structured formats carry their tables in the body as GFM
+            # already; expose `tables_present: true` so downstream
+            # workers (e.g. summary_table_builder, scientific_table_extractor)
+            # can find them with a simple frontmatter scan.
+            fm_lines.append("tables_present: true")
+            if multimodal_recommended:
+                fm_lines.append("multimodal_recommended: true")
         fm_lines.append("---\n")
         frontmatter = "\n".join(fm_lines) + "\n"
         body = (
@@ -308,6 +536,7 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
             "multimodal_recommended": multimodal_recommended,
             "has_math": has_math,
             "has_tables": has_tables,
+            "tables_extracted": tables_extracted,
             "sha256": sha[:12],
             "moved": is_drop,
             "indexed": indexed.get("status") if isinstance(indexed, dict) else None,
