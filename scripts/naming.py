@@ -86,6 +86,30 @@ ALLOWED_FM_KEYS = frozenset({
     # OR the doc has math/tables the text extractor mangled.
     "multimodal_recommended", "has_math", "sanity_note",
     "extraction_method", "extraction_quality",
+    # Multimodal-table-extract pass annotations (vault extractions).
+    # `multimodal_extracted` is the ISO timestamp set by
+    # `sweep.py mark-multimodal-extracted` after the Sonnet
+    # `scientific_table_extractor` pass writes recovered tables back
+    # into the body. `parsing_issues` and `extraction_notes` are
+    # per-table self-flags emitted by the worker (lists of strings).
+    "multimodal_extracted", "parsing_issues", "extraction_notes",
+    # Numeric-review pass annotations (on `wiki/tables/tab-*.md`
+    # pages produced from multimodal-extracted sources).
+    # `numeric_review_done` is the reviewer-pass timestamp;
+    # `verdict` is one of {ok, suspect, wrong}; `flagged_cells` lists
+    # cells the Opus reviewer marked as transcription errors;
+    # `review_required` flips to true when the reviewer needs human
+    # follow-up; `backup_id` is the rewind handle for `wrong`-verdict
+    # auto-overwrites; `source_pages` lists the 1-indexed PDF pages
+    # the table came from for spot-checking.
+    "numeric_review_done", "verdict", "flagged_cells",
+    "review_required", "backup_id", "source_pages",
+    # Identifier-normalisation flag (on `wiki/tables/tab-*.md` pages).
+    # `normalise_columns` is a list of `{column, as}` records set
+    # by `sweep.py promote-extracted-tables` from a deterministic
+    # header heuristic; curators may edit to override. Read at
+    # synthesis time by workers that cite the table.
+    "normalise_columns",
 })
 
 TYPE_PREFIX = {

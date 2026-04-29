@@ -2350,6 +2350,120 @@ def cmd_pending_multimodal(wiki_dir: Path) -> None:
     print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
 
 
+def cmd_multimodal_table_candidates(wiki_dir: Path,
+                                      limit: Optional[int] = None) -> None:
+    """List PDFs eligible for the multimodal-table-extract wave.
+
+    Narrower than `pending-multimodal`: targets only sources that have
+    NO tables recovered yet (`tables_extracted: 0`) AND the multimodal
+    flag is still set AND the source hasn't already been through the
+    multimodal table pass (`multimodal_extracted` absent). Returns the
+    queue with the absolute PDF path so the orchestrator can call
+    `figures.py render-all` directly without re-resolving paths.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    queue = []
+    if not vault_dir.exists():
+        print(json.dumps({"queue": [], "count": 0,
+                          "note": "no vault/ directory"}))
+        return
+    for f in sorted(vault_dir.glob("*.extracted.md")):
+        try:
+            fm, _ = read_frontmatter(f.read_text())
+        except Exception:
+            continue
+        if str(fm.get("multimodal_recommended", "")).lower() != "true":
+            continue
+        try:
+            n_tables = int(fm.get("tables_extracted", 0) or 0)
+        except (TypeError, ValueError):
+            n_tables = 0
+        if n_tables > 0:
+            continue
+        if fm.get("multimodal_extracted"):
+            continue
+        kept_as = fm.get("kept_as", "")
+        if not kept_as:
+            continue
+        original_path = vault_dir / kept_as
+        if not original_path.exists() or original_path.suffix.lower() != ".pdf":
+            continue
+        stub = _stub_for_extraction(wiki_dir, f.name)
+        queue.append({
+            "extracted": f.name,
+            "extracted_path": str(f.resolve()),
+            "original": kept_as,
+            "original_path": str(original_path.resolve()),
+            "source_stub": stub,
+            "extraction_quality": fm.get("extraction_quality", ""),
+            "has_math": str(fm.get("has_math", "")).lower() == "true",
+            "has_tables": str(fm.get("has_tables", "")).lower() == "true",
+            "sanity_note": fm.get("sanity_note", ""),
+        })
+        if limit is not None and len(queue) >= limit:
+            break
+    print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
+
+
+def cmd_mark_multimodal_extracted(extraction_path: Path,
+                                    timestamp: Optional[str] = None) -> int:
+    """Mark a vault extraction as having completed the multimodal wave.
+
+    Mirrors `figures.py mark-extracted` for the table-extraction
+    pipeline. Writes (or updates) the following frontmatter fields:
+    `multimodal_extracted: <ISO>`, `multimodal_recommended: false`,
+    `extraction_method: multimodal-sonnet`, `extraction_quality: good`.
+    Idempotent — replaces existing values for these keys, doesn't
+    duplicate. Preserves the FETCHED CONTENT block verbatim.
+    """
+    import datetime
+    p = extraction_path.resolve()
+    if not p.exists() or not p.is_file():
+        print(json.dumps({"ok": False, "error": f"file not found: {p}"}))
+        return 1
+    text = p.read_text()
+    if not text.startswith("---"):
+        print(json.dumps({"ok": False,
+                          "error": f"no frontmatter in {p}"}))
+        return 1
+    end = text.find("\n---", 3)
+    if end == -1:
+        print(json.dumps({"ok": False,
+                          "error": f"unterminated frontmatter in {p}"}))
+        return 1
+    fm_block = text[3:end].strip()
+    body = text[end + 4:]
+    ts = timestamp or datetime.datetime.now(
+        datetime.timezone.utc
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    updates = {
+        "multimodal_extracted": ts,
+        "multimodal_recommended": "false",
+        "extraction_method": "multimodal-sonnet",
+        "extraction_quality": "good",
+    }
+    lines = fm_block.split("\n") if fm_block else []
+    seen = set()
+    for i, ln in enumerate(lines):
+        stripped = ln.lstrip()
+        for key, val in updates.items():
+            if stripped.startswith(f"{key}:"):
+                indent = ln[: len(ln) - len(stripped)]
+                lines[i] = f"{indent}{key}: {val}"
+                seen.add(key)
+                break
+    for key, val in updates.items():
+        if key not in seen:
+            lines.append(f"{key}: {val}")
+    new_fm = "\n".join(lines)
+    new_text = f"---\n{new_fm}\n---{body}"
+    p.write_text(new_text)
+    print(json.dumps({"ok": True, "path": str(p),
+                       "multimodal_extracted": ts,
+                       "fields_set": list(updates.keys())}))
+    return 0
+
+
 # ---- extracted-table promotion ----
 
 # Match GFM pipe-table blocks: header line + separator + zero-or-more
@@ -2941,7 +3055,14 @@ def main():
         "orphan-sources",
         "promote-extracted-tables",
         "pending-multimodal", "pending-figures",
+        "multimodal-table-candidates", "mark-multimodal-extracted",
     ])
+    ap.add_argument("--extraction", type=Path, default=None,
+                    help="mark-multimodal-extracted: path to a vault "
+                         "*.extracted.md file to flag as completed")
+    ap.add_argument("--timestamp", default=None,
+                    help="mark-multimodal-extracted: explicit ISO "
+                         "timestamp (default: now in UTC)")
     ap.add_argument("--target", choices=["obsidian", "vscode"],
                     default="obsidian",
                     help="convert-image-embeds: target syntax form")
@@ -3030,6 +3151,16 @@ def main():
         cmd_orphan_sources(wiki_dir, limit=args.limit)
     elif args.command == "promote-extracted-tables":
         cmd_promote_extracted_tables(wiki_dir, row_threshold=args.row_threshold)
+    elif args.command == "multimodal-table-candidates":
+        cmd_multimodal_table_candidates(wiki_dir, limit=args.limit)
+    elif args.command == "mark-multimodal-extracted":
+        if args.extraction is None:
+            print(json.dumps({"ok": False,
+                              "error": "mark-multimodal-extracted requires "
+                                       "--extraction <path>"}))
+            sys.exit(1)
+        sys.exit(cmd_mark_multimodal_extracted(args.extraction,
+                                                 timestamp=args.timestamp))
 
 
 if __name__ == "__main__":

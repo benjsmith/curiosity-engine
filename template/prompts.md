@@ -517,6 +517,167 @@ the proposal call. Receives the proposal list and judges each candidate.
 
 ---
 
+## scientific_table_extractor (worker-model)
+
+> You extract tables from a scientific source document where the
+> deterministic extractors (pdfplumber for PDFs) failed to recover
+> structure. The source has been rendered to per-page PNGs. Read each
+> page image and identify every table. Return one JSON object with all
+> tables faithfully transcribed.
+>
+> Source: `<SOURCE_PATH>`   (e.g. `vault/papers/buffer-properties.pdf`)
+> Source title (for context only): `<SOURCE_TITLE>`
+> Pre-rendered pages (1-indexed, one PNG per page):
+> ```
+> <PAGE_PNG_PATHS>
+> ```
+> Optional task hint: `<TASK_HINT>`   (e.g. "focus on Table 2 (chemistry
+> buffers); the rest are demographic")
+>
+> **Extraction rules — read carefully**:
+>
+> 1. **Literal transcription.** Transcribe every cell digit-for-digit
+>    and character-for-character as it appears in the source image. Do
+>    not normalise, round, unit-convert, or correct typos. If a cell
+>    reads `0.013` write `0.013` (not `1.3e-2`); if it reads `1.23×10⁻⁴`
+>    keep the superscript form. If a cell is unreadable emit `null`
+>    and add a `parsing_issues` entry pinpointing the cell.
+>
+> 2. **Units verbatim.** Preserve units exactly: `mol L⁻¹` stays
+>    `mol L⁻¹`, `µM` stays `µM`, `°C` stays `°C`. Do not collapse
+>    superscripts to caret form unless the source itself uses caret
+>    form. Per-column units that appear in a separate units row go in
+>    the `units` array; per-cell embedded units stay inside the cell.
+>
+> 3. **Hierarchical headers.** If the table has merged super-headers
+>    (e.g. `2024` covering `Q1..Q4`), flatten them into composite
+>    column names joined with ` / ` (e.g. `2024 / Q1`). This matches
+>    the format the deterministic XLSX extractor produces, so
+>    downstream tooling treats both consistently.
+>
+> 4. **Subscripts and special glyphs.** Chemical formulae frequently
+>    use subscripts (`Na₂HPO₄`, `H₂O`). Preserve them as the source
+>    renders them. If the rendering is ambiguous because of OCR-style
+>    artefacts, transcribe the most likely reading AND flag the cell
+>    in `parsing_issues` so the reviewer can verify.
+>
+> 5. **Scientific notation.** Preserve the source's notation form.
+>    `1.23×10⁻⁴`, `1.23e-4`, and `0.000123` are NOT interchangeable —
+>    pick whatever the source shows.
+>
+> 6. **Self-uncertainty.** Set `review_required: true` on a table
+>    when ANY of: (a) you transcribed any cell with low confidence,
+>    (b) the source page is scanned and OCR-prone (faint text,
+>    skewed scan, handwriting), (c) numeric cells are dense (>20
+>    per table) and you couldn't double-check each one, (d) the
+>    column structure is ambiguous (merged cells unclear, multiple
+>    plausible header rows). When in doubt, set it true — the
+>    numeric reviewer is cheap; an unflagged transcription error
+>    is expensive.
+>
+> 7. **Negative rules.** Do NOT invent cells. Do NOT infer values
+>    from neighbouring rows. Do NOT skip rows because they look like
+>    outliers. Do NOT include narrative tables (algorithm pseudocode
+>    boxes, schematic diagrams that are visually tabular but
+>    semantically prose). Do NOT include tables of figures or
+>    contents.
+>
+> 8. **Page tracking.** Each table emits the 1-indexed `page` it
+>    appears on. If a table spans multiple pages, emit it once with
+>    the starting page; merge the rows from all pages into a single
+>    `rows` array.
+>
+> Return exactly one JSON object (no prose, no markdown fences):
+> ```
+> {"source": "<SOURCE_PATH>",
+>  "tables": [{
+>    "page": 3,
+>    "description": "Table 1: Buffer pKa values at 25°C",
+>    "headers": ["Compound", "MW (g/mol)", "pKa"],
+>    "units": ["", "g/mol", ""],
+>    "rows": [
+>      ["Tris", "121.14", "8.07"],
+>      ["HEPES", "238.31", "7.55"]
+>    ],
+>    "parsing_issues": [],
+>    "extraction_notes": ["pKa column rounded to 2 decimal places in source"],
+>    "review_required": false
+>  }, ...]}
+> ```
+>
+> If the source has no recoverable tables, return
+> `{"source": "<SOURCE_PATH>", "tables": []}`. Do not invoke any
+> tools or skills beyond reading the PNGs.
+
+---
+
+## numeric_transcription_review (reviewer-model)
+
+> You audit a previously-extracted scientific table for numeric
+> transcription errors. The original source has been rendered to PNGs;
+> the extracted table is supplied as GFM. Cross-check every numeric
+> cell against the page image and flag transcription errors only — NOT
+> stylistic differences.
+>
+> Tab page: `<TAB_PAGE_PATH>`     (e.g. `wiki/tables/tab-buffers-t1.md`)
+> Source PDF: `<SOURCE_PATH>`     (the original, for context)
+> Source pages (PNGs, 1-indexed):
+> ```
+> <PAGE_PNG_PATHS>
+> ```
+> Extracted table (GFM, as it currently lives on the [tab] page):
+> ```
+> <TAB_PAGE_TABLE>
+> ```
+>
+> **Review rules**:
+>
+> 1. **Flag transcription errors.** A digit substitution (`0.013` →
+>    `0.018`), a sign error (`-2.4` → `2.4`), a missed unit
+>    (`238.31 g/mol` → `238.31`), a decimal-point shift (`8.07` →
+>    `80.7`), or a suspect OCR misread (`5` vs `S`) are all errors.
+>
+> 2. **Do NOT flag stylistic differences.** `0.10` vs `0.1`,
+>    `25 °C` vs `25°C`, trailing zeros, locale-different decimal
+>    separators (`.` vs `,`) when the source is unambiguous — these
+>    are not transcription errors.
+>
+> 3. **Do NOT flag content the source doesn't show.** If you can't
+>    find a row in the source image, it may be on a page you weren't
+>    given — record `notes` rather than flagging cells you can't
+>    verify.
+>
+> 4. **Verdict.**
+>    - `ok`: every numeric cell you could verify matches the source.
+>      Returns 0 flagged cells.
+>    - `suspect`: 1-3 cells flagged, low confidence, OR you could not
+>      verify part of the table.
+>    - `wrong`: 4+ cells flagged at high/medium confidence, OR a
+>      systemic issue (e.g. a whole column shifted by one row).
+>      Triggers auto-rewrite by the orchestrator with a backup.
+>
+> 5. **Confidence.** Use `high` only when the source page clearly
+>    shows the suggested value AND the claimed value is clearly
+>    wrong. Use `med` when the source is readable but ambiguous.
+>    Use `low` when you're guessing from context.
+>
+> Return exactly one JSON object (no prose, no markdown fences):
+> ```
+> {"page": "<TAB_PAGE_PATH>",
+>  "verdict": "ok" | "suspect" | "wrong",
+>  "flagged_cells": [{
+>    "row_idx": 2,
+>    "header": "MW (g/mol)",
+>    "claimed": "238.31",
+>    "suggested": "238.30",
+>    "confidence": "high",
+>    "reason": "Source page 3 shows 238.30; claimed value off by 0.01"
+>  }, ...],
+>  "notes": "Verified all rows on page 3; rows 4-6 not shown in supplied PNGs"}
+> ```
+
+---
+
 ## notes_curator (worker-model)
 
 > You process the curiosity-engine's notes surface — the user-input

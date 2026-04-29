@@ -97,6 +97,23 @@ defer the full data to `.curator/tables.db`. Frontmatter records
 Source citation goes through the standard `(vault:...)` DSL so
 `graph.py rebuild` picks the page up as a normal Cites edge.
 
+Multimodal table extraction (PDFs that pdfplumber can't recover —
+borderless layouts, scanned pages, custom fonts) lands tables back into
+the same `[tab]` pipeline. The CURATE wave-mode `multimodal-table-extract`
+dispatches a fresh-context Sonnet Agent (`scientific_table_extractor`
+template) per source flagged by `sweep.py multimodal-table-candidates`;
+the worker reads pre-rendered page PNGs (`figures.py render-all`) and
+returns one JSON object with all recovered tables. The orchestrator
+writes those tables as GFM under `## Extracted tables` in the source's
+`.extracted.md` body — exactly the heading pdfplumber uses, so
+`promote-extracted-tables` consumes both pipelines unchanged. After
+each source completes, `sweep.py mark-multimodal-extracted` flips
+`multimodal_extracted: <ISO>`, clears the `multimodal_recommended`
+flag, and sets `extraction_method: multimodal-sonnet`. The worker's
+self-uncertainty fields (`parsing_issues`, `extraction_notes`) land in
+the extraction frontmatter; per-table `review_required: true` flags
+propagate to the `[tab]` pages.
+
 ## Rules
 - If caveman is installed, write at the configured level: ultra for most page
   types (dense, telegraphic), lite for `analyses/` (human-comfortable).
