@@ -56,6 +56,18 @@ Subcommands
         Drop and re-extract from vault + log. Used when the extraction
         recipe changes. Phase 3 feature; stub here.
 
+    tables.py extracted-query <stem> [--where WHERE] [--args JSON] [--limit N]
+        Query rows of a single extracted-table (`wiki/tables/tab-*.md`)
+        from the `_extracted_tables` system table populated by
+        `sweep.py promote-extracted-tables`. Returns rows as JSON with
+        the table's headers unpacked as keys. WHERE applies to the
+        system columns only (row_idx, source_stub, source_extraction,
+        extraction_sha) — cell-value filters belong in the caller.
+
+    tables.py extracted-list [--source-stub STUB]
+        List all extracted tables with row counts and source citation
+        info, optionally filtered to a single source-stub stem.
+
 Never-installed-DDL path
 ------------------------
 Agents can only reach schema changes through: (a) editing the entity
@@ -894,6 +906,150 @@ def cmd_rebuild(name: str) -> int:
     return 2
 
 
+# ---- extracted-table queries ----
+#
+# `_extracted_tables` is the long-format system table populated by
+# `sweep.py promote-extracted-tables`. It holds verbatim cell-level
+# transcriptions of tables found in source PDFs / spreadsheets / slide
+# decks during ingest. Distinct from the class-tables mechanism above
+# (`_schema_meta` + named per-entity tables); no schema declaration in
+# any wiki page, so the standard `query` / `schema` / `list` commands
+# don't apply. The two helpers below give agents and humans a JSON-
+# returning query path for `[tab]`-page rows without dropping to raw
+# SQLite.
+
+# WHERE-clause keywords blocked across all SELECT-only paths
+# (mirrors the guard in cmd_query). Kept module-level to share between
+# class-table query and extracted-table query.
+_FORBIDDEN_WHERE = ("--", ";", "drop ", "delete ", "update ", "insert ",
+                     "alter ", "attach ", "pragma ")
+
+
+def _ensure_extracted_table(conn) -> bool:
+    """True if `_extracted_tables` exists in the connected DB."""
+    row = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name='_extracted_tables'"
+    ).fetchone()
+    return row is not None
+
+
+def cmd_extracted_query(table_stem: str, where: Optional[str],
+                          args_json: Optional[str], limit: int) -> int:
+    """Query rows of a single extracted table by stem.
+
+    Returns rows as `{row_idx, source_stub, source_extraction, **cells}`
+    where `**cells` is the headers→value mapping unpacked from the
+    long-format storage. WHERE applies to the system columns
+    (`row_idx`, `source_stub`, `source_extraction`, `extraction_sha`);
+    filtering on extracted cell values is left to the caller (the
+    headers vary per table, so SQL-side filtering would need a JOIN-
+    on-JSON dance that's not worth the complexity).
+    """
+    conn = _connect()
+    if not _ensure_extracted_table(conn):
+        conn.close()
+        print(json.dumps({"error": "_extracted_tables not present",
+                          "hint": "run `sweep.py promote-extracted-tables wiki` first"}))
+        return 2
+    try:
+        args = json.loads(args_json) if args_json else []
+    except json.JSONDecodeError as e:
+        conn.close()
+        print(json.dumps({"error": f"invalid --args JSON: {e}"}))
+        return 2
+    if not isinstance(args, list):
+        conn.close()
+        print(json.dumps({"error": "--args must be a JSON array"}))
+        return 2
+    sql = ("SELECT row_idx, source_stub, source_extraction, "
+           "headers_json, cells_json, extraction_sha "
+           "FROM _extracted_tables WHERE table_stem = ?")
+    params: List = [table_stem]
+    if where:
+        low = where.lower()
+        if any(f in low for f in _FORBIDDEN_WHERE):
+            conn.close()
+            print(json.dumps({"error": "forbidden keyword in where clause"}))
+            return 2
+        sql += f" AND ({where})"
+        params.extend(args)
+    sql += " ORDER BY row_idx LIMIT ?"
+    params.append(int(limit))
+    try:
+        cur = conn.execute(sql, params)
+        raw = cur.fetchall()
+    except sqlite3.Error as e:
+        conn.close()
+        print(json.dumps({"error": f"query error: {e}"}))
+        return 2
+    conn.close()
+    if not raw:
+        print(json.dumps({"table_stem": table_stem, "row_count": 0,
+                          "headers": [], "results": []}, indent=2))
+        return 0
+    # Headers are identical across rows of one table_stem (sweep writes
+    # them once per row, but the value is the same). Pull from the
+    # first row.
+    headers = json.loads(raw[0][3])
+    results = []
+    for row_idx, source_stub, source_extraction, _hdr_json, cells_json, _sha in raw:
+        cells = json.loads(cells_json)
+        record = {
+            "row_idx": row_idx,
+            "source_stub": source_stub,
+            "source_extraction": source_extraction,
+        }
+        for i, h in enumerate(headers):
+            record[h] = cells[i] if i < len(cells) else ""
+        results.append(record)
+    print(json.dumps({"table_stem": table_stem, "row_count": len(results),
+                      "headers": headers, "results": results}, indent=2))
+    return 0
+
+
+def cmd_extracted_list(source_stub: Optional[str]) -> int:
+    """List all extracted tables (one entry per `table_stem`).
+
+    Optional `--source-stub` filter narrows to tables extracted from a
+    specific source. Returns row counts and source citation info so
+    callers can decide which `extracted-query` to run.
+    """
+    if not DB_PATH.exists():
+        print(json.dumps({"tables": []}))
+        return 0
+    conn = _connect()
+    if not _ensure_extracted_table(conn):
+        conn.close()
+        print(json.dumps({"tables": []}))
+        return 0
+    sql = ("SELECT table_stem, source_stub, source_extraction, "
+           "COUNT(*) AS row_count, MAX(headers_json) AS headers_json "
+           "FROM _extracted_tables")
+    params: List = []
+    if source_stub:
+        sql += " WHERE source_stub = ?"
+        params.append(source_stub)
+    sql += " GROUP BY table_stem ORDER BY table_stem"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    out = []
+    for table_stem, src_stub, src_ext, row_count, headers_json in rows:
+        try:
+            headers = json.loads(headers_json) if headers_json else []
+        except json.JSONDecodeError:
+            headers = []
+        out.append({
+            "table_stem": table_stem,
+            "source_stub": src_stub,
+            "source_extraction": src_ext,
+            "row_count": row_count,
+            "headers": headers,
+        })
+    print(json.dumps({"tables": out}, indent=2))
+    return 0
+
+
 # ---- CLI ----
 
 def main() -> int:
@@ -943,6 +1099,23 @@ def main() -> int:
     p_rebuild = sub.add_parser("rebuild", help="rebuild table from vault+log (not yet)")
     p_rebuild.add_argument("table")
 
+    p_eq = sub.add_parser("extracted-query",
+                            help="query rows of an extracted table (tab-* page)")
+    p_eq.add_argument("table_stem",
+                       help="stem of the wiki/tables/tab-*.md page (without prefix)")
+    p_eq.add_argument("--where", default=None,
+                       help="SQL WHERE on system columns (row_idx, source_stub, "
+                            "source_extraction, extraction_sha); cell-value "
+                            "filters must be applied by the caller")
+    p_eq.add_argument("--args", default=None,
+                       help="JSON array of parameter values for --where")
+    p_eq.add_argument("--limit", type=int, default=200)
+
+    p_el = sub.add_parser("extracted-list",
+                            help="list all extracted tables (tab-* pages)")
+    p_el.add_argument("--source-stub", default=None,
+                       help="filter to tables from a specific source-stub stem")
+
     args = ap.parse_args()
     if args.cmd == "sync":
         return cmd_sync(args.entity_path, confirm_human=args.confirm_human)
@@ -964,6 +1137,11 @@ def main() -> int:
         return cmd_verify(args.table, args.wiki)
     if args.cmd == "rebuild":
         return cmd_rebuild(args.table)
+    if args.cmd == "extracted-query":
+        return cmd_extracted_query(args.table_stem, args.where, args.args,
+                                     args.limit)
+    if args.cmd == "extracted-list":
+        return cmd_extracted_list(args.source_stub)
     ap.print_usage()
     return 2
 

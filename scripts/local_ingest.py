@@ -204,12 +204,104 @@ def _extract_csv(raw_bytes: bytes) -> tuple[str, str]:
     return _gfm_table(rows), ""
 
 
+def _propagate_merges(rows: list, merged_ranges: list) -> list:
+    """Fill merged-cell ranges with their top-left value.
+
+    openpyxl exposes merged ranges with 1-indexed `min_row`, `max_row`,
+    `min_col`, `max_col`. The top-left holds the value; the rest of the
+    range reads None. Propagating that value into the covered cells
+    gives downstream header-detection a populated grid to work with.
+    Returns a fresh list of lists; rows are padded as needed so the
+    range is reachable.
+    """
+    if not rows or not merged_ranges:
+        return rows
+    out = [list(r) for r in rows]
+    for rng in merged_ranges:
+        r0 = rng.min_row - 1
+        r1 = rng.max_row - 1
+        c0 = rng.min_col - 1
+        c1 = rng.max_col - 1
+        if r0 < 0 or r0 >= len(out):
+            continue
+        if c0 >= len(out[r0]):
+            continue
+        val = out[r0][c0]
+        if val is None or str(val).strip() == "":
+            continue
+        for r in range(r0, min(r1 + 1, len(out))):
+            while len(out[r]) <= c1:
+                out[r].append(None)
+            for c in range(c0, c1 + 1):
+                if r == r0 and c == c0:
+                    continue
+                out[r][c] = val
+    return out
+
+
+def _detect_header_band(merged_ranges: list, max_band: int = 3) -> int:
+    """Header-band size based on super-header merged ranges.
+
+    A super-header is a merged range spanning more than one column.
+    The band starts at row 1 (else the table has no super-header
+    pattern and we return 0) and extends downward while the next row
+    also contains a super-header merge — supporting two- or three-
+    level hierarchies (e.g. `Year / H1 / Q1`). The band closes one
+    row past the deepest super-row, which holds the leaf sub-headers.
+    Capped at `max_band`. Returns 0 when row 1 has no super-header.
+    """
+    row_super_max = {}
+    for rng in merged_ranges:
+        if rng.max_col > rng.min_col:
+            prev = row_super_max.get(rng.min_row, 0)
+            row_super_max[rng.min_row] = max(prev, rng.max_row)
+    if 1 not in row_super_max:
+        return 0
+    cur_max_row = row_super_max[1]
+    while cur_max_row + 1 in row_super_max:
+        cur_max_row = row_super_max[cur_max_row + 1]
+    return min(cur_max_row + 1, max_band)
+
+
+def _flatten_header_band(rows: list, band_size: int) -> list:
+    """Collapse `band_size` leading header rows into a single composite row.
+
+    Per column, joins the unique non-empty values across band rows with
+    `" / "` (e.g. row 1 `2024`, row 2 `Q1` → `2024 / Q1`). De-duplicates
+    repeated values within a column so a propagated super-header doesn't
+    appear twice. Returns the flattened header followed by all data
+    rows. No-ops when band_size ≤ 1.
+    """
+    if band_size <= 1 or len(rows) <= band_size:
+        return rows
+    width = max(len(r) for r in rows[:band_size])
+    composite = []
+    for col in range(width):
+        parts: list = []
+        seen: set = set()
+        for r in rows[:band_size]:
+            val = r[col] if col < len(r) else None
+            if val is None:
+                continue
+            s = str(val).strip()
+            if not s or s in seen:
+                continue
+            parts.append(s)
+            seen.add(s)
+        composite.append(" / ".join(parts))
+    return [composite] + rows[band_size:]
+
+
 def _extract_xlsx(raw_bytes: bytes) -> tuple[str, str]:
     """XLSX → one GFM table per sheet via openpyxl. Returns (markdown, note).
 
-    Reads merged-cell ranges in their source position (top-left holds the
-    value, other cells in the range read empty) which is the same
-    behaviour Markdown renderers expect — no special handling.
+    Detects merged-cell super-headers (row-1 merged ranges spanning >1
+    column) and flattens them with their sub-headers into composite
+    column names like `2024 / Q1`. Tables without merged headers fall
+    through unchanged. Drops `read_only=True` because openpyxl's
+    ReadOnlyWorksheet doesn't expose `merged_cells.ranges`; scientific
+    spreadsheets are typically small enough that the memory hit is
+    acceptable.
     """
     try:
         import openpyxl
@@ -217,7 +309,7 @@ def _extract_xlsx(raw_bytes: bytes) -> tuple[str, str]:
         return "", "openpyxl_missing"
     try:
         wb = openpyxl.load_workbook(
-            io.BytesIO(raw_bytes), data_only=True, read_only=True
+            io.BytesIO(raw_bytes), data_only=True
         )
     except Exception as e:
         return "", f"xlsx_error:{type(e).__name__}"
@@ -226,6 +318,13 @@ def _extract_xlsx(raw_bytes: bytes) -> tuple[str, str]:
         rows = [list(r) for r in sheet.iter_rows(values_only=True)]
         if not rows or not any(any(c is not None for c in r) for r in rows):
             continue
+        try:
+            merged = list(sheet.merged_cells.ranges)
+        except (AttributeError, TypeError):
+            merged = []
+        rows = _propagate_merges(rows, merged)
+        band_size = _detect_header_band(merged)
+        rows = _flatten_header_band(rows, band_size)
         chunks.append(f"\n## Sheet: {sheet.title}\n")
         chunks.append(_gfm_table(rows))
     return "\n".join(chunks), ""
