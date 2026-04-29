@@ -114,6 +114,40 @@ self-uncertainty fields (`parsing_issues`, `extraction_notes`) land in
 the extraction frontmatter; per-table `review_required: true` flags
 propagate to the `[tab]` pages.
 
+The numeric-review wave (`numeric-review`) is mandatory after every
+multimodal-table-extract wave. `sweep.py pending-numeric-review` lists
+every `[tab]` page whose `extraction_method: multimodal-sonnet` has no
+`numeric_review_done` timestamp (pdfplumber and other deterministic
+extractions skip the queue — their fidelity is mechanical). One
+fresh-context Opus Agent per page, using the
+`numeric_transcription_review` template, cross-checks every numeric
+cell against the source PNGs and returns `{verdict, flagged_cells,
+notes}`. `sweep.py apply-numeric-review` persists the verdict:
+- `ok`: writes `numeric_review_done` + `verdict: ok` to fm; page
+  enters `extracted-query` results normally.
+- `suspect`: same plus `flagged_cells_count`, `review_required: true`,
+  and a `## Numeric review` body block summarising the flagged cells.
+  Page is excluded from `extracted-query` unless `--include-flagged`.
+- `wrong`: backs current rows up to `_extracted_table_backups` under
+  a fresh `backup_id`, applies each `flagged_cell.suggested` to the
+  in-DB rows, rewrites the GFM body block, appends a `## Numeric
+  review` body summary, and logs the rewind invocation
+  (`tables.py restore-backup <stem> <backup_id>`) to
+  `.curator/log.md` under `## numeric-review-rewinds`. Excluded from
+  `extracted-query` until a curator confirms.
+
+Every `[tab]` page body header line includes the source citation,
+the source page numbers, and the original-source path —
+`Extracted from [[<stub>]] (vault:<extraction>), source pages [N1, N2],
+original: vault/<original-name>.` — so a curator can flip directly to
+the source for spot-checking. `tables.py list-backups` enumerates
+available rewinds.
+
+`tables.py extracted-query <stem>` honours the verdict by default:
+pages flagged `suspect` or `wrong` return an empty result with
+`flagged: true` and a hint. Pass `--include-flagged` to read the
+rows anyway.
+
 ## Rules
 - If caveman is installed, write at the configured level: ultra for most page
   types (dense, telegraphic), lite for `analyses/` (human-comfortable).

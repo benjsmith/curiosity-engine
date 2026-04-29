@@ -935,7 +935,9 @@ def _ensure_extracted_table(conn) -> bool:
 
 
 def cmd_extracted_query(table_stem: str, where: Optional[str],
-                          args_json: Optional[str], limit: int) -> int:
+                          args_json: Optional[str], limit: int,
+                          include_flagged: bool = False,
+                          wiki_dir: Optional[Path] = None) -> int:
     """Query rows of a single extracted table by stem.
 
     Returns rows as `{row_idx, source_stub, source_extraction, **cells}`
@@ -945,7 +947,39 @@ def cmd_extracted_query(table_stem: str, where: Optional[str],
     filtering on extracted cell values is left to the caller (the
     headers vary per table, so SQL-side filtering would need a JOIN-
     on-JSON dance that's not worth the complexity).
+
+    When `include_flagged` is False (default), pages whose [tab] file
+    carries `verdict: suspect | wrong` (numeric-review flagged) are
+    refused — callers get an empty results array with `flagged: true`.
+    Synthesis workers default to clean rows; explicit
+    `--include-flagged` opt-in is required to read potentially-bad
+    transcriptions.
     """
+    # Refuse flagged pages first — fast path before opening the DB.
+    if not include_flagged and wiki_dir is not None:
+        page_path = wiki_dir / "tables" / f"{table_stem}.md"
+        if page_path.exists():
+            try:
+                fm_text = page_path.read_text()
+            except OSError:
+                fm_text = ""
+            verdict_match = re.search(
+                r"^verdict:\s*(\S+)\s*$", fm_text, re.MULTILINE
+            )
+            if verdict_match:
+                v = verdict_match.group(1).strip().strip('"\'')
+                if v in ("suspect", "wrong"):
+                    print(json.dumps({
+                        "table_stem": table_stem,
+                        "row_count": 0,
+                        "headers": [],
+                        "results": [],
+                        "flagged": True,
+                        "verdict": v,
+                        "hint": ("page is reviewer-flagged; pass "
+                                 "--include-flagged to read anyway"),
+                    }, indent=2))
+                    return 0
     conn = _connect()
     if not _ensure_extracted_table(conn):
         conn.close()
@@ -1006,6 +1040,231 @@ def cmd_extracted_query(table_stem: str, where: Optional[str],
     print(json.dumps({"table_stem": table_stem, "row_count": len(results),
                       "headers": headers, "results": results}, indent=2))
     return 0
+
+
+def _ensure_backup_table(conn) -> bool:
+    """True if `_extracted_table_backups` exists in the connected DB."""
+    row = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name='_extracted_table_backups'"
+    ).fetchone()
+    return row is not None
+
+
+def cmd_list_backups(table_stem: Optional[str]) -> int:
+    """List available row backups for extracted-table pages.
+
+    Backups are written by `sweep.py apply-numeric-review` on
+    `verdict: wrong` (auto-overwrite) before the rewrite. Each backup
+    captures a full snapshot of the table's rows under a unique
+    `backup_id`. Filter to a single `table_stem` to narrow the list
+    when triaging a specific page.
+    """
+    if not DB_PATH.exists():
+        print(json.dumps({"backups": []}))
+        return 0
+    conn = _connect()
+    if not _ensure_backup_table(conn):
+        conn.close()
+        print(json.dumps({"backups": []}))
+        return 0
+    sql = ("SELECT backup_id, table_stem, source_stub, source_extraction, "
+           "MAX(backup_at) AS backup_at, COUNT(*) AS row_count "
+           "FROM _extracted_table_backups")
+    params: List = []
+    if table_stem:
+        sql += " WHERE table_stem = ?"
+        params.append(table_stem)
+    sql += " GROUP BY backup_id, table_stem ORDER BY backup_at DESC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    out = []
+    for backup_id, t_stem, src_stub, src_ext, backup_at, row_count in rows:
+        out.append({
+            "backup_id": backup_id,
+            "table_stem": t_stem,
+            "source_stub": src_stub,
+            "source_extraction": src_ext,
+            "backup_at": backup_at,
+            "row_count": row_count,
+            "rewind_command": (
+                f"tables.py restore-backup {t_stem} {backup_id}"
+            ),
+        })
+    print(json.dumps({"backups": out}, indent=2))
+    return 0
+
+
+def cmd_restore_backup(table_stem: str, backup_id: str) -> int:
+    """Restore an extracted-table's rows from a backup snapshot.
+
+    Idempotent: copies backup rows into `_extracted_tables` (DELETE+
+    INSERT under the unique constraint), rewrites the corresponding
+    `wiki/tables/<table_stem>.md` page's GFM body from the restored
+    rows, and clears the review-related fm fields (`verdict`,
+    `flagged_cells`, `review_required`, `backup_id`,
+    `numeric_review_done`). The backup itself is NOT deleted —
+    multiple rewinds are safe; cleanup happens manually via
+    `_extracted_table_backups` SQL when the curator is sure.
+
+    Logs the rewind to `.curator/log.md` under
+    `## numeric-review-rewinds-applied`.
+    """
+    import datetime as _dt
+    if not DB_PATH.exists():
+        print(json.dumps({"ok": False,
+                          "error": ".curator/tables.db not found"}))
+        return 1
+    conn = _connect()
+    if not _ensure_backup_table(conn):
+        conn.close()
+        print(json.dumps({"ok": False,
+                          "error": "_extracted_table_backups table not present"}))
+        return 1
+    cur = conn.execute(
+        "SELECT source_stub, source_extraction, headers_json, "
+        "row_idx, cells_json, extraction_sha "
+        "FROM _extracted_table_backups "
+        "WHERE table_stem = ? AND backup_id = ? "
+        "ORDER BY row_idx",
+        (table_stem, backup_id),
+    )
+    backup_rows = cur.fetchall()
+    if not backup_rows:
+        conn.close()
+        print(json.dumps({"ok": False,
+                          "error": f"no backup found for "
+                                   f"{table_stem}/{backup_id}"}))
+        return 1
+    source_stub = backup_rows[0][0]
+    source_extraction = backup_rows[0][1]
+    headers = json.loads(backup_rows[0][2])
+    extraction_sha = backup_rows[0][5]
+    rows = [json.loads(r[4]) for r in backup_rows]
+    # Rewrite _extracted_tables for this stem.
+    conn.execute("DELETE FROM _extracted_tables WHERE table_stem = ?",
+                 (table_stem,))
+    for ri, r in enumerate(rows, 1):
+        cells = [(r[i] if i < len(headers) else "")
+                 for i in range(len(headers))]
+        conn.execute(
+            "INSERT INTO _extracted_tables "
+            "(table_stem, source_stub, source_extraction, headers_json, "
+            " row_idx, cells_json, extraction_sha) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (table_stem, source_stub, source_extraction,
+             json.dumps(headers), ri, json.dumps(cells), extraction_sha),
+        )
+    conn.commit()
+    conn.close()
+    # Rewrite the [tab] page if reachable.
+    cwd_wiki = Path.cwd() / "wiki"
+    page_path = None
+    for candidate in (cwd_wiki / "tables" / f"{table_stem}.md",
+                       Path("wiki") / "tables" / f"{table_stem}.md"):
+        if candidate.exists():
+            page_path = candidate
+            break
+    page_rewritten = False
+    if page_path is not None:
+        page_rewritten = _restore_page_body(page_path, headers, rows)
+    # Log the rewind.
+    log_path = (DB_PATH.parent.parent / "wiki" / ".." /
+                ".curator" / "log.md").resolve()
+    log_path = DB_PATH.parent / "log.md"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    section = "## numeric-review-rewinds-applied"
+    text = log_path.read_text() if log_path.exists() else ""
+    if section not in text:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += f"\n{section}\n\n"
+    entry = (f"\n- {ts} {table_stem} restored from {backup_id} "
+             f"({len(rows)} rows). Page rewrite: "
+             f"{'ok' if page_rewritten else 'page not found'}\n")
+    if entry not in text:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += entry
+    log_path.write_text(text)
+    print(json.dumps({
+        "ok": True,
+        "table_stem": table_stem,
+        "backup_id": backup_id,
+        "rows_restored": len(rows),
+        "page_rewritten": page_rewritten,
+        "page_path": str(page_path) if page_path else None,
+    }))
+    return 0
+
+
+def _restore_page_body(page_path: Path, headers: list,
+                         rows: list) -> bool:
+    """Rewrite the GFM table on a [tab] page from restored rows.
+
+    Drops `## Numeric review` block and review-related fm fields so
+    the page returns to a pre-review state. Returns True if written.
+    """
+    text = page_path.read_text()
+    if not text.startswith("---"):
+        return False
+    end = text.find("\n---", 3)
+    if end == -1:
+        return False
+    fm_block = text[3:end].strip()
+    body = text[end + 4:]
+    # Drop review-related fm keys.
+    drop_keys = {"verdict", "flagged_cells_count", "review_required",
+                 "backup_id", "numeric_review_done"}
+    new_fm_lines = []
+    skip_block = False
+    for ln in fm_block.split("\n"):
+        stripped = ln.lstrip()
+        key = stripped.split(":", 1)[0] if ":" in stripped else ""
+        if key in drop_keys:
+            # Skip this line and any indented continuation lines.
+            skip_block = True
+            continue
+        if skip_block and (ln.startswith(" ") or ln.startswith("\t")
+                            or ln.startswith("-")):
+            continue
+        skip_block = False
+        new_fm_lines.append(ln)
+    new_fm = "\n".join(new_fm_lines)
+    # Strip review block.
+    review_re = __import__("re").compile(
+        r"\n*## Numeric review.*?(?=\n## |\Z)", __import__("re").DOTALL
+    )
+    body = review_re.sub("", body).rstrip() + "\n"
+    # Rewrite first GFM block in body.
+    block_re = __import__("re").compile(
+        r"(?:^|\n)([ \t]*\|[^\n]*\|[ \t]*\n"
+        r"[ \t]*\|[ \t:\-|]+\|[ \t]*\n"
+        r"(?:[ \t]*\|[^\n]*\|[ \t]*\n?)*)"
+    )
+    # Render fresh.
+    try:
+        is_snap = "is_snapshot: true" in new_fm.lower()
+    except Exception:
+        is_snap = False
+    show_rows = rows[:10] if is_snap else rows
+    norm_rows = [list(r) + [""] * (len(headers) - len(r)) if len(r) < len(headers) else list(r)
+                 for r in show_rows]
+    out = ["| " + " | ".join(str(h) for h in headers) + " |",
+           "|" + "|".join(["---"] * len(headers)) + "|"]
+    for r in norm_rows:
+        out.append("| " + " | ".join(
+            str(c).replace("|", "\\|").replace("\n", " ") for c in r[:len(headers)]
+        ) + " |")
+    new_block = "\n".join(out)
+    m = block_re.search(body)
+    if m:
+        new_body = body[: m.start()] + "\n" + new_block + "\n" + body[m.end():]
+    else:
+        new_body = body + "\n" + new_block + "\n"
+    page_path.write_text(f"---\n{new_fm}\n---{new_body}")
+    return True
 
 
 def cmd_extracted_list(source_stub: Optional[str]) -> int:
@@ -1110,11 +1369,30 @@ def main() -> int:
     p_eq.add_argument("--args", default=None,
                        help="JSON array of parameter values for --where")
     p_eq.add_argument("--limit", type=int, default=200)
+    p_eq.add_argument("--include-flagged", action="store_true",
+                       help="return rows even when the [tab] page has "
+                            "verdict suspect|wrong (default: drop them so "
+                            "callers don't accidentally cite reviewer-"
+                            "flagged numbers)")
+    p_eq.add_argument("--wiki", default="wiki",
+                       help="wiki dir for the verdict lookup (default: wiki)")
 
     p_el = sub.add_parser("extracted-list",
                             help="list all extracted tables (tab-* pages)")
     p_el.add_argument("--source-stub", default=None,
                        help="filter to tables from a specific source-stub stem")
+
+    p_lb = sub.add_parser("list-backups",
+                            help="list available row backups for tab-* pages")
+    p_lb.add_argument("--table-stem", default=None,
+                       help="filter to one stem")
+
+    p_rb = sub.add_parser("restore-backup",
+                            help="restore a tab-* page's rows from a backup snapshot")
+    p_rb.add_argument("table_stem",
+                       help="stem of the wiki/tables/tab-*.md page")
+    p_rb.add_argument("backup_id",
+                       help="backup_id from list-backups (e.g. bk-7f3a2c)")
 
     args = ap.parse_args()
     if args.cmd == "sync":
@@ -1139,9 +1417,15 @@ def main() -> int:
         return cmd_rebuild(args.table)
     if args.cmd == "extracted-query":
         return cmd_extracted_query(args.table_stem, args.where, args.args,
-                                     args.limit)
+                                     args.limit,
+                                     include_flagged=args.include_flagged,
+                                     wiki_dir=Path(args.wiki))
     if args.cmd == "extracted-list":
         return cmd_extracted_list(args.source_stub)
+    if args.cmd == "list-backups":
+        return cmd_list_backups(args.table_stem)
+    if args.cmd == "restore-backup":
+        return cmd_restore_backup(args.table_stem, args.backup_id)
     ap.print_usage()
     return 2
 

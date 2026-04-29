@@ -96,19 +96,22 @@ ALLOWED_FM_KEYS = frozenset({
     # Numeric-review pass annotations (on `wiki/tables/tab-*.md`
     # pages produced from multimodal-extracted sources).
     # `numeric_review_done` is the reviewer-pass timestamp;
-    # `verdict` is one of {ok, suspect, wrong}; `flagged_cells` lists
-    # cells the Opus reviewer marked as transcription errors;
-    # `review_required` flips to true when the reviewer needs human
-    # follow-up; `backup_id` is the rewind handle for `wrong`-verdict
-    # auto-overwrites; `source_pages` lists the 1-indexed PDF pages
-    # the table came from for spot-checking.
-    "numeric_review_done", "verdict", "flagged_cells",
+    # `verdict` is one of {ok, suspect, wrong}; `flagged_cells_count`
+    # is a cheap queryable signal (the cell-level detail lives in the
+    # `## Numeric review` body block where it's both human-readable
+    # and grep-able); `review_required` flips to true when the
+    # reviewer needs human follow-up; `backup_id` is the rewind
+    # handle for `wrong`-verdict auto-overwrites; `source_pages`
+    # lists the 1-indexed PDF pages the table came from for
+    # spot-checking.
+    "numeric_review_done", "verdict", "flagged_cells_count",
     "review_required", "backup_id", "source_pages",
     # Identifier-normalisation flag (on `wiki/tables/tab-*.md` pages).
-    # `normalise_columns` is a list of `{column, as}` records set
-    # by `sweep.py promote-extracted-tables` from a deterministic
-    # header heuristic; curators may edit to override. Read at
-    # synthesis time by workers that cite the table.
+    # `normalise_columns` is a list of `"column:type"` strings (e.g.
+    # `["Compound:chemicals", "Gene:genes"]`) set by
+    # `sweep.py promote-extracted-tables` from a deterministic header
+    # heuristic; curators may edit to override. The string form
+    # roundtrips through the simple bracket-list parser.
     "normalise_columns",
 })
 
