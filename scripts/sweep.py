@@ -3024,6 +3024,41 @@ def _split_gfm_row(line: str) -> list:
     return [c.strip().replace("\\|", "|") for c in s.split("|")]
 
 
+# Identifier-normalisation heuristic: header patterns that flag a
+# column as carrying chemical names or gene symbols. Applied at
+# promote-extracted-tables time; results write to the [tab] page's
+# `normalise_columns` fm. Curators may edit the page to override.
+# Identifier-cache lookups happen lazily at synthesis time, not here.
+_CHEMICAL_HEADER_RE = re.compile(
+    r"^(compound|chemical|reagent|drug|molecule|substance|"
+    r"buffer|solvent|analyte)s?$",
+    re.IGNORECASE,
+)
+_GENE_HEADER_RE = re.compile(
+    r"^(gene|symbol|locus|hgnc|gene[_\s-]?symbol)s?$",
+    re.IGNORECASE,
+)
+
+
+def _detect_normalise_columns(headers: list) -> list:
+    """Return a list of `"<column>:<type>"` strings the heuristic
+    flags for identifier normalisation. Empty list → no flags.
+    """
+    flags = []
+    for h in headers:
+        h_str = str(h).strip()
+        if not h_str:
+            continue
+        # Strip composite prefixes like `2024 / Q1` — only the leaf
+        # name matters for the heuristic.
+        leaf = h_str.split("/")[-1].strip()
+        if _CHEMICAL_HEADER_RE.match(leaf):
+            flags.append(f"{h_str}:chemicals")
+        elif _GENE_HEADER_RE.match(leaf):
+            flags.append(f"{h_str}:genes")
+    return flags
+
+
 # Match `Table p.3`, `Table p.3-5`, or `Table p.3, 4` page references in
 # the heading text above an extracted table. pdfplumber writes `Table p.N`
 # directly; multimodal-sonnet's orchestrator persists tables under
@@ -3369,6 +3404,34 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                 page_lines.append(
                     "source_pages: ["
                     + ", ".join(str(p) for p in source_pages)
+                    + "]"
+                )
+            # Identifier-normalisation flag (Path C). Heuristic-set
+            # ONLY when missing — never clobber a curator-edited
+            # value. The fm key carries the page-level decision; the
+            # `identifier_cache.py` script runs lazily at synthesis
+            # time when a worker cites a row.
+            existing_normalise = []
+            if page_path.exists():
+                existing_fm_full, _ = read_frontmatter(
+                    page_path.read_text()
+                )
+                raw_nc = existing_fm_full.get("normalise_columns", "")
+                if isinstance(raw_nc, list):
+                    existing_normalise = raw_nc
+                elif isinstance(raw_nc, str) and raw_nc.strip():
+                    existing_normalise = [
+                        x.strip() for x in raw_nc.strip("[]").split(",")
+                        if x.strip()
+                    ]
+            if existing_normalise:
+                normalise_flags = existing_normalise
+            else:
+                normalise_flags = _detect_normalise_columns(headers)
+            if normalise_flags:
+                page_lines.append(
+                    "normalise_columns: ["
+                    + ", ".join(normalise_flags)
                     + "]"
                 )
             page_lines.extend(["---", ""])

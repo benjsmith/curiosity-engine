@@ -148,6 +148,23 @@ pages flagged `suspect` or `wrong` return an empty result with
 `flagged: true` and a hint. Pass `--include-flagged` to read the
 rows anyway.
 
+Identifier normalisation (chemicals → SMILES / InChI / InChIKey via
+PubChem; gene symbols → Ensembl / UniProt / Entrez via MyGene.info)
+runs on demand at synthesis time. `[tab]` pages carry an optional
+`normalise_columns: ["<column>:<chemicals|genes>", ...]` fm key set
+by `promote-extracted-tables` from a deterministic header heuristic
+(`Compound`, `Reagent`, `Drug`, `Gene`, `Symbol`, etc.). Curators
+edit the page to add/remove flags; the heuristic NEVER clobbers an
+existing list (Path C — page-level source of truth). Synthesis
+workers may also emit a per-citation `normalise: [{tab_stem,
+column, as}, ...]` self-annotation in their JSON output to override
+or extend the page flag for one citation only (Path B — escape
+hatch); that override does NOT write back to the page. The
+orchestrator runs `identifier_cache.py bulk-lookup` before
+persisting and inlines resolutions in the synthesis. Cache lives
+at `.curator/identifiers.db`. Air-gapped: set
+`CURIOSITY_ENGINE_OFFLINE=1` for cache-only mode.
+
 ## Rules
 - If caveman is installed, write at the configured level: ultra for most page
   types (dense, telegraphic), lite for `analyses/` (human-comfortable).

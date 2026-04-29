@@ -830,9 +830,25 @@ the proposal call. Receives the proposal list and judges each candidate.
 > - Numbers should include units in the column header, not each cell
 >   (e.g. column `training loss (log-10)`, not each cell `-1.2 log-10`).
 >
+> Identifier normalisation (optional escape hatch). When the source
+> tables you're synthesising contain chemical names or gene symbols
+> that aren't already flagged on their `[tab]` page's
+> `normalise_columns` fm — but you can tell from context they should
+> be — emit a `normalise` field listing the columns you want resolved
+> for THIS citation only:
+> ```
+> "normalise": [{"tab_stem": "tab-buffers-t1", "column": "Active Ingredient", "as": "chemicals"}, ...]
+> ```
+> The orchestrator will run `identifier_cache.py bulk-lookup` on
+> those columns before persisting and inline the resolutions in your
+> table. Only emit `normalise` when (a) the page's existing
+> `normalise_columns` is empty or doesn't cover what you cite, AND
+> (b) the column unambiguously holds chemical names or gene symbols.
+> Do not invent — if you're not sure, leave the field absent.
+>
 > Return exactly one JSON object:
 > ```
-> {"page": "wiki/tables/tbl-<stem>.md", "new_text": "<full page>", "reason": "<one line>"}
+> {"page": "wiki/tables/tbl-<stem>.md", "new_text": "<full page>", "reason": "<one line>", "normalise": [...]?}
 > ```
 >
 > Invoke no tools. If the spec turns out to be a poor fit for a
