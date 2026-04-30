@@ -1,6 +1,19 @@
 {
-  "worker_model": "claude-sonnet-4-6",
-  "reviewer_model": "claude-opus-4-6",
+  "active_preset": "claude",
+  "presets": {
+    "claude": {
+      "worker_model": "claude-sonnet-4-6",
+      "reviewer_model": "claude-opus-4-6"
+    },
+    "codex": {
+      "worker_model": "gpt-5",
+      "reviewer_model": "gpt-5"
+    },
+    "gemini": {
+      "worker_model": "gemini-2.5-pro",
+      "reviewer_model": "gemini-2.5-pro"
+    }
+  },
   "parallel_workers": 10,
   "wallclock_max_hours": 24,
   "saturation_rate_threshold": 0.005,

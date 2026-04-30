@@ -398,6 +398,13 @@ refresh_template_md "$TEMPLATE_DIR/prompts.md" ".curator/prompts.md"
 # has added since the user's config was last written. Additive only —
 # never overwrites a value the user has tuned, and descends into nested
 # dicts (e.g. the `caveman` block) so added sub-keys land too.
+#
+# Includes a one-shot migration: if the existing config still uses the
+# legacy top-level `worker_model` / `reviewer_model` shape (pre-preset
+# era), infer which vendor the values belong to, lift them into a
+# matching preset block, set `active_preset`, and drop the top-level
+# keys. The standard additive merge then fills in any other seeded
+# presets (claude/codex/gemini) the user doesn't already have.
 if [ ! -f ".curator/config.json" ]; then
     cp "$TEMPLATE_DIR/config.json" ".curator/config.json"
     echo "  Created .curator/config.json"
@@ -408,6 +415,27 @@ from pathlib import Path
 template = json.load(open(sys.argv[1]))
 existing_path = Path(sys.argv[2])
 existing = json.load(open(existing_path))
+
+def infer_preset_name(worker, reviewer):
+    s = (str(worker or "") + " " + str(reviewer or "")).lower()
+    if "claude" in s or "anthropic" in s: return "claude"
+    if "gpt-" in s or s.startswith("o1") or " o1" in s: return "codex"
+    if "gemini" in s: return "gemini"
+    if "ollama/" in s or "llama" in s or "qwen" in s: return "ollama"
+    return "custom"
+
+migrated = False
+if "presets" not in existing and ("worker_model" in existing or "reviewer_model" in existing):
+    worker = existing.pop("worker_model", None)
+    reviewer = existing.pop("reviewer_model", None)
+    name = infer_preset_name(worker, reviewer)
+    block = {}
+    if worker is not None:   block["worker_model"]   = worker
+    if reviewer is not None: block["reviewer_model"] = reviewer
+    existing["active_preset"] = name
+    existing["presets"] = {name: block}
+    migrated = True
+
 added = []
 def merge(tmpl, cur, prefix=""):
     for k, v in tmpl.items():
@@ -418,9 +446,13 @@ def merge(tmpl, cur, prefix=""):
         elif isinstance(v, dict) and isinstance(cur[k], dict):
             merge(v, cur[k], qname + ".")
 merge(template, existing)
-if added:
+
+if migrated or added:
     existing_path.write_text(json.dumps(existing, indent=2) + "\n")
-    print(f"  Merged {len(added)} new key(s) from template: {', '.join(added)}")
+    if migrated:
+        print(f"  Migrated legacy worker_model/reviewer_model into presets.{existing['active_preset']}")
+    if added:
+        print(f"  Merged {len(added)} new key(s) from template: {', '.join(added)}")
 PY
 fi
 # Drop the config.example.json alongside so users can see cross-vendor
@@ -484,6 +516,7 @@ else
         "scripts/naming.py"                  # post-naming-allowlist-gap fix
         "scripts/viewer.sh"                  # post-custom-viewer allowlist
         "scripts/viewer_server.py"           # post-edit-mode allowlist
+        "printenv CURATOR_PRESET"            # post-preset-config allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -602,7 +635,8 @@ EOF
         printf '      "Read(%s/**)",\n' "$root" >> .claude/settings.json
     done
     cat >> .claude/settings.json <<EOF
-      "Bash(date:*)"
+      "Bash(date:*)",
+      "Bash(printenv CURATOR_PRESET:*)"
     ]
   }
 }

@@ -1,34 +1,50 @@
 {
-  "_comment": "Example config variants. Copy the block that matches your environment over the defaults in .curator/config.json after setup.sh runs. Only worker_model + reviewer_model are vendor-specific; everything else is behavior-tuning and portable across vendors.",
+  "_comment": "Worked examples for the .curator/config.json preset shape. The default config ships with three presets (claude, codex, gemini) — copy a block below into your config's `presets` map (or replace one) and either flip `active_preset` to its name or set `CURATOR_PRESET=<name>` in the shell launching the CLI. Per-preset keys override top-level values when that preset is active, so `parallel_workers` etc. can be tuned per backend.",
 
-  "_anthropic_default": {
-    "worker_model": "claude-sonnet-4-6",
-    "reviewer_model": "claude-opus-4-6"
+  "_examples_to_drop_into_presets": {
+
+    "_ollama_fully_local": {
+      "worker_model": "ollama/llama3.1:70b",
+      "reviewer_model": "ollama/qwen2.5:72b",
+      "parallel_workers": 2,
+      "wallclock_max_hours": 4,
+      "_note": "Local-model quality is lower — drop parallel_workers so individual waves stay within the model's effective context and expect more score_diff rejections. Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code via an OpenAI-compatible proxy). Run `ollama serve` locally and `ollama pull` both models first."
+    },
+
+    "_mixed_local_worker_cloud_reviewer": {
+      "worker_model": "ollama/qwen2.5:32b",
+      "reviewer_model": "claude-opus-4-6",
+      "_note": "Keep local inference for the high-volume worker role; use a strong cloud reviewer once per wave. Reduces cost and data exposure while keeping judgment quality up."
+    },
+
+    "_openai_split_tier": {
+      "worker_model": "gpt-5",
+      "reviewer_model": "gpt-5-pro",
+      "_note": "Replace the default `codex` preset with this if/when a judgment-heavier OpenAI tier is the right reviewer match for your workspace."
+    }
+
   },
 
-  "_google_gemini": {
-    "worker_model": "gemini-2.5-pro",
-    "reviewer_model": "gemini-2.5-pro",
-    "_note": "Gemini 2.5 Pro is judgment-capable enough for the reviewer role; no cheaper worker tier yet matches Sonnet quality for this skill."
-  },
-
-  "_openai": {
-    "worker_model": "gpt-5",
-    "reviewer_model": "gpt-5",
-    "_note": "Split to gpt-5 + a judgment-heavier reviewer tier if/when OpenAI ships one."
-  },
-
-  "_ollama_fully_local": {
-    "worker_model": "ollama/llama3.1:70b",
-    "reviewer_model": "ollama/qwen2.5:72b",
-    "parallel_workers": 2,
-    "wallclock_max_hours": 4,
-    "_note": "Local-model quality is lower — drop parallel_workers so individual waves stay within the model's effective context and expect more score_diff rejections. Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code via an OpenAI-compatible proxy). Run `ollama serve` locally and `ollama pull` both models first."
-  },
-
-  "_mixed_local_worker_cloud_reviewer": {
-    "worker_model": "ollama/qwen2.5:32b",
-    "reviewer_model": "claude-opus-4-6",
-    "_note": "Keep local inference for the high-volume worker role; use a strong cloud reviewer once per wave. Reduces cost and data exposure while keeping judgment quality up."
+  "_full_config_skeleton_for_reference": {
+    "active_preset": "claude",
+    "presets": {
+      "claude": { "worker_model": "claude-sonnet-4-6", "reviewer_model": "claude-opus-4-6" },
+      "codex":  { "worker_model": "gpt-5",             "reviewer_model": "gpt-5" },
+      "gemini": { "worker_model": "gemini-2.5-pro",    "reviewer_model": "gemini-2.5-pro" }
+    },
+    "parallel_workers": 10,
+    "wallclock_max_hours": 24,
+    "saturation_rate_threshold": 0.005,
+    "saturation_consecutive_waves": 2,
+    "orphan_dominance_threshold": 0.6,
+    "figure_extract_min_citers": 2,
+    "wiki_viewer_mode": "obsidian",
+    "update_source_slug": "benjsmith/curiosity-engine",
+    "spot_audit_interval": 20,
+    "embedding_enabled": false,
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "notes_semantic_dedup_threshold": 0.92,
+    "cluster_scope_threshold": 500,
+    "caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
   }
 }

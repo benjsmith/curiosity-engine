@@ -60,7 +60,8 @@ Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompt
 2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
-5. `date ...`
+5. `printenv CURATOR_PRESET` — read the per-session preset override (see §Curator config). Run once at the start of any operation that dispatches workers/reviewers; the value is stable for the session.
+6. `date ...`
 
 `<skill_path>` is Claude Code's per-session substitution for the skill's physical directory. On coding-agent CLIs that don't perform that substitution (Codex CLI, Gemini CLI, Copilot Chat), export `CURIOSITY_ENGINE_SCRIPTS_DIR=<absolute-path-to-scripts>` once per shell or workspace; all bash invocations above work unchanged when `<skill_path>/scripts` is replaced by `$CURIOSITY_ENGINE_SCRIPTS_DIR`.
 
@@ -76,6 +77,30 @@ Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompt
 **No compound shell:** no pipes, no `&&`, no `$(...)`, no backticks, no heredocs. One command per bash call.
 
 **Why:** any other bash command either has a safe tool-layer equivalent or cannot be scoped to the workspace via prefix matching without risking the user's wider filesystem. Breaking this rule means approval interrupts, which means the loop stops.
+
+**Pre-approving the bash surface in non-Claude-Code CLIs.** `.claude/settings.json`'s `permissions.allow` array is read by Claude Code only. Other hosts (Codex CLI, Gemini CLI, GitHub Copilot Chat, Cursor) each keep their own allowlist somewhere else; without it pre-populated, every bash call prompts for approval and autonomous loops stall on the first wave. Don't ask the user to hand-copy patterns — propose the install once per workspace per host and apply with their approval.
+
+**One-time auto-install protocol** (run before the first bash call in any non-Claude-Code session, skip if Claude Code or if the marker file `.curator/.allowlist-installed-<host>` already exists):
+
+1. **Detect the host.** Use the registry below to fingerprint the running CLI from env vars (`printenv` + the marker for that host). If the fingerprint is ambiguous, ask the user once: *"Which CLI is driving this session — codex / gemini / copilot / cursor / other?"*
+2. **Locate the target allowlist file** from the registry. If the file doesn't exist, offer to create it; if it does, Read it and check whether the curiosity-engine patterns are already present (look for any of the canary entries from `.claude/settings.json` — `git -C wiki`, `bash $root/scripts/viewer.sh`, etc.). If they're all present, skip — silently write the marker and move on.
+3. **Read `.claude/settings.json`'s `permissions.allow` array** for the canonical patterns.
+4. **Translate to the target format** (TOML array / JSON path / etc. — see registry). Every entry stays a literal command pattern; only the wrapper syntax changes.
+5. **Show the user a single approval prompt** with: target file path, count of patterns being added, and 3-5 example translated entries so they can sanity-check. Phrase it as: *"Proposing N entries for `<path>` so curiosity-engine can run uninterrupted. Diff preview: [...]. Apply? [Y/n]"*
+6. **On approval:** back up the existing target to `<path>.bak.<ISO timestamp>`, then Edit/Write the new content. Touch `.curator/.allowlist-installed-<host>` so future sessions skip the proposal. Tell the user it's done.
+7. **On decline:** touch the marker anyway so the proposal doesn't repeat; warn the user that bash calls will prompt for approval each time and the autonomous loops won't work. They can re-trigger by deleting the marker file.
+
+**Host registry.** Update this list if you discover a new host or a path moves between versions. Verify against the host's current docs before writing — config schemas churn fastest in young CLIs.
+
+| host | env-var fingerprint | allowlist file | format | translation note |
+|---|---|---|---|---|
+| `claude` | `CLAUDECODE=1` (or skill loaded via `.claude/skills/`) | `.claude/settings.json` | JSON, `permissions.allow: [...]` | native; no install needed |
+| `codex` | `CODEX_HOME` set, or invocation via `codex` binary | `~/.codex/config.toml` (per-user) or `./.codex/config.toml` (per-project) | TOML, `[allowed_commands]` table or `approval_policy` block — schema varies by Codex version | each Claude pattern `Bash(<cmd>:*)` becomes a literal `<cmd>` prefix entry; drop the `Bash(` wrapper and `:*` suffix |
+| `gemini` | `GEMINI_API_KEY` + invocation via `gemini` | `~/.gemini/settings.json` | JSON, `tools.allow: [...]` (or per-tool `bash.commands`) | same pattern strings; verify the schema field name in the running version |
+| `copilot` (VS Code) | `TERM_PROGRAM=vscode` + Copilot extension active | `~/.config/Code/User/settings.json` (or workspace `.vscode/settings.json`) | JSON, `chat.tools.terminal.autoApprove` (or equivalent in the version) | per-pattern entries; schema key changed multiple times across VS Code releases |
+| `cursor` | `CURSOR_TRACE_ID` set | `~/Library/Application Support/Cursor/User/settings.json` (mac) or platform equivalent | JSON, similar to Copilot | same as copilot |
+
+If the host is unfamiliar or the file format the registry lists doesn't match what's actually on disk, fall back to the manual path: print the patterns and ask the user to paste them into their host's settings GUI. Don't guess at undocumented schemas.
 
 When spawning a subagent via the Agent tool, include this discipline block verbatim in its prompt. Subagents do not automatically inherit workspace CLAUDE.md.
 
@@ -143,8 +168,12 @@ Read `.curator/schema.md` before any operation.
 
 ```json
 {
-  "worker_model": "claude-sonnet-4-6",
-  "reviewer_model": "claude-opus-4-6",
+  "active_preset": "claude",
+  "presets": {
+    "claude": { "worker_model": "claude-sonnet-4-6", "reviewer_model": "claude-opus-4-6" },
+    "codex":  { "worker_model": "gpt-5",             "reviewer_model": "gpt-5" },
+    "gemini": { "worker_model": "gemini-2.5-pro",    "reviewer_model": "gemini-2.5-pro" }
+  },
   "parallel_workers": 10,
   "wallclock_max_hours": 24,
   "saturation_rate_threshold": 0.005,
@@ -161,8 +190,20 @@ Read `.curator/schema.md` before any operation.
 }
 ```
 
-- **worker_model** — all CURATE workers. Any identifier the driving coding-agent CLI can route to (Anthropic/OpenAI/Google/Ollama). Defaults to `claude-sonnet-4-6`. Lower-tier models (e.g. Haiku, small local models) dropped citations systematically in testing — raise the tier or tighten `parallel_workers`.
-- **reviewer_model** — CURATE batch reviewer (one reviewer-model Agent per wave) and any other reviewer-model subagent. A judgment-capable model (Opus-tier or equivalent) is the intent of the role — the reviewer grades prose quality and connection discovery, not just mechanics.
+**Resolving worker_model and reviewer_model.** Before any worker or reviewer dispatch (CURATE wave, LINK proposer, spot auditor, etc.), resolve the active preset in this order — once per session is enough; cache the result for the operation:
+
+1. Run `printenv CURATOR_PRESET` (allowlisted). Non-empty output wins — that's the per-session override the user set when launching the CLI (e.g. `CURATOR_PRESET=codex codex`). Useful when one machine drives multiple coding-agent CLIs and each wants its own model routing.
+2. Otherwise fall back to the `active_preset` key in `.curator/config.json`.
+3. Look up `presets[<resolved_name>]` and read `worker_model` / `reviewer_model` from there.
+
+If the resolved preset name doesn't exist in `presets`, abort with a clear message (don't guess) — the user picked a name that hasn't been seeded; they need to add it to config.json or correct the env var.
+
+A preset block may also carry per-preset overrides for any top-level key (e.g. `parallel_workers`, `wallclock_max_hours`); when present, those shadow the top-level value while that preset is active.
+
+- **active_preset** — default preset name when `CURATOR_PRESET` env var is unset. Edit this for a per-project default; export `CURATOR_PRESET` for a per-session override.
+- **presets** — named map of `{worker_model, reviewer_model}` (and optional behaviour overrides). Skill ships with `claude`, `codex`, `gemini` seeded; users add `ollama` etc. as needed (`template/config.example.json` has copy-paste-ready blocks).
+- **worker_model** (inside a preset) — all CURATE workers. Any identifier the driving coding-agent CLI can route to (Anthropic/OpenAI/Google/Ollama). Lower-tier models (e.g. Haiku, small local models) dropped citations systematically in testing — raise the tier or tighten `parallel_workers`.
+- **reviewer_model** (inside a preset) — CURATE batch reviewer (one reviewer-model Agent per wave) and any other reviewer-model subagent. A judgment-capable model (Opus-tier or equivalent) is the intent of the role — the reviewer grades prose quality and connection discovery, not just mechanics.
 - **parallel_workers** — concurrent worker subagents per wave.
 - **wallclock_max_hours** — hard stop on the outer loop.
 - **saturation_rate_threshold** / **saturation_consecutive_waves** — pivot criterion on editorial rate-of-improvement (`rate_per_accept`). When the last N waves are all below the threshold, CURATE shifts to create mode (concepts → evidence → analyses). Defaults are loose on purpose (0.005 over 2 waves) so the pivot fires early — curiosity trumps editorial grind.
@@ -291,7 +332,7 @@ Three stages. Two reviewer-model calls plus mechanical application.
 
 Single autonomous loop: **plan → execute → evaluate → stop check → loop**. You are the orchestrator: you pick targets, compose briefs, dispatch workers in parallel, review the whole wave in one reviewer call, commit, and decide whether to continue. The unit of visible progress is a **wave** — one planned batch of up to `parallel_workers` targets, ending in one git commit.
 
-Read `.curator/config.json` for model routing and thresholds (`worker_model`, `reviewer_model`, `parallel_workers`, `wallclock_max_hours`, `saturation_rate_threshold`, `saturation_consecutive_waves`, `orphan_dominance_threshold`).
+Read `.curator/config.json` for thresholds (`parallel_workers`, `wallclock_max_hours`, `saturation_rate_threshold`, `saturation_consecutive_waves`, `orphan_dominance_threshold`). Resolve `worker_model` / `reviewer_model` via the preset rules in §Curator config — `printenv CURATOR_PRESET` first, then `active_preset`, then the matching block under `presets`.
 
 Worker + reviewer prompt templates live in `.curator/prompts.md` — read them verbatim each dispatch; don't improvise wording.
 

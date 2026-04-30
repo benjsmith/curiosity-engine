@@ -113,36 +113,46 @@ git push -u origin main
 
 ### Running in other coding-agent CLIs
 
-Same `setup.sh` works; `.claude/settings.json` is skipped or ignored by non-Claude-Code CLIs. Point your CLI at the cloned skill folder and drive it with the same "set up a knowledge base", "add to the vault", "curate" prompts.
+Same `setup.sh` works; `.claude/settings.json` is read by Claude Code only. The first time you drive the workspace from a non-Claude-Code host, the orchestrator detects it (env-var fingerprint) and offers a **one-time approval-gated install** of the bash allowlist into the host's own config — single Y/n prompt with a diff preview, then it backs up the host file and writes the translated patterns. After that the host treats curiosity-engine bash calls as pre-approved and autonomous loops run uninterrupted. The marker `.curator/.allowlist-installed-<host>` records the install so the proposal doesn't repeat; delete it to re-trigger.
+
+If the host isn't recognised or its allowlist schema has moved, the orchestrator falls back to printing the patterns and asking you to paste them in manually rather than guessing.
 
 - **OpenClaude** — drop the skill into `~/.openclaude/skills/`; skill-path substitution works.
-- **Codex CLI** — clone into a known scripts directory and export `CURIOSITY_ENGINE_SCRIPTS_DIR=<path>/scripts` so prompts without `<skill_path>` substitution still resolve.
-- **GitHub Copilot Chat (VS Code)** — clone anywhere, open the workspace folder in VS Code, and paste the contents of `SKILL.md` into the chat's workspace instructions. The single-chat-window flow works: Copilot runs as the orchestrator, dispatches subagents where supported, and falls back to sequential in-session workers with explicit role-reset prompts where not (see `SKILL.md#single-session-fallback`). To avoid per-command approval prompts, open VS Code's settings for the chat/agent feature and allow the bash + file tools at the workspace level — the commands that need allowing are listed in `.claude/settings.json`'s `permissions.allow` array after `setup.sh` runs; translate them into the per-workspace allowlist your VS Code version exposes.
-- **Gemini CLI** — clone anywhere, export `CURIOSITY_ENGINE_SCRIPTS_DIR`, and point `worker_model` / `reviewer_model` at `gemini-2.5-pro` etc.
+- **Codex CLI** — clone into a known scripts directory and export `CURIOSITY_ENGINE_SCRIPTS_DIR=<path>/scripts` so prompts without `<skill_path>` substitution still resolve. The auto-install writes to `~/.codex/config.toml`.
+- **GitHub Copilot Chat (VS Code)** — clone anywhere, open the workspace folder in VS Code, and paste the contents of `SKILL.md` into the chat's workspace instructions. The single-chat-window flow works: Copilot runs as the orchestrator, dispatches subagents where supported, and falls back to sequential in-session workers with explicit role-reset prompts where not (see `SKILL.md#single-session-fallback`). The auto-install writes to your VS Code user `settings.json` (or workspace `.vscode/settings.json` if you prefer per-project scope — pick at the prompt).
+- **Gemini CLI** — clone anywhere, export `CURIOSITY_ENGINE_SCRIPTS_DIR`. The auto-install writes to `~/.gemini/settings.json`.
+- **Cursor** — clone anywhere; auto-install writes to Cursor's user `settings.json` (path varies per OS, listed in `SKILL.md`'s host registry).
 
 ### Running with different models (incl. fully local via Ollama)
 
-`worker_model` and `reviewer_model` in `.curator/config.json` are plain identifier strings passed to whatever coding-agent CLI is driving the skill. Defaults target Anthropic but nothing in the Python scripts depends on a specific vendor.
+Models are picked per-session, not per-machine. `.curator/config.json` carries a named-preset map plus an `active_preset` default; the orchestrator resolves which preset is active by checking the `CURATOR_PRESET` env var first, then falling back to `active_preset`. So one workspace can be driven from Claude Code one minute and Codex CLI the next without editing the file:
 
-See `template/config.example.json` for working variants:
+```bash
+# Default — uses active_preset from config.json
+claude
+
+# Per-session override — same workspace, different backend
+CURATOR_PRESET=codex codex
+
+CURATOR_PRESET=gemini gemini
+```
+
+The shipped config seeds three presets:
 
 ```json
 {
-  "worker_model":   "claude-sonnet-4-6",      // Anthropic (default)
-  "reviewer_model": "claude-opus-4-6",
-
-  "worker_model":   "gemini-2.5-pro",         // Google
-  "reviewer_model": "gemini-2.5-pro",
-
-  "worker_model":   "gpt-5",                  // OpenAI
-  "reviewer_model": "gpt-5",
-
-  "worker_model":   "ollama/llama3.1:70b",    // Fully local via Ollama
-  "reviewer_model": "ollama/qwen2.5:72b"
+  "active_preset": "claude",
+  "presets": {
+    "claude": { "worker_model": "claude-sonnet-4-6", "reviewer_model": "claude-opus-4-6" },
+    "codex":  { "worker_model": "gpt-5",             "reviewer_model": "gpt-5" },
+    "gemini": { "worker_model": "gemini-2.5-pro",    "reviewer_model": "gemini-2.5-pro" }
+  }
 }
 ```
 
-**Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` the models above, edit `.curator/config.json` to match. Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers). The deterministic table-extraction tier (`local_ingest.py` + `sweep.py promote-extracted-tables`) runs purely on local Python libraries (pdfplumber / openpyxl / python-pptx) and is unaffected by model choice; if you later add a worker-model pass to interpret extracted scientific tables, that pass benefits from frontier models per the design principles cited under [Acknowledgements & Citation](#acknowledgements--citation).
+A preset block may carry per-preset overrides for `parallel_workers`, `wallclock_max_hours`, etc. — useful when a backend wants different concurrency or wallclock limits (the Ollama example below halves both). Edit `active_preset` for a per-project default; export `CURATOR_PRESET` for a per-session swap. See `template/config.example.json` for copy-paste-ready Ollama and mixed-vendor blocks.
+
+**Fully local via Ollama.** Requires an Ollama-compatible coding-agent CLI (Continue.dev, Cody, or Claude Code routed through an OpenAI-compatible proxy). `ollama serve` locally, `ollama pull` your chosen models, then add an `ollama` preset to `.curator/config.json` (see `config.example.json`). Caveats: open-weight models will drop citations more often than frontier Sonnet/Opus — tune `parallel_workers` down inside the preset block and expect more `score_diff` rejections. Semantic search still works locally (MiniLM runs offline via sentence-transformers). The deterministic table-extraction tier (`local_ingest.py` + `sweep.py promote-extracted-tables`) runs purely on local Python libraries (pdfplumber / openpyxl / python-pptx) and is unaffected by model choice; if you later add a worker-model pass to interpret extracted scientific tables, that pass benefits from frontier models per the design principles cited under [Acknowledgements & Citation](#acknowledgements--citation).
 
 **Enterprise notes.** No code sends wiki/vault content anywhere except to the model API your CLI drives; swap to Ollama for fully on-prem. PyPI access is required at setup time; HuggingFace egress is required only if you opt into semantic search (can be pre-staged via `HF_HOME`).
 
