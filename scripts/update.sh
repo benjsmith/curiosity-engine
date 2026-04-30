@@ -154,11 +154,61 @@ if [ "$UPDATE_METHOD" = "git" ]; then
 else
     echo ""
     echo "Running npx skills update -g $SKILL_NAME ..."
+
+    # Codex CLI sandboxes network/cache access by default; npx-skills
+    # then blocks on a network call without surfacing useful stderr,
+    # which looks like an indefinite hang. Print the workaround
+    # up-front when we detect we're inside Codex so the user knows
+    # what to do if the wrapper below trips.
+    if [ -n "$CODEX_HOME" ] || [ -n "$CODEX_SANDBOX" ] || [ -n "$CODEX_SESSION_ID" ]; then
+        echo "  Note: detected Codex CLI. npx-skills needs network + ~/.npm cache"
+        echo "  access. If this call hangs, Codex's sandbox is blocking the network"
+        echo "  request silently. Two paths out:"
+        echo "    (a) ctrl+c, then re-run THIS script with Codex's \"approve /"
+        echo "        run with escalated permissions\" answer when it asks"
+        echo "        (network + write to ~/.npm/_npx is the request to approve), or"
+        echo "    (b) run 'bash $SCRIPT_DIR/update.sh --yes' from a non-sandboxed"
+        echo "        shell."
+        echo "  If neither is available, switch install channel: clone the skill"
+        echo "  via git so update.sh uses 'git pull' instead of npx."
+        echo ""
+    fi
+
+    # Hard timeout so the sandbox-blocking case (or any other npx
+    # cache/registry stall) fails loudly within 3 minutes instead of
+    # hanging the agent indefinitely. macOS ships neither `timeout`
+    # nor `gtimeout` by default — fall back to unwrapped exec when
+    # neither is on PATH.
+    if command -v timeout >/dev/null 2>&1; then
+        _timeout_cmd="timeout 180"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        _timeout_cmd="gtimeout 180"
+    else
+        _timeout_cmd=""
+    fi
+
     # npx-skills exits 0 even when it can't find the named skill, so
     # capture the output and check for its "No installed skills found"
     # signal explicitly to avoid a silent no-op.
-    _npx_out="$(npx skills update -g "$SKILL_NAME" 2>&1)"
+    set +e
+    _npx_out="$($_timeout_cmd npx skills update -g "$SKILL_NAME" 2>&1)"
+    _npx_status=$?
+    set -e
     echo "$_npx_out"
+    if [ "$_npx_status" -eq 124 ]; then
+        echo ""
+        echo "ERROR: npx skills update timed out after 180s."
+        echo "       Most likely cause: sandboxed network/cache access."
+        echo "       In Codex, re-run with Codex's escalation approval"
+        echo "       (network + write to ~/.npm/_npx). Outside Codex,"
+        echo "       verify the npm registry and ~/.npm cache are reachable."
+        exit 1
+    fi
+    if [ "$_npx_status" -ne 0 ]; then
+        echo ""
+        echo "ERROR: npx skills update exited $_npx_status. See output above."
+        exit 1
+    fi
     if echo "$_npx_out" | grep -qi "No installed skills found matching"; then
         echo ""
         echo "ERROR: npx-skills did not recognise '$SKILL_NAME'. Installed skills:"
