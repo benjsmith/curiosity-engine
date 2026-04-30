@@ -135,6 +135,7 @@ The npx-skills slug is read from `.curator/config.json`'s `update_source_slug` k
 **Vault** (`vault/`) — Folder of raw source files. Append-only. Never modify existing files.
 - Search: `uv run python3 <skill_path>/scripts/vault_search.py "query"` → JSON (FTS5 / BM25).
 - Optional semantic search (opt-in via `embedding_enabled=true` in config): `vault_search.py --mode hybrid "query"` merges FTS5 and MiniLM cosine rankings via Reciprocal Rank Fusion. Catches paraphrases FTS5 misses. Embeddings indexed alongside FTS5 at ingest time via sqlite-vec. Rebuild the embedding layer with `vault_index.py --rebuild`; re-embed under a different model with `vault_index.py --reembed`.
+- Optional graph expansion (any mode): add `--graph-expand` to fuse a third RRF stream of sources cited by wiki pages that already cite the strongest matches. Surfaces thematically related sources that don't keyword/semantic-match the query directly. Soft-falls-back to no expansion when kuzu / `.curator/graph.kuzu` is unavailable. See QUERY § for when to use it.
 - You can read PDFs, images, DOCX, PPTX natively — no extraction libraries needed.
 - Each source gets a `.extracted.md` alongside it for FTS5 indexing.
 
@@ -252,12 +253,12 @@ INGEST stays lean. Evidence and fact pages emerge later, via CURATE reads.
 
 1. Read `.curator/index.md` to find relevant pages.
 2. For relationship/structural questions ("which sources cover both X and Y?", "how are A and B connected?", "what cites source S?"), query the kuzu graph first: `uv run python3 <skill_path>/scripts/graph.py shared-sources|path|neighbors wiki ...`. The graph answers these in milliseconds; brute-force page reading does not.
-3. Load pages. Run `uv run python3 <skill_path>/scripts/vault_search.py "query"` for vault hits. FTS5 supports `AND`, `OR`, `NOT`, `"exact phrase"`, `prefix*`, `NEAR()`, and column-scoped queries (`body:term`). Default limit 10; `--text` returns full bodies instead of snippets.
+3. Load pages. Run `uv run python3 <skill_path>/scripts/vault_search.py "query"` for vault hits. FTS5 supports `AND`, `OR`, `NOT`, `"exact phrase"`, `prefix*`, `NEAR()`, and column-scoped queries (`body:term`). Default limit 10; `--text` returns full bodies instead of snippets. For synthesis-style queries (multi-page connections, "how does X relate to Y", "what's the broader picture around Z"), add `--graph-expand` so the search fuses a third RRF stream of sources cited by wiki pages that already cite the strongest matches. Skip `--graph-expand` for direct lookups — it adds breadth at some cost to precision on narrow queries.
 4. Read original vault files directly if more context needed.
 5. Synthesize answer citing `[[wiki pages]]` and `(vault:path)` sources.
 6. End with one probing follow-up question or connection gap. (Teacher mode — don't just dump.)
-7. If significant new synthesis, offer to file as `wiki/analyses/<topic>.md`.
-8. Append to `.curator/log.md`: question, pages used, whether vault fallback was needed.
+7. **Offer to crystallise the answer as an analysis page** when (a) the answer cited 3+ distinct vault sources AND (b) the answer drew on 2+ wiki pages AND (c) no existing `analyses/` page already covers the synthesis. One-line prompt: *"This synthesises [N] sources we don't have an analysis page for — file as `analyses/<slug>`? [Y/n]"*. On approval, draft the page (citations preserved verbatim from the answer), run `score_diff.py --new-page` for the citation/floor check, commit through the standard wiki ratchet. On decline, do nothing — log the question only. The trigger is conservative on purpose: pattern-match recall ("what does the wiki say about X?") doesn't fire it; synthesis ("how do A, B, and C interact?") does. Skip the offer if the user phrased the query as a quick lookup (`/q`, "just search for…", "tldr").
+8. Append to `.curator/log.md`: question, pages used, whether vault fallback was needed, whether an analysis page was filed.
 
 ### LINT — "check wiki health", "what needs work", "lint"
 

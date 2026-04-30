@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Ranked search over vault sources — FTS5, semantic, or hybrid.
+"""Ranked search over vault sources — FTS5, semantic, or hybrid, optionally
+graph-expanded.
 
 Usage:
     python3 vault_search.py "query"                       # FTS5, top 10
@@ -8,6 +9,7 @@ Usage:
     python3 vault_search.py --count                       # total doc count
     python3 vault_search.py "query" --mode semantic       # semantic only
     python3 vault_search.py "query" --mode hybrid         # FTS5 + semantic (RRF)
+    python3 vault_search.py "query" --graph-expand        # any mode + 1-hop kuzu
 
 Modes:
     fts5      BM25 keyword. Default. Sharp for exact/stem matches, weak
@@ -18,6 +20,14 @@ Modes:
     hybrid    Run both; merge via Reciprocal Rank Fusion (RRF). Best of
               both in most cases. Falls back to fts5 if embeddings
               aren't available.
+
+--graph-expand augments any mode with a third RRF stream: take the top
+seeds from FTS5/semantic, walk one hop through the kuzu wiki layer
+(sources cited by wiki pages that also cite the seeds), and merge those
+neighbours into the result set ranked by shared-page count. Surfaces
+sources that don't keyword-match the query but share thematic context
+with the strongest matches. Soft-falls-back to no expansion if kuzu
+isn't installed or the graph DB hasn't been built yet.
 """
 
 import argparse
@@ -34,6 +44,7 @@ except ImportError:
     import sqlite3
 
 DB = Path("vault/vault.db")
+GRAPH_DB = Path(".curator/graph.kuzu")
 CONFIG_PATH = Path(".curator/config.json")
 DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -182,23 +193,103 @@ def _semantic_search(conn, model, sqlite_vec_mod, query: str,
     return results
 
 
-def _rrf_merge(fts_results: list, sem_results: list, k: int = 60,
-                limit: int = 10) -> list:
-    """Reciprocal Rank Fusion on two ranked lists keyed by `path`."""
+def _rrf_merge(*streams, k: int = 60, limit: int = 10) -> list:
+    """Reciprocal Rank Fusion across N ranked lists, all keyed by `path`.
+
+    First-stream entry wins on path collisions, so callers should pass
+    streams in order of richest fields first (typically fts → sem →
+    graph) — the FTS5 entry has the actual matched-snippet, the semantic
+    entry has a generic first-line, and the graph entry has only a
+    similarity-by-context signal. Keeping the FTS entry when a path
+    appears in multiple streams gives the user the most informative row.
+    """
     scores = {}
-    for i, r in enumerate(fts_results):
-        s = scores.setdefault(r["path"], {"score": 0.0, "entry": r})
-        s["score"] += 1.0 / (k + i + 1)
-    for i, r in enumerate(sem_results):
-        if r["path"] in scores:
-            scores[r["path"]]["score"] += 1.0 / (k + i + 1)
-        else:
-            scores[r["path"]] = {"score": 1.0 / (k + i + 1), "entry": r}
+    for stream in streams:
+        for i, r in enumerate(stream):
+            s = scores.setdefault(r["path"], {"score": 0.0, "entry": r})
+            s["score"] += 1.0 / (k + i + 1)
     merged = sorted(scores.values(), key=lambda x: -x["score"])
     return [m["entry"] for m in merged[:limit]]
 
 
-def search(query: str, limit: int, include_text: bool, mode: str = "fts5"):
+def _graph_search(seed_paths: list, limit: int, sqlite_conn) -> list:
+    """Expand a set of vault-source seeds by 1 hop through the kuzu wiki
+    layer. Returns OTHER vault sources cited by wiki pages that also cite
+    any seed, ranked by number of shared citing pages.
+
+    Soft-fails (returns []) if kuzu isn't installed or the graph DB
+    hasn't been built — the calling mode degrades to non-expanded.
+    """
+    if not seed_paths or not GRAPH_DB.exists():
+        return []
+    try:
+        import kuzu
+    except ImportError:
+        sys.stderr.write(
+            "vault_search: --graph-expand requested but kuzu not installed; "
+            "skipping graph stream.\n"
+        )
+        return []
+    db = kuzu.Database(str(GRAPH_DB))
+    conn = kuzu.Connection(db)
+    cypher = (
+        "MATCH (s:VaultSource)<-[:Cites]-(p:WikiPage)-[:Cites]->(other:VaultSource) "
+        "WHERE s.path IN $seeds AND NOT other.path IN $seeds "
+        "WITH other.path AS path, count(DISTINCT p) AS shared "
+        "ORDER BY shared DESC "
+        f"LIMIT {limit} "
+        "RETURN path, shared"
+    )
+    try:
+        result = conn.execute(cypher, {"seeds": list(seed_paths)})
+    except Exception as e:
+        sys.stderr.write(f"vault_search: graph query failed ({e}); skipping.\n")
+        return []
+    expanded = []
+    while result.has_next():
+        row = result.get_next()
+        expanded.append({"path": row[0], "shared_pages": int(row[1])})
+    if not expanded:
+        return []
+
+    # Hydrate from the FTS5 sources table for title / snippet. Sources
+    # found via graph have no inherent match-snippet; use the first
+    # substantive line of the body, mirroring _semantic_search's choice.
+    placeholders = ",".join("?" * len(expanded))
+    paths_only = [e["path"] for e in expanded]
+    rows = sqlite_conn.execute(
+        f"SELECT path, title, source_path, date, body "
+        f"FROM sources WHERE path IN ({placeholders})",
+        paths_only,
+    ).fetchall()
+    by_path = {r[0]: r for r in rows}
+    out = []
+    # Preserve the order produced by kuzu so RRF ranks remain meaningful.
+    for e in expanded:
+        r = by_path.get(e["path"])
+        if not r:
+            continue
+        body = r[4] or ""
+        first = next(
+            (ln for ln in body.split("\n")
+             if ln.strip() and not ln.startswith("#")
+             and not ln.startswith("<!--") and not ln.startswith("---")),
+            "",
+        )
+        out.append({
+            "path": r[0],
+            "title": r[1],
+            "source_path": r[2],
+            "date": r[3],
+            "snippet": first[:400],
+            "shared_pages": e["shared_pages"],
+            "via_graph": True,
+        })
+    return out
+
+
+def search(query: str, limit: int, include_text: bool, mode: str = "fts5",
+           graph_expand: bool = False):
     if not DB.exists():
         print("[]")
         return
@@ -210,14 +301,30 @@ def search(query: str, limit: int, include_text: bool, mode: str = "fts5"):
         if model is None:
             mode = "fts5"  # soft fallback
 
+    # Compute primary stream(s).
     if mode == "fts5":
-        results = _fts5_search(conn, query, limit, include_text)
+        fts = _fts5_search(conn, query, limit * 2, include_text)
+        sem = []
     elif mode == "semantic":
-        results = _semantic_search(conn, model, vec_mod, query, limit, include_text)
+        fts = []
+        sem = _semantic_search(conn, model, vec_mod, query, limit * 2, include_text)
     else:  # hybrid
         fts = _fts5_search(conn, query, limit * 2, include_text)
         sem = _semantic_search(conn, model, vec_mod, query, limit * 2, include_text)
+
+    if graph_expand:
+        # Seed the graph stream with the strongest hits from primary
+        # streams. Use top-K (= limit) so we expand around clear matches
+        # rather than long-tail noise.
+        primary = _rrf_merge(fts, sem, limit=limit) if (fts and sem) \
+                  else (fts or sem)[:limit]
+        seeds = [r["path"] for r in primary]
+        graph = _graph_search(seeds, limit * 2, conn)
+        results = _rrf_merge(fts, sem, graph, limit=limit)
+    elif fts and sem:
         results = _rrf_merge(fts, sem, limit=limit)
+    else:
+        results = (fts or sem)[:limit]
 
     conn.close()
     print(json.dumps(results, indent=2))
@@ -248,6 +355,14 @@ def main():
                     help="retrieval mode (default: fts5). semantic/hybrid "
                          "require embedding_enabled=true and the "
                          "semantic index (built by vault_index).")
+    ap.add_argument("--graph-expand", action="store_true",
+                    help="augment the primary stream(s) with a 1-hop kuzu "
+                         "expansion: sources cited by wiki pages that also "
+                         "cite the strongest matches. Useful for synthesis "
+                         "queries where the right source is one wikilink "
+                         "away from the keyword/semantic match. Soft-fails "
+                         "to no expansion if kuzu / .curator/graph.kuzu "
+                         "is unavailable.")
     args = ap.parse_args()
 
     if args.count:
@@ -258,7 +373,7 @@ def main():
         ap.print_usage()
         sys.exit(1)
 
-    search(args.query, args.limit, args.text, args.mode)
+    search(args.query, args.limit, args.text, args.mode, args.graph_expand)
 
 
 if __name__ == "__main__":
