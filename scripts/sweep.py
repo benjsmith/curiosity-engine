@@ -2350,6 +2350,658 @@ def cmd_pending_multimodal(wiki_dir: Path) -> None:
     print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
 
 
+def cmd_multimodal_table_candidates(wiki_dir: Path,
+                                      limit: Optional[int] = None) -> None:
+    """List PDFs eligible for the multimodal-table-extract wave.
+
+    Narrower than `pending-multimodal`: targets only sources that have
+    NO tables recovered yet (`tables_extracted: 0`) AND the multimodal
+    flag is still set AND the source hasn't already been through the
+    multimodal table pass (`multimodal_extracted` absent). Returns the
+    queue with the absolute PDF path so the orchestrator can call
+    `figures.py render-all` directly without re-resolving paths.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    queue = []
+    if not vault_dir.exists():
+        print(json.dumps({"queue": [], "count": 0,
+                          "note": "no vault/ directory"}))
+        return
+    for f in sorted(vault_dir.glob("*.extracted.md")):
+        try:
+            fm, _ = read_frontmatter(f.read_text())
+        except Exception:
+            continue
+        if str(fm.get("multimodal_recommended", "")).lower() != "true":
+            continue
+        try:
+            n_tables = int(fm.get("tables_extracted", 0) or 0)
+        except (TypeError, ValueError):
+            n_tables = 0
+        if n_tables > 0:
+            continue
+        if fm.get("multimodal_extracted"):
+            continue
+        kept_as = fm.get("kept_as", "")
+        if not kept_as:
+            continue
+        original_path = vault_dir / kept_as
+        if not original_path.exists() or original_path.suffix.lower() != ".pdf":
+            continue
+        stub = _stub_for_extraction(wiki_dir, f.name)
+        queue.append({
+            "extracted": f.name,
+            "extracted_path": str(f.resolve()),
+            "original": kept_as,
+            "original_path": str(original_path.resolve()),
+            "source_stub": stub,
+            "extraction_quality": fm.get("extraction_quality", ""),
+            "has_math": str(fm.get("has_math", "")).lower() == "true",
+            "has_tables": str(fm.get("has_tables", "")).lower() == "true",
+            "sanity_note": fm.get("sanity_note", ""),
+        })
+        if limit is not None and len(queue) >= limit:
+            break
+    print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
+
+
+def _png_paths_for_extraction(wiki_dir: Path, extraction_name: str,
+                                source_pages: Optional[list] = None) -> list:
+    """Resolve the PNG paths for a vault extraction's source PDF.
+
+    Mirrors `figures.py`'s asset layout: `wiki/figures/_assets/<stem>-pN.png`
+    where `<stem>` is the kept-as basename without extension. When
+    `source_pages` is supplied, returns only the PNGs for those pages.
+    Otherwise returns all PNGs found, sorted by page number. Used by the
+    numeric-review queue to give the reviewer the exact page images
+    associated with a `[tab]` page.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    extraction = vault_dir / extraction_name
+    if not extraction.exists():
+        return []
+    fm, _ = read_frontmatter(extraction.read_text())
+    kept_as = fm.get("kept_as", "")
+    if not kept_as:
+        return []
+    pdf_stem = Path(kept_as).stem
+    assets_dir = wiki_dir / "figures" / "_assets"
+    if not assets_dir.is_dir():
+        return []
+    if source_pages:
+        return [
+            str((assets_dir / f"{pdf_stem}-p{p}.png").resolve())
+            for p in source_pages
+            if (assets_dir / f"{pdf_stem}-p{p}.png").exists()
+        ]
+    matches = []
+    for png in assets_dir.glob(f"{pdf_stem}-p*.png"):
+        m = re.match(rf"^{re.escape(pdf_stem)}-p(\d+)\.png$", png.name)
+        if not m:
+            continue
+        matches.append((int(m.group(1)), str(png.resolve())))
+    matches.sort()
+    return [path for _, path in matches]
+
+
+def cmd_pending_numeric_review(wiki_dir: Path,
+                                 limit: Optional[int] = None) -> None:
+    """List `[tab]` pages awaiting the numeric-review wave.
+
+    Filter rules: `extraction_method: multimodal-sonnet` set on the
+    page (or on the source extraction it points at, for back-compat
+    with pages minted before the field landed in `[tab]` fm), and no
+    `numeric_review_done` timestamp yet. PDFs/XLSX/CSV/PPTX extracted
+    deterministically (pdfplumber, openpyxl, csv, pptx) skip the
+    queue: their fidelity is mechanical and doesn't need an LLM
+    review pass.
+
+    Returns one queue entry per page with its absolute path, source
+    PNG paths (resolved via `extracted_from` and the page's
+    `source_pages` fm hint), and the source-citation context the
+    reviewer prompt needs.
+    """
+    tables_dir = wiki_dir / "tables"
+    if not tables_dir.is_dir():
+        print(json.dumps({"queue": [], "count": 0,
+                          "note": "no wiki/tables/ directory"}))
+        return
+    queue = []
+    for page in sorted(tables_dir.glob("tab-*.md")):
+        try:
+            fm, body = read_frontmatter(page.read_text())
+        except Exception:
+            continue
+        method = fm.get("extraction_method", "")
+        if not method:
+            # Fall back to the source extraction's fm.
+            sources = fm.get("sources", "")
+            if isinstance(sources, list) and sources:
+                src_extraction = sources[0]
+            else:
+                m = re.search(r"[\w./-]+\.extracted\.md", str(sources))
+                src_extraction = m.group(0) if m else ""
+            if src_extraction:
+                src_fm, _ = read_frontmatter(
+                    (wiki_dir.parent / "vault" / src_extraction).read_text()
+                )
+                method = src_fm.get("extraction_method", "")
+        if method != "multimodal-sonnet":
+            continue
+        if fm.get("numeric_review_done"):
+            continue
+        sources = fm.get("sources", "")
+        if isinstance(sources, list) and sources:
+            src_extraction = sources[0]
+        else:
+            m = re.search(r"[\w./-]+\.extracted\.md", str(sources))
+            src_extraction = m.group(0) if m else ""
+        source_pages_raw = fm.get("source_pages", "")
+        source_pages = []
+        if isinstance(source_pages_raw, list):
+            source_pages = [int(p) for p in source_pages_raw
+                             if str(p).strip().isdigit()]
+        elif isinstance(source_pages_raw, str):
+            source_pages = [int(p.strip()) for p in
+                             re.findall(r"\d+", source_pages_raw)]
+        png_paths = _png_paths_for_extraction(wiki_dir, src_extraction,
+                                                source_pages or None)
+        queue.append({
+            "tab_page": str(page.resolve()),
+            "tab_stem": page.stem,
+            "source_stub": fm.get("extracted_from", ""),
+            "source_extraction": src_extraction,
+            "source_pages": source_pages,
+            "png_paths": png_paths,
+            "row_count": fm.get("row_count", 0),
+            "is_snapshot": str(fm.get("is_snapshot", "")).lower() == "true",
+        })
+        if limit is not None and len(queue) >= limit:
+            break
+    print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
+
+
+def _backup_extracted_rows(wiki_dir: Path, table_stem: str,
+                              backup_id: str) -> int:
+    """Copy current `_extracted_tables` rows for `table_stem` to
+    `_extracted_table_backups`. Returns the row count backed up.
+
+    Schema mirrors the source table plus `backup_id` and `backup_at`.
+    Same long-format storage; restore is a row-by-row INSERT back into
+    `_extracted_tables` after a DELETE.
+    """
+    import sqlite3
+    import datetime as _dt
+    db_path = wiki_dir.parent / ".curator" / "tables.db"
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS _extracted_table_backups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                backup_id TEXT NOT NULL,
+                backup_at TEXT NOT NULL,
+                table_stem TEXT NOT NULL,
+                source_stub TEXT,
+                source_extraction TEXT NOT NULL,
+                headers_json TEXT NOT NULL,
+                row_idx INTEGER NOT NULL,
+                cells_json TEXT NOT NULL,
+                extraction_sha TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_etb_backup "
+            "ON _extracted_table_backups(backup_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_etb_stem "
+            "ON _extracted_table_backups(table_stem)"
+        )
+        ts = _dt.datetime.now(_dt.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        cur = conn.execute(
+            "SELECT table_stem, source_stub, source_extraction, "
+            "headers_json, row_idx, cells_json, extraction_sha "
+            "FROM _extracted_tables WHERE table_stem = ? "
+            "ORDER BY row_idx",
+            (table_stem,),
+        )
+        rows = cur.fetchall()
+        for r in rows:
+            conn.execute(
+                "INSERT INTO _extracted_table_backups "
+                "(backup_id, backup_at, table_stem, source_stub, "
+                " source_extraction, headers_json, row_idx, "
+                " cells_json, extraction_sha) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (backup_id, ts, *r),
+            )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def _rewrite_extracted_rows(wiki_dir: Path, table_stem: str,
+                              source_stub: str, source_extraction: str,
+                              headers: list, rows: list,
+                              extraction_sha: str) -> None:
+    """Replace rows in `_extracted_tables` for one table_stem.
+
+    Thin wrapper over `_extracted_table_db` (DELETE+INSERT under the
+    UNIQUE(table_stem, row_idx) constraint).
+    """
+    _extracted_table_db(wiki_dir, table_stem, source_stub,
+                          source_extraction, headers, rows, extraction_sha)
+
+
+def _gfm_render_for_review(headers: list, rows: list) -> str:
+    """GFM table rendering helper used by apply-numeric-review's
+    body-rewrite path. Matches the format the deterministic extractor
+    produces so downstream parsing stays uniform.
+    """
+    return _gfm_render(headers, rows)
+
+
+def _append_log(wiki_dir: Path, section: str, entry: str) -> None:
+    """Append a block under `## <section>` in `.curator/log.md`.
+
+    Creates the section if absent. Idempotency: callers pass entries
+    keyed on a unique handle (e.g. backup_id) so re-runs don't double-
+    log; the helper itself doesn't deduplicate.
+    """
+    log_path = wiki_dir.parent / ".curator" / "log.md"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    text = log_path.read_text() if log_path.exists() else ""
+    header = f"## {section}"
+    if header not in text:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += f"\n{header}\n\n"
+    if entry not in text:
+        # Insert under the section header (append to the end of file
+        # for simplicity — sections don't strictly need to stay
+        # contiguous; readers grep for the entry text).
+        if not text.endswith("\n"):
+            text += "\n"
+        text += entry
+        if not text.endswith("\n"):
+            text += "\n"
+    log_path.write_text(text)
+
+
+def cmd_apply_numeric_review(tab_page_path: Path,
+                                verdict_json: str,
+                                timestamp: Optional[str] = None) -> int:
+    """Persist a reviewer's verdict against a `[tab]` page.
+
+    Idempotent. The verdict JSON shape matches the
+    `numeric_transcription_review` template's return value:
+        {"page": "<tab-page-path>",
+         "verdict": "ok" | "suspect" | "wrong",
+         "flagged_cells": [{row_idx, header, claimed, suggested,
+                            confidence, reason}, ...],
+         "notes": "..."}
+
+    Workflow per verdict:
+    - `ok`: write `numeric_review_done` + `verdict: ok` to fm. No
+      body or row changes.
+    - `suspect`: above + write `flagged_cells` and
+      `review_required: true`; append a `## Numeric review` block to
+      the body summarising the flagged cells. Page is excluded from
+      `extracted-query` results unless `--include-flagged`.
+    - `wrong`: backup current rows to `_extracted_table_backups` under
+      a new `backup_id`, rewrite the body's GFM table with `suggested`
+      values, repopulate `_extracted_tables`, append the diff summary
+      to the body, set `verdict: wrong`, `review_required: true`,
+      `backup_id`. Log the rewind invocation to `.curator/log.md`
+      under `## numeric-review-rewinds`. Excluded from
+      `extracted-query` until a curator confirms.
+    """
+    import datetime as _dt
+    import secrets
+
+    page = tab_page_path.resolve()
+    if not page.exists() or not page.is_file():
+        print(json.dumps({"ok": False,
+                          "error": f"tab page not found: {page}"}))
+        return 1
+    try:
+        verdict_data = json.loads(verdict_json)
+    except json.JSONDecodeError as e:
+        print(json.dumps({"ok": False,
+                          "error": f"invalid verdict JSON: {e}"}))
+        return 1
+    verdict = verdict_data.get("verdict", "")
+    if verdict not in ("ok", "suspect", "wrong"):
+        print(json.dumps({"ok": False,
+                          "error": f"verdict must be ok|suspect|wrong, got {verdict!r}"}))
+        return 1
+    flagged_cells = verdict_data.get("flagged_cells", []) or []
+    notes = verdict_data.get("notes", "") or ""
+
+    # Locate wiki/ root from the page path: tab-X.md lives in
+    # wiki/tables/, so wiki = page.parent.parent.
+    wiki_dir = page.parent.parent
+    text = page.read_text()
+    fm, body = read_frontmatter(text)
+    table_stem = page.stem
+    source_stub = fm.get("extracted_from", "")
+    src_sources = fm.get("sources", "")
+    if isinstance(src_sources, list) and src_sources:
+        src_extraction = src_sources[0]
+    else:
+        m = re.search(r"[\w./-]+\.extracted\.md", str(src_sources))
+        src_extraction = m.group(0) if m else ""
+    extraction_sha = fm.get("extraction_sha", "")
+
+    ts = timestamp or _dt.datetime.now(_dt.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    new_fm = dict(fm)
+    new_fm["numeric_review_done"] = ts
+    new_fm["verdict"] = verdict
+    new_body = body
+    backup_id = ""
+
+    if verdict == "ok":
+        # Clear any prior review_required / flagged_cells_count from
+        # a previous suspect verdict.
+        new_fm.pop("review_required", None)
+        new_fm.pop("flagged_cells_count", None)
+        new_fm.pop("backup_id", None)
+        # Drop any prior `## Numeric review` block from the body.
+        new_body = _strip_review_block(new_body)
+    elif verdict == "suspect":
+        new_fm["review_required"] = "true"
+        new_fm["flagged_cells_count"] = len(flagged_cells)
+        new_fm.pop("backup_id", None)
+        new_body = _strip_review_block(new_body)
+        new_body = _append_review_block(new_body, "suspect", ts,
+                                          flagged_cells, notes)
+    else:  # wrong
+        # Apply suggested values to the current GFM body, then back up
+        # and rewrite the row store.
+        # Read the current rows from the rdb (authoritative when
+        # is_snapshot is true and the body only carries 10 rows).
+        current_rows, headers = _read_extracted_rows(
+            wiki_dir, table_stem
+        )
+        if not headers or not current_rows:
+            print(json.dumps({
+                "ok": False,
+                "error": (f"cannot apply verdict=wrong: no rows in "
+                           f"_extracted_tables for {table_stem!r}; "
+                           f"refusing to overwrite without a backup base"),
+            }))
+            return 1
+        backup_id = "bk-" + secrets.token_hex(4)
+        n_backed_up = _backup_extracted_rows(wiki_dir, table_stem,
+                                                backup_id)
+        new_rows = _apply_corrections(headers, current_rows,
+                                        flagged_cells)
+        _rewrite_extracted_rows(wiki_dir, table_stem, source_stub,
+                                  src_extraction, headers, new_rows,
+                                  extraction_sha)
+        new_body = _strip_review_block(new_body)
+        new_body = _rewrite_body_gfm(new_body, headers, new_rows,
+                                       fm.get("is_snapshot"))
+        new_body = _append_review_block(new_body, "wrong", ts,
+                                          flagged_cells, notes,
+                                          backup_id=backup_id)
+        new_fm["review_required"] = "true"
+        new_fm["flagged_cells_count"] = len(flagged_cells)
+        new_fm["backup_id"] = backup_id
+        # Log the rewind handle.
+        kept_as = ""
+        if src_extraction:
+            try:
+                src_fm, _ = read_frontmatter(
+                    (wiki_dir.parent / "vault" / src_extraction).read_text()
+                )
+                kept_as = src_fm.get("kept_as", "")
+            except Exception:
+                kept_as = ""
+        page_list = fm.get("source_pages", "")
+        if isinstance(page_list, list):
+            pages_str = ", ".join(str(p) for p in page_list)
+        else:
+            pages_str = str(page_list)
+        rewind_cmd = (
+            f"  uv run python3 <skill>/scripts/tables.py "
+            f"restore-backup {table_stem} {backup_id}"
+        )
+        n_cells = len(flagged_cells)
+        log_entry = (
+            f"\n- {ts} {table_stem} verdict=wrong, {n_cells} cells "
+            f"overwritten ({n_backed_up} rows backed up). "
+            f"Backup: {backup_id}. Rewind:\n{rewind_cmd}\n"
+            f"  Source: vault/{kept_as}, pages: [{pages_str}]\n"
+            f"  Spot-check the source pages directly to validate "
+            f"the rewrite.\n"
+        )
+        _append_log(wiki_dir, "numeric-review-rewinds", log_entry)
+
+    # Reassemble the page text.
+    page.write_text(_assemble_page(new_fm, new_body))
+    print(json.dumps({
+        "ok": True,
+        "tab_page": str(page),
+        "verdict": verdict,
+        "numeric_review_done": ts,
+        "flagged_cells": len(flagged_cells),
+        "backup_id": backup_id,
+    }))
+    return 0
+
+
+# ---- helpers used by apply-numeric-review ----
+
+_REVIEW_BLOCK_RE = re.compile(
+    r"\n*## Numeric review.*?(?=\n## |\Z)", re.DOTALL
+)
+
+
+def _strip_review_block(body: str) -> str:
+    """Remove any existing `## Numeric review` section from body."""
+    return _REVIEW_BLOCK_RE.sub("", body).rstrip() + "\n"
+
+
+def _append_review_block(body: str, verdict: str, ts: str,
+                           flagged_cells: list, notes: str,
+                           backup_id: str = "") -> str:
+    """Append a `## Numeric review` block summarising the verdict."""
+    if not body.endswith("\n"):
+        body += "\n"
+    lines = ["", f"## Numeric review ({verdict})", "",
+             f"Reviewed {ts}. {len(flagged_cells)} cells flagged."]
+    if verdict == "wrong" and backup_id:
+        lines.append(
+            f"Auto-overwrite applied; previous rows backed up under "
+            f"`{backup_id}` in `_extracted_table_backups`. "
+            f"Rewind: `tables.py restore-backup <stem> {backup_id}`."
+        )
+    if notes:
+        lines.append("")
+        lines.append(f"Notes: {notes}")
+    if flagged_cells:
+        lines.append("")
+        for fc in flagged_cells:
+            row_idx = fc.get("row_idx", "?")
+            header = fc.get("header", "")
+            claimed = fc.get("claimed", "")
+            suggested = fc.get("suggested", "")
+            confidence = fc.get("confidence", "")
+            reason = fc.get("reason", "")
+            lines.append(
+                f"- Row {row_idx} / {header!r} — claimed `{claimed}`, "
+                f"suggested `{suggested}` ({confidence}) — {reason}"
+            )
+    lines.append("")
+    return body + "\n".join(lines)
+
+
+def _read_extracted_rows(wiki_dir: Path,
+                           table_stem: str) -> tuple:
+    """Read current rows + headers from `_extracted_tables`."""
+    import sqlite3
+    db_path = wiki_dir.parent / ".curator" / "tables.db"
+    if not db_path.exists():
+        return [], []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute(
+            "SELECT row_idx, headers_json, cells_json "
+            "FROM _extracted_tables WHERE table_stem = ? "
+            "ORDER BY row_idx",
+            (table_stem,),
+        )
+        raw = cur.fetchall()
+    finally:
+        conn.close()
+    if not raw:
+        return [], []
+    headers = json.loads(raw[0][1])
+    rows = [json.loads(c) for _ri, _h, c in raw]
+    return rows, headers
+
+
+def _apply_corrections(headers: list, rows: list,
+                         flagged_cells: list) -> list:
+    """Apply each flagged_cell's `suggested` to the cell at
+    (row_idx, header). row_idx is 1-indexed (rows[i] corresponds to
+    row_idx == i+1).
+    """
+    new_rows = [list(r) for r in rows]
+    header_idx = {h: i for i, h in enumerate(headers)}
+    for fc in flagged_cells:
+        try:
+            ri = int(fc.get("row_idx", 0)) - 1
+        except (TypeError, ValueError):
+            continue
+        if ri < 0 or ri >= len(new_rows):
+            continue
+        ci = header_idx.get(fc.get("header", ""))
+        if ci is None:
+            continue
+        new_rows[ri][ci] = str(fc.get("suggested", ""))
+    return new_rows
+
+
+def _rewrite_body_gfm(body: str, headers: list, rows: list,
+                        is_snapshot) -> str:
+    """Replace the first GFM table block in body with a fresh render
+    of (headers, rows). Used by apply-numeric-review's `wrong` path.
+    For snapshot pages, only the first 10 rows are rendered (matches
+    the original promote behaviour).
+    """
+    is_snap = (str(is_snapshot).lower() == "true"
+                if is_snapshot is not None else False)
+    show_rows = rows[:10] if is_snap else rows
+    new_block = _gfm_render(headers, show_rows)
+    m = _GFM_TABLE_BLOCK_RE.search(body)
+    if not m:
+        # No existing block: append at end.
+        if not body.endswith("\n"):
+            body += "\n"
+        return body + "\n" + new_block + "\n"
+    return body[: m.start()] + "\n" + new_block + "\n" + body[m.end():]
+
+
+def _assemble_page(fm: dict, body: str) -> str:
+    """Re-emit a wiki page text from (fm dict, body string).
+
+    The fm dict here uses the simple shape `read_frontmatter`
+    produces (string-typed values). We render strings as-is, lists
+    inline (`[a, b, c]`), and nested dicts via JSON. The fm fields
+    handled by this module are all simple scalars or lists; we don't
+    reach for PyYAML on the write path to avoid a hard dep.
+    """
+    lines = ["---"]
+    for k, v in fm.items():
+        if isinstance(v, list):
+            if all(isinstance(x, (str, int, float, bool)) for x in v):
+                inline = ", ".join(
+                    json.dumps(x) if isinstance(x, str) else str(x)
+                    for x in v
+                )
+                lines.append(f"{k}: [{inline}]")
+            else:
+                lines.append(f"{k}: {json.dumps(v, ensure_ascii=False)}")
+        elif isinstance(v, dict):
+            lines.append(f"{k}: {json.dumps(v, ensure_ascii=False)}")
+        else:
+            lines.append(f"{k}: {v}")
+    lines.append("---")
+    if not body.startswith("\n"):
+        lines.append("")
+    return "\n".join(lines) + body
+
+
+def cmd_mark_multimodal_extracted(extraction_path: Path,
+                                    timestamp: Optional[str] = None) -> int:
+    """Mark a vault extraction as having completed the multimodal wave.
+
+    Mirrors `figures.py mark-extracted` for the table-extraction
+    pipeline. Writes (or updates) the following frontmatter fields:
+    `multimodal_extracted: <ISO>`, `multimodal_recommended: false`,
+    `extraction_method: multimodal-sonnet`, `extraction_quality: good`.
+    Idempotent — replaces existing values for these keys, doesn't
+    duplicate. Preserves the FETCHED CONTENT block verbatim.
+    """
+    import datetime
+    p = extraction_path.resolve()
+    if not p.exists() or not p.is_file():
+        print(json.dumps({"ok": False, "error": f"file not found: {p}"}))
+        return 1
+    text = p.read_text()
+    if not text.startswith("---"):
+        print(json.dumps({"ok": False,
+                          "error": f"no frontmatter in {p}"}))
+        return 1
+    end = text.find("\n---", 3)
+    if end == -1:
+        print(json.dumps({"ok": False,
+                          "error": f"unterminated frontmatter in {p}"}))
+        return 1
+    fm_block = text[3:end].strip()
+    body = text[end + 4:]
+    ts = timestamp or datetime.datetime.now(
+        datetime.timezone.utc
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    updates = {
+        "multimodal_extracted": ts,
+        "multimodal_recommended": "false",
+        "extraction_method": "multimodal-sonnet",
+        "extraction_quality": "good",
+    }
+    lines = fm_block.split("\n") if fm_block else []
+    seen = set()
+    for i, ln in enumerate(lines):
+        stripped = ln.lstrip()
+        for key, val in updates.items():
+            if stripped.startswith(f"{key}:"):
+                indent = ln[: len(ln) - len(stripped)]
+                lines[i] = f"{indent}{key}: {val}"
+                seen.add(key)
+                break
+    for key, val in updates.items():
+        if key not in seen:
+            lines.append(f"{key}: {val}")
+    new_fm = "\n".join(lines)
+    new_text = f"---\n{new_fm}\n---{body}"
+    p.write_text(new_text)
+    print(json.dumps({"ok": True, "path": str(p),
+                       "multimodal_extracted": ts,
+                       "fields_set": list(updates.keys())}))
+    return 0
+
+
 # ---- extracted-table promotion ----
 
 # Match GFM pipe-table blocks: header line + separator + zero-or-more
@@ -2370,6 +3022,78 @@ def _split_gfm_row(line: str) -> list:
     if s.endswith("|"):
         s = s[:-1]
     return [c.strip().replace("\\|", "|") for c in s.split("|")]
+
+
+# Identifier-normalisation heuristic: header patterns that flag a
+# column as carrying chemical names or gene symbols. Applied at
+# promote-extracted-tables time; results write to the [tab] page's
+# `normalise_columns` fm. Curators may edit the page to override.
+# Identifier-cache lookups happen lazily at synthesis time, not here.
+_CHEMICAL_HEADER_RE = re.compile(
+    r"^(compound|chemical|reagent|drug|molecule|substance|"
+    r"buffer|solvent|analyte)s?$",
+    re.IGNORECASE,
+)
+_GENE_HEADER_RE = re.compile(
+    r"^(gene|symbol|locus|hgnc|gene[_\s-]?symbol)s?$",
+    re.IGNORECASE,
+)
+
+
+def _detect_normalise_columns(headers: list) -> list:
+    """Return a list of `"<column>:<type>"` strings the heuristic
+    flags for identifier normalisation. Empty list → no flags.
+    """
+    flags = []
+    for h in headers:
+        h_str = str(h).strip()
+        if not h_str:
+            continue
+        # Strip composite prefixes like `2024 / Q1` — only the leaf
+        # name matters for the heuristic.
+        leaf = h_str.split("/")[-1].strip()
+        if _CHEMICAL_HEADER_RE.match(leaf):
+            flags.append(f"{h_str}:chemicals")
+        elif _GENE_HEADER_RE.match(leaf):
+            flags.append(f"{h_str}:genes")
+    return flags
+
+
+# Match `Table p.3`, `Table p.3-5`, or `Table p.3, 4` page references in
+# the heading text above an extracted table. pdfplumber writes `Table p.N`
+# directly; multimodal-sonnet's orchestrator persists tables under
+# `### Table p.N — <description>` per the wave protocol. Returns the
+# distinct integers in document order.
+_PAGE_REF_RE = re.compile(r"\bp\.(\d+(?:\s*[-,]\s*\d+)*)", re.IGNORECASE)
+
+
+def _parse_source_pages(description: Optional[str]) -> list:
+    """Parse 1-indexed source page numbers from a `Table p.N` heading.
+
+    Handles single (`p.3`), range (`p.3-5`), and list (`p.3, 4`) forms.
+    Returns a sorted list of distinct integers. Empty list when the
+    description has no page reference.
+    """
+    if not description:
+        return []
+    pages = set()
+    for m in _PAGE_REF_RE.finditer(description):
+        for chunk in re.split(r"\s*,\s*", m.group(1)):
+            if "-" in chunk:
+                lo, hi = chunk.split("-", 1)
+                try:
+                    a, b = int(lo.strip()), int(hi.strip())
+                except ValueError:
+                    continue
+                if a > b:
+                    a, b = b, a
+                pages.update(range(a, b + 1))
+            else:
+                try:
+                    pages.add(int(chunk.strip()))
+                except ValueError:
+                    continue
+    return sorted(pages)
 
 
 def _parse_gfm_tables_from_body(body: str) -> list:
@@ -2651,6 +3375,15 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                 f'— {stub_stem}"'
             )
 
+            # Spot-check anchors. Source page numbers come from the
+            # heading above each table block (`Table p.N`); the
+            # original PDF/XLSX/etc. lives at vault/<kept_as>. Both
+            # are written into the page so a curator can flip to the
+            # exact spot in the source for verification.
+            source_pages = _parse_source_pages(tbl.get("description"))
+            kept_as = fm.get("kept_as", "")
+            extraction_method = fm.get("extraction_method", "")
+
             page_lines = [
                 "---",
                 f"title: {title}",
@@ -2664,14 +3397,63 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                 f"is_snapshot: {str(is_snapshot).lower()}",
                 f"db_table: {_sanitize_db_table(stem)}",
                 f"extraction_sha: {extraction_sha}",
-                "---",
-                "",
             ]
+            if extraction_method:
+                page_lines.append(f"extraction_method: {extraction_method}")
+            if source_pages:
+                page_lines.append(
+                    "source_pages: ["
+                    + ", ".join(str(p) for p in source_pages)
+                    + "]"
+                )
+            # Identifier-normalisation flag (Path C). Heuristic-set
+            # ONLY when missing — never clobber a curator-edited
+            # value. The fm key carries the page-level decision; the
+            # `identifier_cache.py` script runs lazily at synthesis
+            # time when a worker cites a row.
+            existing_normalise = []
+            if page_path.exists():
+                existing_fm_full, _ = read_frontmatter(
+                    page_path.read_text()
+                )
+                raw_nc = existing_fm_full.get("normalise_columns", "")
+                if isinstance(raw_nc, list):
+                    existing_normalise = raw_nc
+                elif isinstance(raw_nc, str) and raw_nc.strip():
+                    existing_normalise = [
+                        x.strip() for x in raw_nc.strip("[]").split(",")
+                        if x.strip()
+                    ]
+            if existing_normalise:
+                normalise_flags = existing_normalise
+            else:
+                normalise_flags = _detect_normalise_columns(headers)
+            if normalise_flags:
+                page_lines.append(
+                    "normalise_columns: ["
+                    + ", ".join(normalise_flags)
+                    + "]"
+                )
+            page_lines.extend(["---", ""])
+
+            # Body header: source identifier + spot-check anchors. Page
+            # range and original-source path help curators verify the
+            # transcription at a glance — critical after multimodal
+            # extraction where Sonnet may have transcribed a number
+            # incorrectly.
+            anchor_parts = [
+                f"Extracted from [[{stub_stem}]] (vault:{extraction.name})"
+            ]
+            if source_pages:
+                anchor_parts.append(
+                    f"source pages [{', '.join(str(p) for p in source_pages)}]"
+                )
+            if kept_as:
+                anchor_parts.append(f"original: vault/{kept_as}")
             page_lines.append(
-                f"Extracted from [[{stub_stem}]] "
-                f"(vault:{extraction.name}). Numeric values are literal "
-                f"transcriptions — do not derive or unit-convert when "
-                f"citing this page."
+                ", ".join(anchor_parts)
+                + ". Numeric values are literal transcriptions — do not "
+                + "derive or unit-convert when citing this page."
             )
             page_lines.append("")
 
@@ -2941,7 +3723,22 @@ def main():
         "orphan-sources",
         "promote-extracted-tables",
         "pending-multimodal", "pending-figures",
+        "multimodal-table-candidates", "mark-multimodal-extracted",
+        "pending-numeric-review", "apply-numeric-review",
     ])
+    ap.add_argument("--extraction", type=Path, default=None,
+                    help="mark-multimodal-extracted: path to a vault "
+                         "*.extracted.md file to flag as completed")
+    ap.add_argument("--timestamp", default=None,
+                    help="mark-multimodal-extracted / apply-numeric-review: "
+                         "explicit ISO timestamp (default: now in UTC)")
+    ap.add_argument("--tab-page", type=Path, default=None,
+                    help="apply-numeric-review: path to the wiki/tables/"
+                         "tab-*.md page being reviewed")
+    ap.add_argument("--verdict-json", default=None,
+                    help="apply-numeric-review: JSON string from the "
+                         "numeric_transcription_review template "
+                         "({page, verdict, flagged_cells, notes})")
     ap.add_argument("--target", choices=["obsidian", "vscode"],
                     default="obsidian",
                     help="convert-image-embeds: target syntax form")
@@ -3030,6 +3827,29 @@ def main():
         cmd_orphan_sources(wiki_dir, limit=args.limit)
     elif args.command == "promote-extracted-tables":
         cmd_promote_extracted_tables(wiki_dir, row_threshold=args.row_threshold)
+    elif args.command == "multimodal-table-candidates":
+        cmd_multimodal_table_candidates(wiki_dir, limit=args.limit)
+    elif args.command == "mark-multimodal-extracted":
+        if args.extraction is None:
+            print(json.dumps({"ok": False,
+                              "error": "mark-multimodal-extracted requires "
+                                       "--extraction <path>"}))
+            sys.exit(1)
+        sys.exit(cmd_mark_multimodal_extracted(args.extraction,
+                                                 timestamp=args.timestamp))
+    elif args.command == "pending-numeric-review":
+        cmd_pending_numeric_review(wiki_dir, limit=args.limit
+                                    if args.limit != 20 else None)
+    elif args.command == "apply-numeric-review":
+        if args.tab_page is None or args.verdict_json is None:
+            print(json.dumps({"ok": False,
+                              "error": "apply-numeric-review requires "
+                                       "--tab-page <path> and "
+                                       "--verdict-json <json>"}))
+            sys.exit(1)
+        sys.exit(cmd_apply_numeric_review(args.tab_page,
+                                            args.verdict_json,
+                                            timestamp=args.timestamp))
 
 
 if __name__ == "__main__":
