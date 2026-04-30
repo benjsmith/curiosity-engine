@@ -5,7 +5,7 @@
 
 Autonomously and collaboratively organizes and improves personal knowledge bases with you.
 
-Built for use with frontier coding agents. Primary target is [Claude Code](https://claude.com/claude-code); OpenClaude, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code all work with minor adjustments. Worker and reviewer models are plain strings in `.curator/config.json` — swap Anthropic defaults for Gemini, OpenAI, or a fully-local Ollama endpoint. The wiki is plain markdown — browse it in the built-in graph viewer (`viewer.sh open`), Obsidian, or VS Code + Foam, and edit by hand. Everything's git-tracked.
+Built for use with frontier coding agents. Primary target is [Claude Code](https://claude.com/claude-code); OpenCode, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code all work with minor adjustments. Worker and reviewer models are plain strings in `.curator/config.json` — swap Anthropic defaults for Gemini, OpenAI, or a fully-local Ollama endpoint. The wiki is plain markdown — browse it in the built-in graph viewer (`viewer.sh open`), Obsidian, or VS Code + Foam, and edit by hand. Everything's git-tracked.
 
 ## How it works
 
