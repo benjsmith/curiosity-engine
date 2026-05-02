@@ -35,7 +35,7 @@ CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
                       "fact", "summary-table", "extracted-table", "figure",
-                      "note", "todo-list"}
+                      "note", "todo-list", "project"}
 
 # Allowlist of frontmatter keys the curator actually reads. Unknown keys are
 # dropped by read_frontmatter so an adversarial source cannot smuggle

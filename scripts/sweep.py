@@ -142,6 +142,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -3706,6 +3707,179 @@ def cmd_scan_references(wiki_dir: Path):
     }, indent=2))
 
 
+def _set_projects_field(text: str, projects_sorted: list) -> str:
+    """Replace or insert a single-line `projects: [a, b, c]` entry in
+    frontmatter. Removes any prior single-line OR multi-line YAML form
+    of the same key.
+
+    Returns the original text unchanged when there is no frontmatter.
+    """
+    if not text.startswith("---\n"):
+        return text
+    fm_end = text.find("\n---\n", 4)
+    if fm_end == -1:
+        return text
+    fm_block = text[:fm_end]
+    body = text[fm_end:]
+
+    new_line = f"projects: [{', '.join(projects_sorted)}]" if projects_sorted else "projects: []"
+
+    lines = fm_block.split("\n")
+    out: list = []
+    i = 0
+    replaced = False
+    while i < len(lines):
+        line = lines[i]
+        if not replaced and re.match(r"^projects\s*:", line):
+            out.append(new_line)
+            replaced = True
+            i += 1
+            # If the original was a multi-line YAML list, skip the
+            # indented continuation lines so we don't leave them stranded.
+            while i < len(lines) and lines[i].startswith((" ", "\t")):
+                i += 1
+            continue
+        out.append(line)
+        i += 1
+
+    if not replaced:
+        # Insert before any trailing empty line so the closing `---` stays
+        # last. Frontmatter blocks usually end on a non-empty line.
+        insert_at = len(out)
+        while insert_at > 0 and out[insert_at - 1].strip() == "":
+            insert_at -= 1
+        out.insert(insert_at, new_line)
+
+    return "\n".join(out) + body
+
+
+def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
+    """Derive each page's `projects:` set from the citation graph.
+
+    Citation-graph signals only in this wave (semantic-similarity step
+    deferred per docs/multi-project.md). Algorithm:
+
+      1. Read every page's current `projects:` set from frontmatter.
+      2. For project home pages (`type: project`, living under
+         `wiki/projects/`), seed `projects: [<own-stem>]` and freeze —
+         home pages don't accumulate inherited tags.
+      3. Build the inbound wikilink graph (citing_stem -> {target_stems}).
+      4. Iterate to fixed point: each non-home page's project set
+         becomes the union of its current set + the project sets of
+         all pages that wikilink TO it. Monotonic-additive — never
+         removes a tag (user overrides survive; unwanted tags can be
+         hand-edited and a future SHRINK pass added later).
+      5. Write back any pages whose projects changed; log the change
+         to `.curator/log.md` under a `## classify-projects <ts>` block.
+
+    `--dry-run`: report what would change without writing.
+
+    Note: only existing wiki/<bucket>/<stem>.md pages count as graph
+    nodes. Vault sources without source stubs are not classified here;
+    that comes via the source-stub pages once they're created.
+    """
+    pages = wiki_pages(wiki_dir)
+    page_by_stem: dict = {}
+    page_projects: dict = {}
+    home_stems: set = set()
+
+    for p in pages:
+        stem = p.stem.lower()
+        page_by_stem[stem] = p
+        text = p.read_text()
+        fm, _ = read_frontmatter(text)
+        raw = fm.get("projects") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        page_projects[stem] = set(raw)
+        # Home pages: under wiki/projects/, type: project.
+        if (p.parent.name == "projects"
+                and p.parent.parent == wiki_dir
+                and fm.get("type") == "project"):
+            home_stems.add(stem)
+            page_projects[stem].add(stem)
+
+    # Build inbound wikilink map.
+    all_refs, _, _ = scan_wikilinks(pages)
+    inbound: dict = defaultdict(set)
+    for citing_path, target in all_refs:
+        citing_stem = Path(citing_path).stem.lower()
+        if target == citing_stem:
+            continue
+        if target in page_projects:
+            inbound[target].add(citing_stem)
+
+    # Iterate to fixed point. Five passes is enough for any realistic
+    # citation chain; bail early when nothing changes.
+    for _ in range(5):
+        any_change = False
+        for stem in page_projects:
+            if stem in home_stems:
+                continue  # home pages don't accumulate
+            citing_stems = inbound.get(stem, ())
+            if not citing_stems:
+                continue
+            inherited: set = set()
+            for cs in citing_stems:
+                inherited |= page_projects.get(cs, set())
+            new_set = page_projects[stem] | inherited
+            if new_set != page_projects[stem]:
+                page_projects[stem] = new_set
+                any_change = True
+        if not any_change:
+            break
+
+    # Write back changes.
+    log_entries: list = []
+    written = 0
+    for stem, new_projects in page_projects.items():
+        path = page_by_stem[stem]
+        text = path.read_text()
+        fm, _ = read_frontmatter(text)
+        old = set(fm.get("projects") or [])
+        if isinstance(fm.get("projects"), str):
+            old = {fm["projects"]}
+        if old == new_projects or not new_projects:
+            continue
+        new_text = _set_projects_field(text, sorted(new_projects))
+        if new_text == text:
+            continue
+        if not dry_run:
+            path.write_text(new_text)
+        rel = path.relative_to(wiki_dir) if path.is_relative_to(wiki_dir) else path
+        log_entries.append({
+            "page": str(rel),
+            "before": sorted(old),
+            "after": sorted(new_projects),
+            "added": sorted(new_projects - old),
+        })
+        written += 1
+
+    # Append to .curator/log.md alongside the wiki dir (workspace root).
+    if log_entries and not dry_run:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+        log_path = wiki_dir.parent / ".curator" / "log.md"
+        if log_path.parent.exists():
+            with log_path.open("a") as fh:
+                fh.write(f"\n## classify-projects {ts}\n\n")
+                for entry in log_entries:
+                    added = ", ".join(entry["added"]) or "(no add)"
+                    fh.write(
+                        f"- `{entry['page']}` "
+                        f"+ {{{added}}} "
+                        f"(was {entry['before']}, now {entry['after']})\n"
+                    )
+
+    print(json.dumps({
+        "command": "classify-projects",
+        "pages_scanned": len(pages),
+        "homes": len(home_stems),
+        "updated": written,
+        "dry_run": dry_run,
+        "sample": log_entries[:5],
+    }, indent=2))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=[
@@ -3725,6 +3899,7 @@ def main():
         "pending-multimodal", "pending-figures",
         "multimodal-table-candidates", "mark-multimodal-extracted",
         "pending-numeric-review", "apply-numeric-review",
+        "classify-projects",
     ])
     ap.add_argument("--extraction", type=Path, default=None,
                     help="mark-multimodal-extracted: path to a vault "
@@ -3754,6 +3929,9 @@ def main():
                     help="fix-source-stubs: only create stubs for vault "
                          "files already cited by non-source wiki pages "
                          "(tiered-vault mode)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="classify-projects: report what would change "
+                         "without writing")
     ap.add_argument("--row-threshold", type=int, default=100,
                     help="promote-extracted-tables: row count above which "
                          "the [tab] page becomes a 10-row snapshot + "
@@ -3850,6 +4028,8 @@ def main():
         sys.exit(cmd_apply_numeric_review(args.tab_page,
                                             args.verdict_json,
                                             timestamp=args.timestamp))
+    elif args.command == "classify-projects":
+        cmd_classify_projects(wiki_dir, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
