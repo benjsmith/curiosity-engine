@@ -239,6 +239,37 @@ A C compiler must be on PATH at install time — `pysqlite3` (pulled in alongsid
 - **git** — the wiki is a git repo.
 - **A frontier coding-agent CLI with file-tool + subagent-dispatch support** — this is a skill, not a standalone CLI. Claude Code is the primary target; OpenClaude, Codex CLI, Gemini CLI, and GitHub Copilot Chat in VS Code work with the adjustments noted under Quick start.
 
+## Roadmap — multi-project model
+
+Status: design locked, rollout in progress. Full design in [`docs/multi-project.md`](docs/multi-project.md). Verbs marked † are not yet implemented.
+
+The plan is to organize many projects in a single wiki, with project membership *derived* from the citation graph (not declared by the user) and the curator's wave budget allocated by recent activity. You drop things in, run `curate`, occasionally `archive`. The classifier figures out which project things belong to.
+
+| Verb | Scope | Purpose |
+|------|-------|---------|
+| `add` | item or folder | Ingest as current activity. Optionally `... to Project A` to pre-tag. |
+| `import` † | folder | Bulk ingest, current activity. Idempotent (sha256). |
+| `archive` † | item or folder | Ingest as **archival** activity — won't inflate default-mode planner score for the project. |
+| `curate` | wave | Default mode: recency-weighted parallel fanout across active projects + bridges + unclassified. |
+| `curate archival` † | wave | Inverted weighting; per-pair-type bridge budget so active↔active links aren't lost. |
+| `rename` † | project | Absorb project B into A inside one wiki. Mechanical link rewrite, no recoverability. |
+| `delete` † | project | Soft-delete: pages → `wiki/.deleted/<name>/`, vault → `vault/.deleted/<name>/`, graph/RDB rows snapshotted. |
+| `restore` † | project | Inverse of `delete`. |
+| `purge` † | project | Hard-delete from `.deleted/` and the deleted-table snapshots. |
+| `merge` † | wiki + wiki | Cross-wiki op: vault sha256 reconciliation, page-stem collisions, graph union with `origin:` tags, bridge discovery across origins. |
+| `discover-bridges` † | within or across wikis | Surface high-similarity page pairs that aren't yet wikilinked. Review queue. |
+
+**`rename` (project, mechanical)** and **`merge` (wiki, heavy)** are deliberately distinct verbs — never used interchangeably.
+
+Implementation order (each independently useful):
+
+1. `projects.py` (create/list/rename/delete/restore/purge), `projects/<name>.md` home-page convention, `projects:` frontmatter, citation-graph classifier.
+2. `.curator/activity.log` with user-vs-agent timestamp split; archival-ingest flag.
+3. Recency-weighted planner; archival mode.
+4. Semantic classifier step (with cold-start guard at <5 home pages).
+5. Cross-project bridge candidates in the wave budget.
+6. Wiki `merge` + standalone `discover-bridges`.
+
 ## License
 
 MIT
