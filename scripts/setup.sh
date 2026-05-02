@@ -298,9 +298,9 @@ fi
 #   .curator/              curator state, NOT tracked by wiki's git
 #   CLAUDE.md              workspace instructions (mirrors SKILL.md)
 #   .claude/settings.json  auto-allow permissions
-mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables,figures,notes,todos}
+mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables,figures,notes,todos,projects}
 touch vault/.gitkeep vault/raw/.gitkeep
-for d in sources entities concepts analyses evidence facts tables figures notes todos; do
+for d in sources entities concepts analyses evidence facts tables figures notes todos projects; do
     touch "wiki/$d/.gitkeep"
 done
 mkdir -p .curator
@@ -577,6 +577,7 @@ else
         "scripts/viewer.sh"                  # post-custom-viewer allowlist
         "scripts/viewer_server.py"           # post-edit-mode allowlist
         "printenv CURATOR_PRESET"            # post-preset-config allowlist
+        "scripts/projects.py"                # post-multi-project allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -668,6 +669,7 @@ EOF
       "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(uv run python3 $root/scripts/naming.py:*)",
+      "Bash(uv run python3 $root/scripts/projects.py:*)",
       "Bash(uv run python3 $root/scripts/wiki_render.py:*)",
       "Bash(uv run python3 $root/scripts/viewer_server.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",

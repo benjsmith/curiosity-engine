@@ -113,6 +113,14 @@ ALLOWED_FM_KEYS = frozenset({
     # heuristic; curators may edit to override. The string form
     # roundtrips through the simple bracket-list parser.
     "normalise_columns",
+    # Multi-project model. `projects` is a list of project-name slugs the
+    # page belongs to (derived by classify-projects from the citation
+    # graph; user-overridable). `description` is the human-supplied
+    # one-liner on a project home page (`wiki/projects/<name>.md`).
+    # `ingest_kind` is set by archive-imports to "archival" so the
+    # default-mode activity score can filter them out (current ingests
+    # are unset / "current"). See docs/multi-project.md.
+    "projects", "description", "ingest_kind",
 })
 
 TYPE_PREFIX = {
@@ -127,6 +135,7 @@ TYPE_PREFIX = {
     "figure": "[fig]",
     "note": "[note]",
     "todo-list": "[todo]",
+    "project": "[proj]",
 }
 
 # Filename stem prefixes for the page types that live in dedicated
