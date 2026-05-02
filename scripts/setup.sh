@@ -127,6 +127,66 @@ if ! command -v uv >/dev/null 2>&1; then
     esac
 fi
 
+# Workspace-local uv cache (sandbox-safe by default). Coding-agent CLIs
+# with strict filesystem sandboxes (Codex CLI is the prominent case) deny
+# reads outside the workspace, including uv's default cache at
+# ~/.cache/uv/. Every `uv run` then trips an escalation prompt because uv
+# touches its cache on every invocation. Fix it at the source: tell uv to
+# keep its cache inside the workspace via uv.toml. uv auto-discovers the
+# file from cwd; no env vars, no per-host config.
+#
+# The cache itself is seeded by APFS / reflink clone of the existing
+# global cache when possible — instant, and shares storage with the
+# original until divergence (so N workspaces don't pay N × full-cache on
+# disk). On filesystems without reflink support (older Linux, Windows,
+# cross-volume installs) we fall back to a real recursive copy (one-time
+# disk cost) or an empty directory (uv populates from network lazily).
+mkdir -p .curator
+if [ ! -f uv.toml ]; then
+    cat > uv.toml <<'EOF'
+# Workspace-local uv cache. Keeps uv's reads/writes inside the workspace
+# so coding-agent CLIs with strict filesystem sandboxes (Codex CLI, etc.)
+# don't escalate on every `uv run`. Harmless under Claude Code — uv
+# auto-discovers this file from cwd. Written by curiosity-engine setup.sh;
+# safe to delete if you want uv to use its global cache instead.
+cache-dir = ".curator/uv-cache"
+EOF
+    echo "  Wrote uv.toml (cache-dir = .curator/uv-cache)"
+fi
+if [ ! -d .curator/uv-cache ]; then
+    _src_cache="${UV_CACHE_DIR:-$HOME/.cache/uv}"
+    if [ -d "$_src_cache" ]; then
+        # Try BSD clone (`cp -c`, macOS APFS) first, then GNU reflink
+        # (`cp --reflink=auto`, Linux btrfs/XFS), then a plain recursive
+        # copy. Each shell only understands one of the first two flags;
+        # the unknown-flag case fails immediately and falls through.
+        if cp -c -R "$_src_cache" .curator/uv-cache 2>/dev/null; then
+            echo "  Cloned $_src_cache → .curator/uv-cache (APFS clone — ~zero extra disk)"
+        elif cp --reflink=auto -R "$_src_cache" .curator/uv-cache 2>/dev/null; then
+            echo "  Cloned $_src_cache → .curator/uv-cache (reflink — ~zero extra disk)"
+        elif cp -R "$_src_cache" .curator/uv-cache 2>/dev/null; then
+            _cache_size=$(du -sh .curator/uv-cache 2>/dev/null | cut -f1)
+            echo "  Copied $_src_cache → .curator/uv-cache (no reflink support; ${_cache_size:-unknown size} on disk)"
+        else
+            mkdir -p .curator/uv-cache
+            echo "  Created empty .curator/uv-cache (clone/copy failed; uv will populate from network)"
+        fi
+    else
+        mkdir -p .curator/uv-cache
+        echo "  Created empty .curator/uv-cache (no source cache at $_src_cache; uv will populate from network on first run)"
+    fi
+fi
+# Keep uv-cache out of any outer git repo wrapping the workspace. The
+# wiki repo lives at wiki/ and is unaffected; this guards the case where
+# the workspace itself is also under version control.
+if [ ! -f .curator/.gitignore ] || ! grep -qE "^/?uv-cache(/|$)" .curator/.gitignore 2>/dev/null; then
+    if [ ! -f .curator/.gitignore ]; then
+        printf '# Workspace-local uv cache (seeded by setup.sh — regenerable)\nuv-cache/\n' > .curator/.gitignore
+    else
+        printf '\n# Workspace-local uv cache (seeded by setup.sh — regenerable)\nuv-cache/\n' >> .curator/.gitignore
+    fi
+fi
+
 # Detect .venv drift. When the user upgrades system Python, the existing
 # .venv is still bound to the old interpreter — if that interpreter is
 # gone, the venv is silently broken; if it's still there, rerunning
