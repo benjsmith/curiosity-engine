@@ -833,15 +833,16 @@ p.write_text(json.dumps(cfg, indent=2))
 fi
 
 # Optional: install curiosity-merge for cross-wiki operations
-# (merge, subgraph-export, discover-bridges). Most users don't need
-# this — only install when you want to combine wikis, share sub-wikis
-# via GitHub, or absorb someone else's published wiki. Trust model is
-# different (external data ingestion) so it's a deliberate opt-in.
-# Public sub-wikis are tagged with the `curiosity-wiki` GitHub topic;
-# search topic:curiosity-wiki to find ones you can clone, fork, or merge.
+# (merge, unmerge, subgraph-export, discover-bridges). Most users
+# don't need this — only install when you want to combine wikis,
+# share sub-wikis via GitHub, or absorb someone else's published
+# wiki. Trust model is different (external data ingestion) so it's
+# a deliberate opt-in. Public sub-wikis are tagged with the
+# `curiosity-wiki` GitHub topic; search topic:curiosity-wiki to
+# find ones you can clone, fork, or merge.
 if _is_interactive; then
     echo ""
-    printf "Install curiosity-merge for cross-wiki sharing/merge ops? [y/N] "
+    printf "Install curiosity-merge for cross-wiki ops (merge, unmerge, subgraph-export, discover-bridges)? [y/N] "
     read -r reply_merge || reply_merge="n"
     case "$reply_merge" in
         y|Y|yes|YES)
