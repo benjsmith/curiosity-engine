@@ -2,6 +2,10 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-03 — activity tracking (wave 2)
+
+- **Activity log + archival/projects ingest flags** (`a75b25c`). New `scripts/activity_log.py` records two event kinds (`ingest`, `user_signal`) as one-event-per-line JSON in `.curator/activity.log`. Library API (`from activity_log import log_event`) for in-process callers, CLI (`log` / `query`) for orchestrator + scripts. `query --by-project` emits the exact shape the wave-3 planner will consume: `ingests_current`, `ingests_archival`, `user_signals`, and a decayed cadence score (exp(-w/2) over the last 4 weeks). `local_ingest.py` gains `--archival` (sets `ingest_kind: archival` in the extraction frontmatter and on the activity event) and `--projects a,b,c` (pre-tags the extraction so the citation-graph classifier doesn't have to guess on user-stated project ingests). Activity-log writes are best-effort — a log failure cannot break ingest. Wave 3 (recency-weighted planner) and the orchestrator's conversational `add` / `import` / `archive` flow consume what wave 2 writes.
+
 ## 2026-05-03 — multi-project foundation (wave 1)
 
 Closes wave 1 of the multi-project rollout (see `docs/multi-project.md`). The substrate is in place; the recency-weighted planner and archival mode (waves 2–3) consume what wave 1 writes.
