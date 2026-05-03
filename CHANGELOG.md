@@ -2,6 +2,12 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-04 — v0.1.1 — silent on plain wikis with no projects
+
+First patch release. One bugfix-only commit on top of `v0.1.0`; no behaviour change for wikis that use the multi-project model.
+
+- **`epoch_summary` suppresses `project_activity` when no projects exist** (`5f167fe`). On plain literature wikis (no `wiki/projects/<name>.md` home pages on disk), `project_activity` was always emitted with an `_unclassified` bucket counting every page in the wiki — exactly the kind of signal an orchestrator might pick up to suggest projects unprompted. Now: when zero project home pages exist, `project_activity` returns `{}` and `connection_candidates` ships without project-tag enrichment. JSON shape becomes identical to pre-multi-project (pre-`v0.1.0`). The first `projects.py create` is what activates the rest of the multi-project plumbing. Documented as the "No-projects default" in `docs/multi-project.md`.
+
 ## 2026-05-03 — cross-project bridge candidates (wave 5)
 
 - **Bridge slot fills with cross-project candidates** (`d377b3c`). The kuzu `connection_candidates` query (page pairs sharing vault sources but unlinked) now enriches each candidate with `projects_a`, `projects_b`, and a `cross_project` flag (true when both pages carry tags and the sets differ). Default candidate limit bumped from 5 to 20 so the planner has a pool to filter from. `planner.py` splits raw vs mode-adjusted scoring (`_compute_raw_activity_scores`) so pair classification (`active-active` / `dormant-active` / `dormant-dormant`) is mode-stable — labels reflect project state, not wave mode. Default mode ranks bridges by `min(activity_a, activity_b)` descending (two-active-projects bridges beat one-active-one-dormant per design). Archival mode stratifies 40/40/20 across pair types with within-stratum ordering by `min_activity` ascending; rounding is reconciled and empty strata are backfilled from neighbours so the bridge budget gets used. Page activity for multi-tagged pages = max over its project scores. Empty candidate pools degrade with an informational note.
