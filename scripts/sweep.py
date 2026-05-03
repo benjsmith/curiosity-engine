@@ -159,8 +159,20 @@ FRONTMATTER_REQUIRED = {"title", "type", "created"}
 
 
 def wiki_pages(wiki_dir: Path) -> list:
-    return [p for p in wiki_dir.rglob("*.md")
-            if p.name not in SKIP_FILES and "_suspect" not in p.parts]
+    """Return all live wiki pages. Excludes:
+      - SKIP_FILES (e.g. README, repo metadata)
+      - any path inside a `_suspect` quarantine subtree
+      - any path inside a dotfile-prefixed directory (`.deleted/`,
+        `.curator/`-style hidden trees the orchestrator uses for
+        soft-deletes and history). Filename-prefix dotfile guard
+        (`.gitkeep`, etc.) covers the file-level case.
+    """
+    return [
+        p for p in wiki_dir.rglob("*.md")
+        if p.name not in SKIP_FILES
+        and "_suspect" not in p.parts
+        and not any(part.startswith(".") for part in p.relative_to(wiki_dir).parts)
+    ]
 
 
 _NO_DEPLURAL = {"analysis", "basis", "bias", "chaos", "corpus", "thesis",

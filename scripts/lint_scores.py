@@ -110,8 +110,16 @@ def _save_cache(wiki_dir: Path, titles_hash: str, vault_rowcount: int,
 
 
 def wiki_pages_in(wiki_dir: Path):
-    return [p for p in wiki_dir.rglob("*.md")
-            if p.name not in SKIP_FILES and not p.name.startswith(".")]
+    """Return all live wiki pages. Excludes SKIP_FILES, filename
+    dotfiles (`.gitkeep`, …), and any path inside a dotfile-prefixed
+    directory (`.deleted/<project>/`, `.history/`, …) so soft-deleted
+    content doesn't get scored."""
+    return [
+        p for p in wiki_dir.rglob("*.md")
+        if p.name not in SKIP_FILES
+        and not p.name.startswith(".")
+        and not any(part.startswith(".") for part in p.relative_to(wiki_dir).parts)
+    ]
 
 
 def crossref_sparsity(text: str, all_titles: set, own_stem: str) -> float:
