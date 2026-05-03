@@ -3719,6 +3719,165 @@ def cmd_scan_references(wiki_dir: Path):
     }, indent=2))
 
 
+def _project_classifier_config(wiki_dir: Path) -> dict:
+    """Read classifier knobs from .curator/config.json with defaults
+    tuned for early-stage wikis. Cold-start guard fires until at least
+    `min_home_pages` projects have substantive home pages — keeps the
+    semantic step from making confident-sounding mistakes off thin
+    anchor text."""
+    defaults = {
+        "embedding_enabled": False,
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "project_classifier_min_home_pages": 5,
+        "project_classifier_confidence_threshold": 0.5,
+        "project_classifier_home_min_words": 30,
+    }
+    cfg_path = wiki_dir.parent / ".curator" / "config.json"
+    if not cfg_path.exists():
+        return defaults
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except Exception:
+        return defaults
+    out = dict(defaults)
+    for k in defaults:
+        if k in cfg:
+            out[k] = cfg[k]
+    return out
+
+
+def _semantic_classify_step(
+    wiki_dir: Path,
+    page_projects: dict,
+    page_by_stem: dict,
+    home_stems: set,
+    cfg: dict,
+) -> dict:
+    """Wave-4 semantic classifier: assign a single project tag to each
+    still-unclassified page when its embedding is sufficiently close to
+    a project home page's embedding.
+
+    Runs only after the citation-graph fixed-point pass (citations are
+    the stronger signal — semantic similarity only fills the gap for
+    pages with no inbound citers yet).
+
+    Cold-start guard: skipped when fewer than
+    `project_classifier_min_home_pages` projects have home pages with
+    substantive bodies (≥ `project_classifier_home_min_words` words).
+    Avoids garbage classifications when there's nothing to anchor
+    against.
+
+    Mutates `page_projects` in place: assigns a single best-match
+    project (above threshold) to each unclassified target.
+
+    Returns a status dict with one of:
+      - {"skipped": <reason>, ...} when the step did not run
+      - {"ran": True, "assignments": [...], "evaluated": N, ...}
+        when it did. Each assignment carries `stem`, `project`,
+        `similarity` for the audit log.
+    """
+    # Cold-start guard.
+    substantive_homes: list = []
+    home_min_words = int(cfg["project_classifier_home_min_words"])
+    for home_stem in home_stems:
+        path = page_by_stem.get(home_stem)
+        if path is None:
+            continue
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        _, body = read_frontmatter(text)
+        body_clean = re.sub(r"_[^_]*Populated by the curator[^_]*_", "", body or "")
+        body_clean = body_clean.strip()
+        if not body_clean:
+            continue
+        if len(body_clean.split()) < home_min_words:
+            continue
+        substantive_homes.append((home_stem, body_clean))
+
+    min_required = int(cfg["project_classifier_min_home_pages"])
+    if len(substantive_homes) < min_required:
+        return {
+            "skipped": "cold_start",
+            "substantive_homes": len(substantive_homes),
+            "min_required": min_required,
+        }
+
+    # Embedding stack opt-in via config — embeddings are a heavy install
+    # (~200MB model + sqlite-vec). When disabled or deps missing, skip
+    # silently (citation step still ran).
+    if not cfg.get("embedding_enabled"):
+        return {"skipped": "embedding_disabled"}
+    try:
+        from sentence_transformers import SentenceTransformer  # type: ignore
+        import numpy as np  # type: ignore
+    except ImportError:
+        return {"skipped": "deps_missing"}
+
+    try:
+        embedder = SentenceTransformer(cfg["embedding_model"])
+    except Exception as e:
+        return {"skipped": f"model_load_failed: {type(e).__name__}: {e}"}
+
+    # Targets: pages with empty projects: set, excluding home pages
+    # (which are seeded with their own project tag and frozen).
+    targets: list = []
+    for stem, projects in page_projects.items():
+        if stem in home_stems:
+            continue
+        if projects:
+            continue
+        targets.append(stem)
+    if not targets:
+        return {"skipped": "no_targets", "homes_evaluated": len(substantive_homes)}
+
+    home_names = [h[0] for h in substantive_homes]
+    home_texts = [h[1][:8000] for h in substantive_homes]
+    home_embs = np.asarray(
+        embedder.encode(home_texts, normalize_embeddings=True),
+        dtype=np.float32,
+    )
+
+    target_texts: list = []
+    for stem in targets:
+        path = page_by_stem[stem]
+        text = path.read_text()
+        fm, body = read_frontmatter(text)
+        title = str(fm.get("title", "") or "")
+        target_texts.append((title + "\n\n" + (body or ""))[:8000])
+    target_embs = np.asarray(
+        embedder.encode(target_texts, normalize_embeddings=True),
+        dtype=np.float32,
+    )
+
+    # Cosine = dot product when both inputs are unit-normalised.
+    sim_matrix = target_embs @ home_embs.T
+
+    threshold = float(cfg["project_classifier_confidence_threshold"])
+    assignments: list = []
+    for i, stem in enumerate(targets):
+        sims = sim_matrix[i]
+        best_idx = int(sims.argmax())
+        best_sim = float(sims[best_idx])
+        if best_sim >= threshold:
+            project = home_names[best_idx]
+            page_projects[stem] = page_projects[stem] | {project}
+            assignments.append({
+                "stem": stem,
+                "project": project,
+                "similarity": round(best_sim, 4),
+            })
+
+    return {
+        "ran": True,
+        "homes_evaluated": len(substantive_homes),
+        "targets_evaluated": len(targets),
+        "assignments": assignments,
+        "threshold": threshold,
+    }
+
+
 def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
     """Derive each page's `projects:` set from the citation graph.
 
@@ -3795,6 +3954,18 @@ def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
         if not any_change:
             break
 
+    # Wave-4 semantic step: fills gaps the citation graph can't reach
+    # (uncited pages with no inbound wikilinks yet). Runs only above the
+    # cold-start threshold and only when embedding stack is enabled.
+    classifier_cfg = _project_classifier_config(wiki_dir)
+    semantic_status = _semantic_classify_step(
+        wiki_dir, page_projects, page_by_stem, home_stems, classifier_cfg
+    )
+    semantic_assignments = (
+        {a["stem"]: a for a in semantic_status.get("assignments", [])}
+        if semantic_status.get("ran") else {}
+    )
+
     # Write back changes.
     log_entries: list = []
     written = 0
@@ -3815,11 +3986,14 @@ def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
         if not dry_run:
             path.write_text(new_text)
         rel = path.relative_to(wiki_dir) if path.is_relative_to(wiki_dir) else path
+        sem = semantic_assignments.get(stem)
         log_entries.append({
             "page": str(rel),
             "before": sorted(old),
             "after": sorted(new_projects),
             "added": sorted(new_projects - old),
+            "source": "semantic" if sem else "citation",
+            "similarity": sem["similarity"] if sem else None,
         })
         written += 1
 
@@ -3832,10 +4006,15 @@ def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
                 fh.write(f"\n## classify-projects {ts}\n\n")
                 for entry in log_entries:
                     added = ", ".join(entry["added"]) or "(no add)"
+                    src = entry.get("source", "citation")
+                    if src == "semantic" and entry.get("similarity") is not None:
+                        suffix = f"  [semantic, sim={entry['similarity']}]"
+                    else:
+                        suffix = "  [citation]"
                     fh.write(
                         f"- `{entry['page']}` "
                         f"+ {{{added}}} "
-                        f"(was {entry['before']}, now {entry['after']})\n"
+                        f"(was {entry['before']}, now {entry['after']}){suffix}\n"
                     )
 
     print(json.dumps({
@@ -3844,6 +4023,7 @@ def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
         "homes": len(home_stems),
         "updated": written,
         "dry_run": dry_run,
+        "semantic_step": semantic_status,
         "sample": log_entries[:5],
     }, indent=2))
 

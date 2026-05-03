@@ -26,6 +26,9 @@
   "embedding_enabled": false,
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "notes_semantic_dedup_threshold": 0.92,
+  "project_classifier_min_home_pages": 5,
+  "project_classifier_confidence_threshold": 0.5,
+  "project_classifier_home_min_words": 30,
   "cluster_scope_threshold": 500,
   "caveman": {
     "read": "ultra",
