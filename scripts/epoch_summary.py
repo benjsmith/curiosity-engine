@@ -12,6 +12,10 @@ Usage:
 
 Output: JSON object on stdout.
 """
+# Defer annotation evaluation so PEP 604 unions (`dict | None`) parse on
+# Python 3.9 — setup.sh's floor.
+from __future__ import annotations
+
 import argparse
 import json
 import re

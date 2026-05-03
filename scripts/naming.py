@@ -25,6 +25,11 @@ Filename/slug conventions:
   - Evidence:  evi-<topic>-<source>-<year>
   - Fact:      fact-<short-claim>
 """
+# Defer annotation evaluation so PEP 604 unions (`str | None`) and
+# built-in generics (`list[str]`) parse on Python 3.9 — setup.sh's
+# floor.
+from __future__ import annotations
+
 import re
 from pathlib import Path
 
