@@ -1,6 +1,6 @@
 # Multi-project model
 
-**Status: design — rollout in progress. Commands marked with † are not yet implemented.**
+**Status: shipped.** Single-wiki verbs (waves 1–5) live in this skill. Cross-wiki verbs marked ‡ live in the [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge) companion skill — installable from `setup.sh`'s optional-install menu. See `CHANGELOG.md` for the per-wave history.
 
 This document captures the design for organizing knowledge across many projects in a single wiki. The user-facing model is "drop things in, run `curate`, occasionally `archive`." Project membership is derived from the citation graph, not declared by the user. The planner allocates worker effort across projects by recent activity, with an inverted-weight `archival` mode for working on neglected material.
 
@@ -9,16 +9,17 @@ This document captures the design for organizing knowledge across many projects 
 | Verb | Scope | Purpose |
 |------|-------|---------|
 | `add` | item or folder | Ingest a file or folder. Counts as current activity. Can specify `to Project A` to pre-tag. |
-| `import` †  | folder | Bulk-import a folder, current activity. Idempotent (skips by sha256). |
-| `archive` † | item or folder | Ingest as archival activity — does not inflate the default-mode planner score for the target project. |
+| `import` | folder | Bulk-import a folder, current activity. Idempotent (skips by sha256). |
+| `archive` | item or folder | Ingest as archival activity — does not inflate the default-mode planner score for the target project. |
 | `curate` | wave | Default mode. Recency-weighted parallel fanout across active projects + cross-project bridges + unclassified bucket + ambient global slot. |
-| `curate archival` † | wave | Archival mode. Inverted activity weighting; per-pair-type bridge budget so active↔active links aren't lost. Raised classifier confidence threshold. |
-| `rename` †  | project (within one wiki) | Absorb project B into project A. Mechanical: re-tag pages, delete B's home page, rewrite wikilinks, rebuild graph. No deleted-table writes. |
-| `delete` †  | project | Soft-delete. Single-tagged pages move to `wiki/.deleted/<name>/`; multi-tagged pages just drop the tag. Vault files used exclusively by deleted scope move to `vault/.deleted/<name>/`. Graph nodes/edges + RDB rows snapshotted to `deleted_*` tables. |
-| `restore` † | project | Inverse of `delete`. |
-| `purge` †   | project | Hard-delete from `.deleted/` and the deleted-table snapshots. Separate, deliberate command. |
-| `merge` †   | wiki + wiki | Cross-wiki operation. Vault sha256 reconciliation, source-stub stem reconciliation, page-name collision queue, graph union with `origin:` audit tags, bridge discovery across origins. |
-| `discover-bridges` † | within or across wikis | Semantic-similarity sweep that surfaces high-similarity page pairs that aren't yet wikilinked. Output is a review queue. |
+| `curate archival` | wave | Archival mode. Inverted activity weighting; per-pair-type bridge budget so active↔active links aren't lost. Raised classifier confidence threshold. |
+| `rename` | project (within one wiki) | Absorb project B into project A. Mechanical: re-tag pages, delete B's home page, rewrite wikilinks, rebuild graph. No deleted-table writes. |
+| `delete` | project | Soft-delete. Single-tagged pages move to `wiki/.deleted/<name>/`; multi-tagged pages just drop the tag. A manifest at `_manifest.json` records both lists so `restore` can reverse it. (Vault file handling deferred to a later wave; pages move, vault files stay.) |
+| `restore` | project | Inverse of `delete` (replays the manifest). |
+| `purge` | project | Hard-delete from `.deleted/` and drop the registry entry. Separate, deliberate command. |
+| `merge` ‡ | wiki + wiki | Cross-wiki operation. Vault sha256 reconciliation, source-stub stem reconciliation, page-name collision queue, graph union with `origin:` audit tags, bridge discovery across origins. |
+| `subgraph-export` ‡ | extract | Write a self-contained mini-wiki for a project / page / origin scope, suitable for `git push` to GitHub. |
+| `discover-bridges` ‡ | within or across wikis | Semantic-similarity sweep that surfaces high-similarity page pairs that aren't yet wikilinked. Output is a review queue. |
 
 `rename` (project) and `merge` (wiki) are deliberately distinct verbs to avoid confusion. `rename` is mechanical and contained; `merge` is heavy and cross-origin.
 
@@ -148,7 +149,7 @@ Mechanical, contained. No deleted-table writes (use `delete` if you want recover
 
 ## Wiki merge
 
-**Ships as a separate skill: `curiosity-merge`** (planned). The merge / subgraph-export / discover-bridges verbs operate on external data (someone else's wiki) and have a different trust model than daily curation, a smaller audience, and an independent release cadence. Installable from curiosity-engine's `setup.sh` optional-install menu alongside caveman and semantic-search. Public sub-wikis use the GitHub topic tag `curiosity-wiki` for discovery.
+**Ships as a separate skill: [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge).** The merge / subgraph-export / discover-bridges verbs operate on external data (someone else's wiki) and have a different trust model than daily curation, a smaller audience, and an independent release cadence. Installable from curiosity-engine's `setup.sh` optional-install menu alongside caveman and semantic-search. Public sub-wikis use the GitHub topic tag [`curiosity-wiki`](https://github.com/topics/curiosity-wiki) for discovery.
 
 `curiosity-merge merge ../wiki-b --as-origin <name>`:
 
@@ -187,15 +188,13 @@ The `--filter` default is "things curiosity can ingest" — PDFs, markdown, docx
 
 Friction is intentional. Aim the command at subdirectories; use `--filter` aggressively. The act of running the command forces selectivity.
 
-## Implementation order (proposed)
+## Implementation history
 
-Each wave is independently useful:
+Shipped 2026-05-03 across six waves; see `CHANGELOG.md` for per-wave detail and the corresponding commits.
 
-1. **Foundation**: `projects.py` (create/list/exists/rename/delete/restore/purge), `projects/<name>.md` home-page convention, `projects:` frontmatter field, `classify-projects` SWEEP op (citation-graph signals only — semantic step deferred). README cheatsheet + this design doc.
-2. **Activity tracking**: `.curator/activity.log` writers in orchestrator and CURATE workers; user vs. agent timestamp split; archival ingest flag.
-3. **Recency-weighted planner**: replace global wave allocation with per-project allocation by activity score; archival mode flag.
-4. **Semantic classifier step**: enable home-page-similarity classification with cold-start guard.
-5. **Cross-project bridge candidates**: extend the existing `connection_candidates` queue to track project pairs; bridge slot in default and archival modes.
-6. **Wiki merge + discover-bridges**: separate feature wave. Useful even before multi-project tagging is mature.
-
-Ship in this order; each step is independently demonstrable.
+1. **Foundation** — `projects.py` (create/list/exists/rename/delete/restore/purge), `projects/<name>.md` home-page convention, `projects:` frontmatter, `classify-projects` SWEEP op (citation-graph signals).
+2. **Activity tracking** — `.curator/activity.log` (JSONL); `local_ingest.py` `--archival` and `--projects` flags; `activity_log.py` library + CLI.
+3. **Recency-weighted planner** — `scripts/planner.py allocate` with default + archival modes; `epoch_summary.py` gains `project_activity` field. Single-project / no-project wikis collapse to today's behaviour.
+4. **Semantic classifier step** — cosine similarity to project home embeddings, cold-start-guarded at 5 substantive home pages, opt-in via `embedding_enabled`.
+5. **Cross-project bridge candidates** — `connection_candidates` enriched with project tags; planner fills the bridge slot per default/archival rules.
+6. **Cross-wiki operations** (`merge`, `subgraph-export`, `discover-bridges`) — separate skill, [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge). Different trust model (external data ingestion); installable from `setup.sh`.

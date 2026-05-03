@@ -832,6 +832,33 @@ p.write_text(json.dumps(cfg, indent=2))
     esac
 fi
 
+# Optional: install curiosity-merge for cross-wiki operations
+# (merge, subgraph-export, discover-bridges). Most users don't need
+# this — only install when you want to combine wikis, share sub-wikis
+# via GitHub, or absorb someone else's published wiki. Trust model is
+# different (external data ingestion) so it's a deliberate opt-in.
+# Public sub-wikis are tagged with the `curiosity-wiki` GitHub topic;
+# search topic:curiosity-wiki to find ones you can clone, fork, or merge.
+if _is_interactive; then
+    echo ""
+    printf "Install curiosity-merge for cross-wiki sharing/merge ops? [y/N] "
+    read -r reply_merge || reply_merge="n"
+    case "$reply_merge" in
+        y|Y|yes|YES)
+            if command -v npx >/dev/null 2>&1; then
+                echo "  Installing benjsmith/curiosity-merge via npx skills (global, symlinks) ..."
+                npx skills add -g -y benjsmith/curiosity-merge \
+                    || echo "  (install failed — re-run later: npx skills add -g -y benjsmith/curiosity-merge)"
+            else
+                echo "  npx not found. Install later: npx skills add -g -y benjsmith/curiosity-merge"
+            fi
+            ;;
+        *)
+            echo "  Skipping curiosity-merge. Install anytime: npx skills add -g -y benjsmith/curiosity-merge"
+            ;;
+    esac
+fi
+
 # Initialize vault FTS5 index
 uv run python3 "$SCRIPT_DIR/vault_index.py" --init
 
