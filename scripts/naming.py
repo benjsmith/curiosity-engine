@@ -236,6 +236,57 @@ def read_frontmatter(text: str) -> tuple:
     return fm, body
 
 
+def set_frontmatter_field(text: str, key: str, value_str: str | None) -> str:
+    """Replace, insert, or remove a single-line frontmatter field.
+
+    Removes any prior single-line OR multi-line YAML form of the key
+    so a field that started as ``foo:\\n  - a\\n  - b`` is rewritten
+    as ``foo: <value_str>`` cleanly.
+
+    Pass ``value_str=None`` to delete the field entirely.
+
+    Returns text unchanged when the input has no frontmatter
+    (no leading ``---\\n`` block) or when the closing ``\\n---\\n``
+    cannot be found. Caller is responsible for formatting the value
+    string (e.g. ``"[a, b]"`` for an inline list, ``'"quoted"'`` for
+    a string literal).
+    """
+    if not text.startswith("---\n"):
+        return text
+    fm_end = text.find("\n---\n", 4)
+    if fm_end == -1:
+        return text
+    fm_block = text[:fm_end]
+    body = text[fm_end:]
+
+    new_line = f"{key}: {value_str}" if value_str is not None else None
+    lines = fm_block.split("\n")
+    out: list = []
+    i = 0
+    handled = False
+    while i < len(lines):
+        line = lines[i]
+        if not handled and re.match(rf"^{re.escape(key)}\s*:", line):
+            if new_line is not None:
+                out.append(new_line)
+            handled = True
+            i += 1
+            # Drop any indented continuation lines (multi-line YAML list).
+            while i < len(lines) and lines[i].startswith((" ", "\t")):
+                i += 1
+            continue
+        out.append(line)
+        i += 1
+
+    if not handled and new_line is not None:
+        insert_at = len(out)
+        while insert_at > 0 and out[insert_at - 1].strip() == "":
+            insert_at -= 1
+        out.insert(insert_at, new_line)
+
+    return "\n".join(out) + body
+
+
 def url_to_origin(url: str) -> str:
     """Map a source URL to a short human-readable origin label."""
     url_lower = url.lower()

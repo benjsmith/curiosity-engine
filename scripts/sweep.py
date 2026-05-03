@@ -149,7 +149,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from naming import (  # noqa: E402
-    FRONTMATTER_TYPES,
+    FRONTMATTER_TYPES, set_frontmatter_field,
     SKIP_FILES,
     WIKILINK_RE,
     read_frontmatter,
@@ -3707,52 +3707,6 @@ def cmd_scan_references(wiki_dir: Path):
     }, indent=2))
 
 
-def _set_projects_field(text: str, projects_sorted: list) -> str:
-    """Replace or insert a single-line `projects: [a, b, c]` entry in
-    frontmatter. Removes any prior single-line OR multi-line YAML form
-    of the same key.
-
-    Returns the original text unchanged when there is no frontmatter.
-    """
-    if not text.startswith("---\n"):
-        return text
-    fm_end = text.find("\n---\n", 4)
-    if fm_end == -1:
-        return text
-    fm_block = text[:fm_end]
-    body = text[fm_end:]
-
-    new_line = f"projects: [{', '.join(projects_sorted)}]" if projects_sorted else "projects: []"
-
-    lines = fm_block.split("\n")
-    out: list = []
-    i = 0
-    replaced = False
-    while i < len(lines):
-        line = lines[i]
-        if not replaced and re.match(r"^projects\s*:", line):
-            out.append(new_line)
-            replaced = True
-            i += 1
-            # If the original was a multi-line YAML list, skip the
-            # indented continuation lines so we don't leave them stranded.
-            while i < len(lines) and lines[i].startswith((" ", "\t")):
-                i += 1
-            continue
-        out.append(line)
-        i += 1
-
-    if not replaced:
-        # Insert before any trailing empty line so the closing `---` stays
-        # last. Frontmatter blocks usually end on a non-empty line.
-        insert_at = len(out)
-        while insert_at > 0 and out[insert_at - 1].strip() == "":
-            insert_at -= 1
-        out.insert(insert_at, new_line)
-
-    return "\n".join(out) + body
-
-
 def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
     """Derive each page's `projects:` set from the citation graph.
 
@@ -3841,7 +3795,9 @@ def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
             old = {fm["projects"]}
         if old == new_projects or not new_projects:
             continue
-        new_text = _set_projects_field(text, sorted(new_projects))
+        sorted_projects = sorted(new_projects)
+        value_str = f"[{', '.join(sorted_projects)}]" if sorted_projects else "[]"
+        new_text = set_frontmatter_field(text, "projects", value_str)
         if new_text == text:
             continue
         if not dry_run:
