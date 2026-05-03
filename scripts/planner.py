@@ -92,12 +92,11 @@ def _activity_score(p: dict, max_ingests: int, max_signals: int,
     return round(0.55 * ingest_norm + 0.30 * signal_norm + 0.15 * cadence_norm, 4)
 
 
-def _compute_activity_scores(project_activity: dict, archival: bool) -> dict:
-    """Returns {project_name: activity_score in 0..1}. Excludes the
-    `_unclassified` pseudo-project. Under archival mode, scores are
-    inverted (1 - score) so dormant projects rank higher; an all-zero
-    raw distribution collapses every project to 1.0 (treated as equally
-    archival — none has current activity to differentiate)."""
+def _compute_raw_activity_scores(project_activity: dict) -> dict:
+    """Raw 0..1 activity score per project — unaffected by the archival
+    flag. Used for bridge-pair classification (active / dormant labels
+    must be stable regardless of mode) and as the input to the
+    archival inversion."""
     projects = {k: v for k, v in project_activity.items() if not k.startswith("_")}
     if not projects:
         return {}
@@ -107,12 +106,24 @@ def _compute_activity_scores(project_activity: dict, archival: bool) -> dict:
         (float(p.get("ingest_cadence_score", 0.0)) for p in projects.values()),
         default=0.0,
     )
-    raw = {
+    return {
         name: _activity_score(p, max_ingests, max_signals, max_cadence)
         for name, p in projects.items()
     }
+
+
+def _compute_activity_scores(project_activity: dict, archival: bool) -> dict:
+    """Returns {project_name: score in 0..1} for **slot allocation**.
+    Default mode returns raw scores; archival inverts (1 - score) so
+    dormant projects rank higher in the project-budget distribution.
+
+    Pair classification (active vs dormant) should NOT use this function
+    — it should use _compute_raw_activity_scores so the labels are
+    stable across modes. The archival mode reshuffles WHICH pair types
+    get more attention, but it doesn't redefine what "dormant" means."""
+    raw = _compute_raw_activity_scores(project_activity)
     if archival:
-        raw = {k: round(1.0 - v, 4) for k, v in raw.items()}
+        return {k: round(1.0 - v, 4) for k, v in raw.items()}
     return raw
 
 
@@ -198,6 +209,126 @@ def _slots_split(total: int) -> tuple[int, int, int, int]:
     return project, bridges, unclassified, ambient
 
 
+def _pair_activity(projects: list, scores: dict) -> float:
+    """Activity for a page given its project tags. A page belongs to
+    multiple projects in general; treat it as 'as active as its most
+    active project'. Returns 0.0 when the page has no tags or no scored
+    projects."""
+    return max((scores.get(p, 0.0) for p in projects), default=0.0)
+
+
+def _classify_pair(act_a: float, act_b: float, active_threshold: float = 0.0) -> str:
+    """Bridge-pair classification used by archival mode's stratified
+    bridge budget (40% dormant-dormant, 40% dormant-active, 20%
+    active-active per the design doc)."""
+    a_active = act_a > active_threshold
+    b_active = act_b > active_threshold
+    if a_active and b_active:
+        return "active-active"
+    if a_active or b_active:
+        return "dormant-active"
+    return "dormant-dormant"
+
+
+def _select_bridges(
+    candidates: list,
+    raw_scores: dict,
+    budget: int,
+    archival: bool,
+) -> list:
+    """Pick `budget` bridge candidates from a list of cross_project=True
+    pairs, with mode-specific selection rules.
+
+    Pair classification (active vs dormant) always uses raw activity
+    scores — the labels are properties of the projects' state, not of
+    the wave mode. The archival flag controls which strata get larger
+    quotas, not what "dormant" means.
+
+    Default mode: rank by `min(activity_a, activity_b)` descending — two
+    active projects bridging beats one active + one dormant, which beats
+    two dormants. Matches the design doc's "two-active-projects bridges
+    beat one-active-one-dormant" rule.
+
+    Archival mode: stratified 40/40/20 across pair types so active↔active
+    work isn't lost while dormant material gets attention. Within each
+    stratum, sort by `min(activity)` ascending so the most-dormant
+    pair surfaces first."""
+    cross = [c for c in candidates if c.get("cross_project")]
+    if budget <= 0 or not cross:
+        return []
+
+    annotated = []
+    for c in cross:
+        act_a = _pair_activity(c.get("projects_a", []), raw_scores)
+        act_b = _pair_activity(c.get("projects_b", []), raw_scores)
+        annotated.append({
+            **c,
+            "activity_a": round(act_a, 4),
+            "activity_b": round(act_b, 4),
+            "min_activity": round(min(act_a, act_b), 4),
+            "max_activity": round(max(act_a, act_b), 4),
+            "pair_type": _classify_pair(act_a, act_b),
+        })
+
+    if not archival:
+        annotated.sort(key=lambda c: c["min_activity"], reverse=True)
+        return annotated[:budget]
+
+    # Archival mode: stratified 40/40/20 across pair types. Within each
+    # stratum, sort by min_activity ascending (most dormant first).
+    strata = {
+        "dormant-dormant": [],
+        "dormant-active": [],
+        "active-active": [],
+    }
+    for c in annotated:
+        strata[c["pair_type"]].append(c)
+    for k in strata:
+        strata[k].sort(key=lambda c: c["min_activity"])
+
+    quotas = {
+        "dormant-dormant": int(round(0.40 * budget)),
+        "dormant-active": int(round(0.40 * budget)),
+        "active-active": int(round(0.20 * budget)),
+    }
+    # Quota rounding may over/undershoot; reconcile.
+    total = sum(quotas.values())
+    diff = budget - total
+    # Spread diff onto the largest non-empty strata first (deterministic
+    # by sort_key tie-break: dormant-dormant > dormant-active > active-active).
+    order = ["dormant-dormant", "dormant-active", "active-active"]
+    i = 0
+    while diff != 0 and i < 4 * len(order):
+        target = order[i % len(order)]
+        if diff > 0 and strata[target] and quotas[target] < len(strata[target]):
+            quotas[target] += 1
+            diff -= 1
+        elif diff < 0 and quotas[target] > 0:
+            quotas[target] -= 1
+            diff += 1
+        i += 1
+
+    out: list = []
+    for stratum in order:
+        out.extend(strata[stratum][:quotas[stratum]])
+    # If a stratum was empty and its quota went unused, backfill from
+    # whichever stratum still has unselected items (preserve stratum
+    # priority: dormant-dormant > dormant-active > active-active).
+    if len(out) < budget:
+        seen = {(c["page_a"], c["page_b"]) for c in out}
+        for stratum in order:
+            for c in strata[stratum]:
+                if len(out) >= budget:
+                    break
+                key = (c["page_a"], c["page_b"])
+                if key not in seen:
+                    out.append(c)
+                    seen.add(key)
+            if len(out) >= budget:
+                break
+    return out[:budget]
+
+
 def _allocate_repair(
     project_activity: dict,
     summary: dict,
@@ -235,15 +366,27 @@ def _allocate_repair(
         "candidates": unclassified_meta.get("worst_within", [])[:unclassified_budget],
     }
 
-    # Bridges are wave-5 territory. Reserve the slots; emit empty
-    # candidate list with a forward-pointer so the orchestrator knows
-    # not to expect bridge work from this wave.
-    bridges_block = {
+    # Bridge candidates: cross-project page pairs sharing vault sources
+    # but not yet wikilinked. Selection rules differ per mode (default
+    # ranks by min(activity), archival stratifies 40/40/20 across pair
+    # types). Pair classification uses RAW activity scores so the
+    # active/dormant labels are mode-stable.
+    raw_scores = _compute_raw_activity_scores(project_activity)
+    bridge_candidates = _select_bridges(
+        summary.get("connection_candidates", []),
+        raw_scores,
+        bridge_budget,
+        archival,
+    )
+    bridges_block: dict = {
         "slots": bridge_budget,
-        "candidates": [],
-        "note": "bridge candidates not implemented until wave 5; orchestrator "
-                "may roll these slots into ambient if leaving them empty",
+        "candidates": bridge_candidates,
     }
+    if not bridge_candidates:
+        bridges_block["note"] = (
+            "no cross-project bridge candidates available — "
+            "orchestrator may roll these slots into ambient"
+        )
 
     # Ambient: pull from summary.worst_5 (current global worst). If
     # _unclassified.worst_within already covers it, dedupe.

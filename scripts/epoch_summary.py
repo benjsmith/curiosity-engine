@@ -405,12 +405,20 @@ def wave_scope(wiki_dir: Path, worst_pages: list, threshold: int) -> dict:
         return {"seed": seed, "pages": [seed], "size": 1}
 
 
-def connection_candidates(wiki_dir: Path, limit: int = 5) -> list:
+def connection_candidates(wiki_dir: Path, limit: int = 5,
+                            pages_text: dict | None = None) -> list:
     """Bridge candidates via the kuzu graph.
 
     Returns [] if the graph file is missing (rebuild hasn't been run yet)
     or kuzu isn't importable. The orchestrator is expected to rebuild the
     graph before calling epoch_summary.
+
+    Each candidate is enriched with `projects_a`, `projects_b`, and a
+    `cross_project` flag (true when both pages carry non-empty
+    `projects:` tags AND the two sets differ — adding a wikilink would
+    tighten genuinely cross-project connectivity). The wave-5 planner
+    consumes these tags to fill the bridge slot in repair-mode
+    allocations.
     """
     graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
     if not graph_path.exists():
@@ -438,9 +446,43 @@ def connection_candidates(wiki_dir: Path, limit: int = 5) -> list:
         while result.has_next():
             r = result.get_next()
             candidates.append({"page_a": r[0], "page_b": r[1], "shared_sources": r[2]})
-        return candidates
     except Exception:
         return []
+
+    # Enrich with project tags. Build a {rel_path: [projects]} index
+    # from pages_text (passed by main()) — falls back to a per-candidate
+    # frontmatter read when pages_text is unavailable.
+    project_index: dict = {}
+    if pages_text is not None:
+        for path, text in pages_text.items():
+            rel = str(path.relative_to(wiki_dir))
+            fm, _ = read_frontmatter(text)
+            raw = fm.get("projects") or []
+            if isinstance(raw, str):
+                raw = [raw]
+            project_index[rel] = sorted(s for s in raw if s)
+
+    def _projects_for(rel: str) -> list:
+        if rel in project_index:
+            return project_index[rel]
+        try:
+            text = (wiki_dir / rel).read_text()
+        except OSError:
+            return []
+        fm, _ = read_frontmatter(text)
+        raw = fm.get("projects") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        return sorted(s for s in raw if s)
+
+    for c in candidates:
+        pa = _projects_for(c["page_a"])
+        pb = _projects_for(c["page_b"])
+        c["projects_a"] = pa
+        c["projects_b"] = pb
+        c["cross_project"] = bool(pa) and bool(pb) and set(pa) != set(pb)
+
+    return candidates
 
 
 def project_activity(wiki_dir: Path, pages_text: dict, results: list,
@@ -557,7 +599,11 @@ def main():
         "worst_dimension_counts": worst_dimension_per_page(results),
         "cluster_analysis": cluster_analysis(wiki_dir, pages_text),
         "vault_frontier": _format_frontier(vault_frontier(wiki_dir, pages_text)),
-        "connection_candidates": connection_candidates(wiki_dir),
+        # Higher limit than legacy default (5): wave-5 planner needs a
+        # candidate pool to filter to cross-project pairs from. Brief
+        # composition still reads the top few only.
+        "connection_candidates": connection_candidates(wiki_dir, limit=20,
+                                                         pages_text=pages_text),
         "saturation": saturation_check(wiki_dir),
         "orphan_dominance": orphan_dominance(results),
         "table_citation_risk": table_citation_risk(wiki_dir),
