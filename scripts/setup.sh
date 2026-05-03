@@ -579,6 +579,7 @@ else
         "printenv CURATOR_PRESET"            # post-preset-config allowlist
         "scripts/projects.py"                # post-multi-project allowlist
         "scripts/activity_log.py"            # post-activity-log allowlist
+        "scripts/planner.py"                 # post-recency-planner allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -672,6 +673,7 @@ EOF
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/projects.py:*)",
       "Bash(uv run python3 $root/scripts/activity_log.py:*)",
+      "Bash(uv run python3 $root/scripts/planner.py:*)",
       "Bash(uv run python3 $root/scripts/wiki_render.py:*)",
       "Bash(uv run python3 $root/scripts/viewer_server.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",

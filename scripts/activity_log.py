@@ -103,6 +103,26 @@ def _split_projects(s: str | None) -> list[str]:
     return [p.strip() for p in s.split(",") if p.strip()]
 
 
+def query_by_project(since: timedelta | None = None) -> dict:
+    """Library entry point: aggregate per-project activity over a time
+    window. Returns the same shape as `query --by-project --since <p>`
+    on the CLI: per-project counts of current/archival ingests and
+    user_signals, plus the decayed ingest_cadence_score over the last
+    4 weeks within the window. Caller is responsible for normalising
+    across projects (planner.py does that for the activity score)."""
+    since_dt = datetime.now(timezone.utc) - since if since else None
+    events = list(_read_events(since=since_dt))
+    return _aggregate_by_project(events)
+
+
+def query_by_page(since: timedelta | None = None) -> dict:
+    """Library entry point: aggregate per-page activity. Same shape
+    as `query --by-page --since <p>` on the CLI."""
+    since_dt = datetime.now(timezone.utc) - since if since else None
+    events = list(_read_events(since=since_dt))
+    return _aggregate_by_page(events)
+
+
 def cmd_log(args: argparse.Namespace) -> int:
     if args.kind == "ingest":
         if not args.page or not args.source:

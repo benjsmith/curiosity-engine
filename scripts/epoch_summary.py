@@ -22,8 +22,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from datetime import timedelta  # noqa: E402
 from lint_scores import compute_all, wiki_pages_in  # noqa: E402
-from naming import WIKILINK_RE, CITATION_RE  # noqa: E402
+from naming import WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
+
+try:
+    from activity_log import query_by_project as _query_activity_by_project
+except ImportError:
+    _query_activity_by_project = None
 
 
 def dimension_distribution(results: list) -> dict:
@@ -437,6 +443,83 @@ def connection_candidates(wiki_dir: Path, limit: int = 5) -> list:
         return []
 
 
+def project_activity(wiki_dir: Path, pages_text: dict, results: list,
+                      window_days: int = 7) -> dict:
+    """Per-project aggregation for the recency-weighted planner.
+
+    Combines two sources:
+      - page frontmatter `projects:` tags from `pages_text`, used to
+        compute per-project page counts and worst-within candidate lists.
+      - activity_log.query_by_project() over the last `window_days`,
+        used to expose the inputs the planner normalises into
+        activity_score (current/archival ingests, user_signals,
+        ingest_cadence_score).
+
+    Pages with no `projects:` tag (or an empty list) are aggregated
+    under `_unclassified` so the planner has a candidate list for the
+    unclassified-bucket slot.
+
+    Additive — existing epoch_summary consumers ignore this field and
+    are unaffected. The recency planner reads it via
+    `planner.py allocate`.
+    """
+    composite_by_page = {r["page"]: r["scores"]["composite"] for r in results}
+    page_to_projects: dict = {}
+    for p, text in pages_text.items():
+        rel = str(p.relative_to(wiki_dir))
+        if rel.startswith("sources/"):
+            continue  # source stubs aren't worker-edit candidates
+        fm, _ = read_frontmatter(text)
+        raw = fm.get("projects") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        page_to_projects[rel] = [s for s in raw if s]
+
+    # Group pages by project (multi-tagged pages contribute to each).
+    by_project: dict = {}
+    unclassified_pages: list = []
+    for rel, projects in page_to_projects.items():
+        if not projects:
+            unclassified_pages.append(rel)
+            continue
+        for proj in projects:
+            by_project.setdefault(proj, []).append(rel)
+
+    def _worst_within(rels: list, k: int = 5) -> list:
+        scored = [(rel, composite_by_page.get(rel, 0.0)) for rel in rels]
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return [
+            {"page": rel, "composite": round(score, 4)}
+            for rel, score in scored[:k]
+        ]
+
+    activity_by_project: dict = {}
+    if _query_activity_by_project is not None:
+        try:
+            activity_by_project = _query_activity_by_project(
+                since=timedelta(days=window_days)
+            )
+        except Exception:
+            activity_by_project = {}
+
+    out: dict = {}
+    for proj, rels in sorted(by_project.items()):
+        act = activity_by_project.get(proj, {})
+        out[proj] = {
+            "page_count": len(rels),
+            "ingests_current": int(act.get("ingests_current", 0)),
+            "ingests_archival": int(act.get("ingests_archival", 0)),
+            "user_signals": int(act.get("user_signals", 0)),
+            "ingest_cadence_score": float(act.get("ingest_cadence_score", 0.0)),
+            "worst_within": _worst_within(rels),
+        }
+    out["_unclassified"] = {
+        "page_count": len(unclassified_pages),
+        "worst_within": _worst_within(unclassified_pages),
+    }
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wiki", nargs="?", default="wiki")
@@ -480,6 +563,7 @@ def main():
         "table_citation_risk": table_citation_risk(wiki_dir),
         "wave_scope": wave_scope(wiki_dir, non_source, scope_threshold),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
+        "project_activity": project_activity(wiki_dir, pages_text, results),
     }
 
     print(json.dumps(summary, indent=2))
