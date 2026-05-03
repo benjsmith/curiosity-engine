@@ -4,6 +4,8 @@
 
 This document captures the design for organizing knowledge across many projects in a single wiki. The user-facing model is "drop things in, run `curate`, occasionally `archive`." Project membership is derived from the citation graph, not declared by the user. The planner allocates worker effort across projects by recent activity, with an inverted-weight `archival` mode for working on neglected material.
 
+**No-projects default.** Plain literature wikis that don't use the multi-project model see no behaviour change. Until the user runs `projects.py create <name>` for the first time, `epoch_summary.project_activity` is suppressed (returns `{}`), `connection_candidates` ships without project-tag enrichment, the viewer's sidebar omits the `Projects` group (no records → no group), and no command auto-suggests projects. The orchestrator sees the same JSON shape it saw pre-multi-project. The first `projects.py create` is what activates the rest of the machinery.
+
 ## Verb cheatsheet
 
 | Verb | Scope | Purpose |

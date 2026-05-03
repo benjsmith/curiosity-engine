@@ -453,6 +453,20 @@ def connection_candidates(wiki_dir: Path, limit: int = 5,
     except Exception:
         return []
 
+    # Skip project-tag enrichment on plain wikis with no project
+    # home pages — keeps the candidate list shape identical to the
+    # pre-multi-project flow so literature-only wikis aren't paying
+    # for fields they'll never use.
+    homes_dir = wiki_dir / "projects"
+    has_home_page = (
+        homes_dir.is_dir() and any(
+            p.suffix == ".md" and p.name != ".gitkeep"
+            for p in homes_dir.iterdir()
+        )
+    )
+    if not has_home_page:
+        return candidates
+
     # Enrich with project tags. Build a {rel_path: [projects]} index
     # from pages_text (passed by main()) — falls back to a per-candidate
     # frontmatter read when pages_text is unavailable.
@@ -508,7 +522,25 @@ def project_activity(wiki_dir: Path, pages_text: dict, results: list,
     Additive — existing epoch_summary consumers ignore this field and
     are unaffected. The recency planner reads it via
     `planner.py allocate`.
+
+    No-projects suppression: when the wiki has zero project home
+    pages on disk, returns an empty dict — the user clearly isn't
+    using the multi-project model and shouldn't see an
+    `_unclassified` bucket counting every page in their library
+    (which would tempt the orchestrator to suggest projects
+    unprompted). Plain literature wikis are silent on this surface
+    until the user's first `projects.py create`.
     """
+    homes_dir = wiki_dir / "projects"
+    has_home_page = (
+        homes_dir.is_dir() and any(
+            p.suffix == ".md" and p.name != ".gitkeep"
+            for p in homes_dir.iterdir()
+        )
+    )
+    if not has_home_page:
+        return {}
+
     composite_by_page = {r["page"]: r["scores"]["composite"] for r in results}
     page_to_projects: dict = {}
     for p, text in pages_text.items():
