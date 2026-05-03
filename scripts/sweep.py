@@ -3879,23 +3879,37 @@ def _semantic_classify_step(
 
 
 def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
-    """Derive each page's `projects:` set from the citation graph.
+    """Derive each page's `projects:` set from the citation graph and
+    (when configured) semantic similarity to project home pages.
 
-    Citation-graph signals only in this wave (semantic-similarity step
-    deferred per docs/multi-project.md). Algorithm:
+    Algorithm (run order matters — semantic seeds, citation propagates
+    one hop only):
 
       1. Read every page's current `projects:` set from frontmatter.
       2. For project home pages (`type: project`, living under
          `wiki/projects/`), seed `projects: [<own-stem>]` and freeze —
          home pages don't accumulate inherited tags.
-      3. Build the inbound wikilink graph (citing_stem -> {target_stems}).
-      4. Iterate to fixed point: each non-home page's project set
-         becomes the union of its current set + the project sets of
-         all pages that wikilink TO it. Monotonic-additive — never
-         removes a tag (user overrides survive; unwanted tags can be
-         hand-edited and a future SHRINK pass added later).
-      5. Write back any pages whose projects changed; log the change
-         to `.curator/log.md` under a `## classify-projects <ts>` block.
+      3. **Semantic step (wave 4)**: cosine similarity of each
+         unclassified non-home page against project home embeddings.
+         Single best match above threshold gets assigned. Cold-start
+         guarded.
+      4. **Citation step (one-hop, source-stubs only)**: each source
+         stub's project set grows by the union of project sets of
+         pages that wikilink TO it. Restricted to source stubs
+         because they have no body content for the semantic step to
+         work on; their citers tell us which project they belong to.
+         Non-source pages (concepts, entities, analyses, evidence,
+         facts) stay on the semantic-only channel — the citation
+         graph between non-source pages is dense enough that cascade
+         across runs would over-tag every hub page with every
+         project. The source-stub restriction makes the classifier
+         idempotent.
+      5. Write back any pages whose projects changed; log to
+         `.curator/log.md` under a `## classify-projects <ts>` block,
+         tagging each change as `[semantic, sim=...]` or `[citation]`.
+
+    Monotonic-additive: never removes a tag (user overrides survive).
+    Idempotent: re-running with no new semantic assignments is a no-op.
 
     `--dry-run`: report what would change without writing.
 
@@ -3934,29 +3948,10 @@ def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
         if target in page_projects:
             inbound[target].add(citing_stem)
 
-    # Iterate to fixed point. Five passes is enough for any realistic
-    # citation chain; bail early when nothing changes.
-    for _ in range(5):
-        any_change = False
-        for stem in page_projects:
-            if stem in home_stems:
-                continue  # home pages don't accumulate
-            citing_stems = inbound.get(stem, ())
-            if not citing_stems:
-                continue
-            inherited: set = set()
-            for cs in citing_stems:
-                inherited |= page_projects.get(cs, set())
-            new_set = page_projects[stem] | inherited
-            if new_set != page_projects[stem]:
-                page_projects[stem] = new_set
-                any_change = True
-        if not any_change:
-            break
-
-    # Wave-4 semantic step: fills gaps the citation graph can't reach
-    # (uncited pages with no inbound wikilinks yet). Runs only above the
-    # cold-start threshold and only when embedding stack is enabled.
+    # Wave-4 semantic step runs FIRST so the subsequent citation
+    # propagation has anchors to spread from. Cold-start guard skips
+    # when fewer than min_home_pages projects have substantive home
+    # pages.
     classifier_cfg = _project_classifier_config(wiki_dir)
     semantic_status = _semantic_classify_step(
         wiki_dir, page_projects, page_by_stem, home_stems, classifier_cfg
@@ -3965,6 +3960,45 @@ def cmd_classify_projects(wiki_dir: Path, dry_run: bool = False):
         {a["stem"]: a for a in semantic_status.get("assignments", [])}
         if semantic_status.get("ran") else {}
     )
+
+    # Citation step — one-hop propagation, restricted to **source
+    # stubs only**. Source stubs have no body content so the semantic
+    # step can't classify them; their direct citers (analyses,
+    # concepts, entities) tell us which projects they belong to.
+    # Non-source pages stay on the semantic + user-set channel only,
+    # because the citation graph for non-source pages is dense enough
+    # that cascade across multiple classify runs would over-tag every
+    # hub page with every project. This restriction makes the
+    # classifier idempotent: re-running with no new semantic
+    # assignments is a no-op, and the same wiki state always
+    # produces the same tag assignments.
+    page_types: dict = {}
+    for stem, path in page_by_stem.items():
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        fm, _ = read_frontmatter(text)
+        page_types[stem] = fm.get("type", "")
+
+    for stem in page_projects:
+        if stem in home_stems:
+            continue
+        if page_types.get(stem) != "source":
+            continue
+        citing_stems = inbound.get(stem, ())
+        if not citing_stems:
+            continue
+        inherited: set = set()
+        for cs in citing_stems:
+            # Non-source citers only — source-to-source propagation
+            # would chain through the citation graph (papers cite
+            # papers) and grow tags multi-hop across runs. Tag flow
+            # is "non-source page → source stub it cites, full stop".
+            if page_types.get(cs) == "source":
+                continue
+            inherited |= page_projects.get(cs, set())
+        page_projects[stem] = page_projects[stem] | inherited
 
     # Write back changes.
     log_entries: list = []
