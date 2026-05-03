@@ -74,7 +74,7 @@ window.Graph = (function () {
   const ALL_LABEL_TYPES = [
     'concept', 'entity', 'evidence', 'fact', 'analysis',
     'figure',  'table',  'source',   'note', 'todo',
-    'unclassified',
+    'project', 'unclassified',
   ];
   let _labelTypeFilter = (() => {
     try {

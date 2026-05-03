@@ -24,13 +24,15 @@ window.Sidebar = (function () {
     source:       'source',       sources:  'source',
     note:         'note',         notes:    'note',
     todo:         'todo-list',    'todo-list': 'todo-list',
+    project:      'project',      projects: 'project',
     unclassified: 'unclassified',
   };
   const TYPE_ORDER = [
-    'analysis', 'concept', 'entity', 'evidence', 'fact', 'figure',
+    'project', 'analysis', 'concept', 'entity', 'evidence', 'fact', 'figure',
     'table', 'source', 'note', 'todo-list', 'unclassified',
   ];
   const TYPE_LABEL = {
+    project:      'Projects',
     analysis:     'Analyses',
     concept:      'Concepts',
     entity:       'Entities',

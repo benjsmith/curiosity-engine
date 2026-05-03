@@ -62,8 +62,13 @@ PALETTE = {
     "notes":        "#9aa0a8",
     "todo":         "#c8744a",  # terracotta
     "todo-list":    "#c8744a",
-    "unclassified": "#6b7080",  # slate grey — pages whose type doesn't
-                                  # match a canonical category yet
+    "project":      "#3a4ca8",  # deep indigo — distinct from source
+                                  # steel-blue and analysis mauve;
+                                  # reads as "container/group"
+    "projects":     "#3a4ca8",
+    "unclassified": "#a8a29e",  # warm taupe-grey — visually recedes
+                                  # so loose-ends pages don't compete
+                                  # with primary categories
     "default":      "#7a7a7a",  # neutral fallback (rarely visible)
 }
 
@@ -76,7 +81,7 @@ KNOWN_TYPES = frozenset({
     "concept", "concepts", "analysis", "analyses",
     "evidence", "fact", "facts", "table", "tables",
     "figure", "figures", "note", "notes",
-    "todo", "todo-list",
+    "todo", "todo-list", "project", "projects",
 })
 
 

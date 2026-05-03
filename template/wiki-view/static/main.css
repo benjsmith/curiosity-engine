@@ -56,7 +56,9 @@
   --type-notes:         #9aa0a8;
   --type-todo:          #c8744a;
   --type-todo-list:     #c8744a;
-  --type-unclassified:  #6b7080;
+  --type-project:       #3a4ca8;
+  --type-projects:      #3a4ca8;
+  --type-unclassified:  #a8a29e;
   --type-default:       #7a7a7a;
 
   --sidebar-w:    280px;
@@ -242,6 +244,8 @@ body[data-sidebar="collapsed"] #sidebar > * { display: none; }
 .dot.dot-notes     { background: var(--type-notes); }
 .dot.dot-todo         { background: var(--type-todo); }
 .dot.dot-todo-list    { background: var(--type-todo-list); }
+.dot.dot-project      { background: var(--type-project); }
+.dot.dot-projects     { background: var(--type-projects); }
 .dot.dot-unclassified { background: var(--type-unclassified); }
 
 .sidebar-foot {
