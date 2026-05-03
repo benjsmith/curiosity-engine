@@ -68,6 +68,10 @@ try:
     from vault_index import index_file_result as _vault_index_add
 except ImportError:
     _vault_index_add = None
+try:
+    from activity_log import log_event as _log_activity
+except ImportError:
+    _log_activity = None
 
 DEFAULT_EXTS = {".md", ".txt", ".rst", ".html", ".htm", ".json", ".yaml",
                  ".yml", ".org", ".pdf", ".csv", ".xlsx", ".pptx"}
@@ -400,7 +404,14 @@ def slugify(path: Path, root: Path) -> str:
     return "".join(c if c.isalnum() or c in "-." else "-" for c in s)[:80]
 
 
-def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
+def ingest_one(
+    path: Path,
+    root: Path,
+    cfg: dict,
+    is_drop: bool,
+    archival: bool = False,
+    projects: list[str] | None = None,
+) -> dict:
     result = {"source_path": str(path), "ok": False, "reason": None}
     if path.is_symlink():
         result["reason"] = "symlink (not ingested)"
@@ -586,6 +597,14 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
             "untrusted: true",
             "source_type: local_file",
         ]
+        # Multi-project metadata: ingest_kind ("archival" only emitted when
+        # set; absence implies current — keeps frontmatter clean for the
+        # common case). projects pre-tags the source so the citation-graph
+        # classifier (sweep.py classify-projects) doesn't have to guess.
+        if archival:
+            fm_lines.append("ingest_kind: archival")
+        if projects:
+            fm_lines.append(f"projects: [{', '.join(projects)}]")
         if is_pdf:
             fm_lines.extend([
                 f"has_math: {str(has_math).lower()}",
@@ -624,6 +643,21 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
             except Exception as e:
                 indexed = {"status": "error", "error": str(e)}
 
+        # Activity log: record the ingest event so the recency planner
+        # has cadence + per-project counts. Best-effort — a failed log
+        # write must not break ingest.
+        if _log_activity is not None:
+            try:
+                _log_activity(
+                    "ingest",
+                    page=str(extracted_path),
+                    source=str(path),
+                    ingest_kind="archival" if archival else "current",
+                    projects=projects or [],
+                )
+            except Exception:
+                pass
+
         result.update({
             "ok": True,
             "kept": str(kept_path),
@@ -638,6 +672,8 @@ def ingest_one(path: Path, root: Path, cfg: dict, is_drop: bool) -> dict:
             "tables_extracted": tables_extracted,
             "sha256": sha[:12],
             "moved": is_drop,
+            "ingest_kind": "archival" if archival else "current",
+            "projects": projects or [],
             "indexed": indexed.get("status") if isinstance(indexed, dict) else None,
         })
         return result
@@ -653,6 +689,17 @@ def main() -> int:
     ap.add_argument("--exts", type=str, default=None,
                     help="comma-separated extensions to include (default: md,txt,rst,html,json,yaml,org)")
     ap.add_argument("--max-files", type=int, default=500)
+    ap.add_argument("--archival", action="store_true",
+                    help="Tag ingests as archival (sets ingest_kind: archival "
+                         "in frontmatter and on the activity-log event). "
+                         "Default-mode planner activity score excludes "
+                         "archival ingests; archival mode counts them.")
+    ap.add_argument("--projects", type=str, default=None,
+                    help="Comma-separated project names to pre-tag. Skips "
+                         "the citation-graph classifier for these items "
+                         "and seeds the projects: frontmatter directly. "
+                         "Use when the user explicitly invokes "
+                         "'add ... to <project>' or 'archive ... to <project>'.")
     args = ap.parse_args()
 
     if args.directory is None:
@@ -680,8 +727,17 @@ def main() -> int:
                            "ok": 0, "mode": "drop" if is_drop else "copy"}))
         return 0
 
+    projects = (
+        [p.strip() for p in args.projects.split(",") if p.strip()]
+        if args.projects else None
+    )
+
     t0 = time.time()
-    results = [ingest_one(p, args.directory, cfg, is_drop) for p in candidates]
+    results = [
+        ingest_one(p, args.directory, cfg, is_drop,
+                   archival=args.archival, projects=projects)
+        for p in candidates
+    ]
     elapsed = time.time() - t0
 
     ok = sum(1 for r in results if r["ok"])
