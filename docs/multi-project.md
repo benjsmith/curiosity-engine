@@ -148,7 +148,9 @@ Mechanical, contained. No deleted-table writes (use `delete` if you want recover
 
 ## Wiki merge
 
-`curiosity merge ../wiki-b --as-origin <name>`:
+**Ships as a separate skill: `curiosity-merge`** (planned). The merge / subgraph-export / discover-bridges verbs operate on external data (someone else's wiki) and have a different trust model than daily curation, a smaller audience, and an independent release cadence. Installable from curiosity-engine's `setup.sh` optional-install menu alongside caveman and semantic-search. Public sub-wikis use the GitHub topic tag `curiosity-wiki` for discovery.
+
+`curiosity-merge merge ../wiki-b --as-origin <name>`:
 
 1. **Vault reconciliation**: walk `wiki-b/vault/`, sha256 each file, compare to `wiki-a/vault/` index. Identical content (different filename) → dedupe to one canonical name; rewrite citation stems via `naming.py resync-stems`. Different content (same filename) → rename one with discriminator.
 2. **Source-stub reconciliation**: stems collapse naturally after vault dedup. Two stubs pointing at the same vault file → merge into one (union the citing-page sets, preserve both wikis' notes/annotations).
