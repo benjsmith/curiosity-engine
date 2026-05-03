@@ -71,10 +71,11 @@ window.Graph = (function () {
   // titles to show by default. Persisted in localStorage; user toggles
   // via the label-types popover.
   const LABEL_TYPE_DEFAULTS = ['concept', 'entity', 'note', 'todo'];
+  // Order mirrors the sidebar's TYPE_ORDER so the labels dropdown
+  // and the sidebar group order stay in sync.
   const ALL_LABEL_TYPES = [
-    'concept', 'entity', 'evidence', 'fact', 'analysis',
-    'figure',  'table',  'source',   'note', 'todo',
-    'project', 'unclassified',
+    'project', 'analysis', 'concept', 'entity', 'evidence', 'fact',
+    'figure',  'table',    'source',  'note',   'todo',     'unclassified',
   ];
   let _labelTypeFilter = (() => {
     try {
