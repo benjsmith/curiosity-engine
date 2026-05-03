@@ -2,6 +2,10 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-03 — semantic classifier step (wave 4)
+
+- **Semantic similarity layer in `classify-projects`** (`eb83043`). Runs after the citation-graph fixed-point pass — fills gaps for pages with no inbound wikilinks yet (the citation step can't reach them). Cold-start guard: when fewer than `project_classifier_min_home_pages` (default 5) projects have substantive home pages (≥ `project_classifier_home_min_words`, default 30, after stripping the curator's stub line), the step is skipped without loading any model. Past cold-start: respects `embedding_enabled`, degrades cleanly when `sentence-transformers` / `numpy` are missing. Encodes target pages and project home bodies with `all-MiniLM-L6-v2`, computes cosine similarity (dot product on unit-normalised vectors), assigns the single best match above `project_classifier_confidence_threshold` (default 0.5). Audit log distinguishes citation vs semantic source per assignment with similarity score. New keys in `template/config.json`; setup's additive merge brings them into existing workspaces. Citation step (wave 1b) unchanged — regression-checked.
+
 ## 2026-05-03 — recency planner (wave 3)
 
 - **Soft-deleted pages excluded from page scans** (`0dd955f`). Independently useful bug fix: `lint_scores.wiki_pages_in` and `sweep.wiki_pages` were filtering only filename-level dotfiles, so paths inside `wiki/.deleted/<project>/` (created by `projects.py delete`) were still scored, classified, and surfaced as worst-page candidates. The fix walks `relative_to(wiki_dir).parts` and rejects any path where any directory segment starts with a dot — same predicate `projects.py` already uses.
