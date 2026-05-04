@@ -103,28 +103,34 @@ for _alt in "${SKILL_ROOT_PHYSICAL/$_agents_seg/$_claude_seg}" \
 done
 
 # Ensure `uv` is available. The skill's canonical Python invocation is
-# `uv run python3 ...`, which auto-discovers the workspace `.venv`. Without
-# uv the allowlist won't match and every python command triggers approval.
+# `uv run python3 ...`, which auto-discovers the workspace `.venv`.
+# Without uv the allowlist won't match and every python command
+# triggers approval.
+#
+# Earlier versions of this script auto-installed uv via
+# `curl -LsSf https://astral.sh/uv/install.sh | sh` — the classic
+# pipe-to-shell pattern that makes any audit reviewer wince and that
+# gives Astral implicit RCE on first install. We don't do that
+# anymore. If uv isn't present, the script prints platform-specific
+# install commands and exits — the user runs them and reruns setup.
+# This keeps third-party install scripts under explicit user control.
 if ! command -v uv >/dev/null 2>&1; then
-    if _is_interactive; then
-        printf "uv not found. Install uv from astral.sh? [Y/n] "
-        read -r reply_uv || reply_uv="y"
-    else
-        reply_uv="y"
-    fi
-    case "$reply_uv" in
-        ""|y|Y|yes|YES)
-            echo "  Installing uv ..."
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-            # shellcheck disable=SC1091
-            [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
-            export PATH="$HOME/.local/bin:$PATH"
-            ;;
-        *)
-            echo "  Cannot proceed without uv. Install manually: curl -LsSf https://astral.sh/uv/install.sh | sh"
-            exit 1
-            ;;
-    esac
+    cat >&2 <<'EOF'
+
+ERROR: uv not found on PATH. curiosity-engine needs uv to manage its
+       workspace .venv. Install it explicitly (we don't auto-pipe
+       installer scripts), then re-run setup.sh:
+
+  macOS (Homebrew):     brew install uv
+  macOS / Linux (curl): curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh
+                        # inspect /tmp/uv-install.sh, then:
+                        sh /tmp/uv-install.sh
+  Linux (apt):          (uv isn't in apt yet — use the curl path)
+  pip:                  pip install --user uv
+  More options:         https://docs.astral.sh/uv/getting-started/installation/
+
+EOF
+    exit 1
 fi
 
 # Workspace-local uv cache (sandbox-safe by default). Coding-agent CLIs

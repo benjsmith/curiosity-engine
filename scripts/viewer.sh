@@ -2,13 +2,17 @@
 # viewer.sh — build/serve the custom wiki viewer (graph-first, D3-based).
 #
 # Curiosity-engine-native browser-based wiki view. The build script
-# (wiki_render.py) walks wiki/, queries the kuzu graph,
-# and emits a single static-site bundle into
+# (wiki_render.py) walks wiki/, queries the kuzu graph, copies the
+# template/wiki-view/ tree (HTML, CSS, JS, vendor bundles) and emits
+# a single static-site bundle into
 #   ~/.cache/curiosity-engine/wiki-view/<workspace>/
 #
-# Vendor libraries (D3 + Fuse.js) are downloaded once into a shared
-# location and copied into each workspace bundle, so the rendered
-# site stays self-contained and offline-capable.
+# Vendor libraries (D3 + Fuse.js) are committed in-repo at
+# template/wiki-view/static/vendor/ and copied into each workspace
+# bundle by wiki_render.py's static-tree walk. No CDN download at
+# build time — the bundles travel with the skill, ensuring offline
+# builds and closing the supply-chain risk of a compromised CDN.
+# Versions + sha256 hashes are recorded in RELEASE_CHECKLIST.md.
 #
 # Usage:
 #   viewer.sh build           # Build the bundle
@@ -30,30 +34,8 @@ fi
 WORKSPACE_NAME="$(basename "$WORKSPACE")"
 OUTPUT_ROOT="$HOME/.cache/curiosity-engine/wiki-view"
 OUTPUT_DIR="$OUTPUT_ROOT/$WORKSPACE_NAME"
-VENDOR_DIR="$HOME/.cache/curiosity-engine/wiki-view-vendor"
-
-D3_URL="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
-FUSE_URL="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"
-
-ensure_vendor() {
-    mkdir -p "$VENDOR_DIR"
-    if [ ! -s "$VENDOR_DIR/d3.min.js" ]; then
-        echo "  Downloading D3 ..."
-        curl -fsSL -o "$VENDOR_DIR/d3.min.js" "$D3_URL" \
-            || { echo "  Download failed; viewer needs $D3_URL" >&2; exit 1; }
-    fi
-    if [ ! -s "$VENDOR_DIR/fuse.min.js" ]; then
-        echo "  Downloading Fuse.js ..."
-        curl -fsSL -o "$VENDOR_DIR/fuse.min.js" "$FUSE_URL" \
-            || { echo "  Download failed; viewer needs $FUSE_URL" >&2; exit 1; }
-    fi
-}
 
 build() {
-    ensure_vendor
-    mkdir -p "$OUTPUT_DIR/static/vendor"
-    cp "$VENDOR_DIR/d3.min.js"   "$OUTPUT_DIR/static/vendor/d3.min.js"
-    cp "$VENDOR_DIR/fuse.min.js" "$OUTPUT_DIR/static/vendor/fuse.min.js"
     uv run python3 "$SCRIPT_DIR/wiki_render.py" build "$WIKI_ABS" \
         --output-dir "$OUTPUT_DIR"
 }
