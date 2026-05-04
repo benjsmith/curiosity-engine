@@ -1232,13 +1232,15 @@ def _restore_page_body(page_path: Path, headers: list,
         skip_block = False
         new_fm_lines.append(ln)
     new_fm = "\n".join(new_fm_lines)
-    # Strip review block.
-    review_re = __import__("re").compile(
-        r"\n*## Numeric review.*?(?=\n## |\Z)", __import__("re").DOTALL
+    # Strip review block. Static analyzers flagged the previous
+    # `__import__("re")` form as dynamic-import-with-eval-shape; it
+    # was always just `re.compile`. Use the top-level import directly.
+    review_re = re.compile(
+        r"\n*## Numeric review.*?(?=\n## |\Z)", re.DOTALL
     )
     body = review_re.sub("", body).rstrip() + "\n"
     # Rewrite first GFM block in body.
-    block_re = __import__("re").compile(
+    block_re = re.compile(
         r"(?:^|\n)([ \t]*\|[^\n]*\|[ \t]*\n"
         r"[ \t]*\|[ \t:\-|]+\|[ \t]*\n"
         r"(?:[ \t]*\|[^\n]*\|[ \t]*\n?)*)"

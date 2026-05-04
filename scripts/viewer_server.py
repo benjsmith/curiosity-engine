@@ -134,6 +134,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """Re-render the bundle so data.json reflects the latest write.
         Failures are logged but don't fail the request — the file write
         already succeeded.
+
+        subprocess.run is called with a list-form argv (no shell=True)
+        and every argument is hardcoded or derived from
+        `Path(__file__).parent` — no command-injection vector. Static
+        analyzers flag subprocess.run on sight; this comment documents
+        why this call site is safe.
         """
         try:
             subprocess.run(
