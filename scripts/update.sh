@@ -7,9 +7,13 @@
 #
 #   * git-clone install → `git pull` in the skill dir
 #   * npx-skills install (no .git in skill dir) → `npx skills update -g
-#     <slug>`, where slug comes from `update_source_slug` in the workspace's
-#     `.curator/config.json`. Defaults to the upstream value seeded by
-#     setup.sh; fork users edit the key once in their workspace config.
+#     <slug>`. Slug defaults to the hardcoded upstream
+#     (`benjsmith/curiosity-engine`); fork users override
+#     per-invocation with `--source <owner>/<repo>`. The slug is
+#     deliberately NOT read from .curator/config.json — keeping
+#     update sources out of editable config closes the slug-flip
+#     vector flagged by Socket. The override is validated against
+#     a strict GitHub-slug regex.
 #
 # Flow (identical for humans and agents — strictly two-step):
 #
@@ -50,19 +54,59 @@ else
     exit 1
 fi
 
-# Slug only matters for the npx path, but read it early so the plan
-# output can show it. Value comes from the workspace config
-# (editable per-workspace); falls back to the upstream default so
-# freshly-seeded workspaces work without extra user action.
-SLUG="$(uv run --no-project python3 -c "
-import json, sys
-try:
-    print(json.load(open('.curator/config.json')).get('update_source_slug', ''))
-except Exception:
-    pass
-" 2>/dev/null || true)"
-if [ -z "$SLUG" ]; then
-    SLUG="benjsmith/curiosity-engine"
+# Default upstream — hardcoded, not config-derived. A configurable
+# update source is a real supply-chain risk: a malicious agent or
+# tampered config could redirect updates to a fork that ships
+# arbitrary code. Even though npx-skills today only uses the bare
+# skill name (the owner prefix is stripped in SKILL_NAME below) and
+# git installs ignore the slug entirely, we still validate
+# defence-in-depth.
+UPSTREAM_SLUG_DEFAULT="benjsmith/curiosity-engine"
+
+# Source resolution order:
+#   1. --source <slug> on the command line (explicit per-invocation override)
+#   2. UPSTREAM_SLUG_DEFAULT (the hardcoded upstream)
+# `.curator/config.json`'s `update_source_slug` is INTENTIONALLY NOT
+# read by default — keeping update sources out of editable config
+# closes the slug-flip vector flagged by Socket. Fork users pass
+# `--source theirfork/curiosity-engine` on every update.
+SLUG="$UPSTREAM_SLUG_DEFAULT"
+SOURCE_OVERRIDE=""
+_args=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --source)
+            shift
+            SOURCE_OVERRIDE="$1"
+            ;;
+        --source=*)
+            SOURCE_OVERRIDE="${1#--source=}"
+            ;;
+        *)
+            _args+=("$1")
+            ;;
+    esac
+    shift || true
+done
+set -- "${_args[@]}"
+
+if [ -n "$SOURCE_OVERRIDE" ]; then
+    # Validate slug format: <owner>/<repo>, both segments matching
+    # GitHub's allowed character set. Rejects URLs, paths, shell
+    # metacharacters, anything not looking like a GitHub repo slug.
+    if ! printf '%s' "$SOURCE_OVERRIDE" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+        echo "ERROR: invalid --source value: $SOURCE_OVERRIDE" >&2
+        echo "       Expected GitHub-style <owner>/<repo>." >&2
+        exit 2
+    fi
+    SLUG="$SOURCE_OVERRIDE"
+fi
+
+# Show prominent warning when running off-upstream so the user can
+# spot accidental redirects at the preview stage.
+SLUG_BANNER=""
+if [ "$SLUG" != "$UPSTREAM_SLUG_DEFAULT" ]; then
+    SLUG_BANNER=$'\n  ⚠ NON-DEFAULT SOURCE: '"$SLUG"$'\n  ⚠ (upstream is '"$UPSTREAM_SLUG_DEFAULT"$', overridden via --source)\n'
 fi
 # npx-skills tracks installs by bare skill name (the repo portion of
 # the slug), not the full owner/repo form — `npx skills update -g
@@ -109,7 +153,10 @@ else
     echo ""
     echo "=== npx-skills update plan ==="
     echo "  Skill dir:  $SKILL_ROOT (no .git)"
-    echo "  Slug:       $SLUG  (from .curator/config.json → update_source_slug)"
+    echo "  Slug:       $SLUG"
+    if [ -n "$SLUG_BANNER" ]; then
+        printf '%s' "$SLUG_BANNER"
+    fi
     echo "  Will run:   npx skills update -g $SKILL_NAME"
     echo ""
     echo "  Detailed release notes aren't available for npx-skills installs —"
@@ -214,8 +261,8 @@ else
         echo "ERROR: npx-skills did not recognise '$SKILL_NAME'. Installed skills:"
         npx skills list -g 2>&1 | grep -E '^[[:space:]]*[a-z]' | head -20
         echo ""
-        echo "Set update_source_slug in .curator/config.json to a value whose last"
-        echo "segment matches one of the installed skill names above."
+        echo "Pass --source <owner>/<repo-name> on the next invocation, where"
+        echo "<repo-name> matches one of the installed skill names above."
         exit 1
     fi
 fi
