@@ -586,6 +586,7 @@ else
         "scripts/projects.py"                # post-multi-project allowlist
         "scripts/activity_log.py"            # post-activity-log allowlist
         "scripts/planner.py"                 # post-recency-planner allowlist
+        "scripts/identifier_resolve.py"      # post-resolver-split allowlist
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -678,6 +679,7 @@ EOF
       "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/projects.py:*)",
+      "Bash(uv run python3 $root/scripts/identifier_resolve.py:*)",
       "Bash(uv run python3 $root/scripts/activity_log.py:*)",
       "Bash(uv run python3 $root/scripts/planner.py:*)",
       "Bash(uv run python3 $root/scripts/wiki_render.py:*)",

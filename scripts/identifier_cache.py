@@ -1,50 +1,58 @@
 #!/usr/bin/env python3
-"""identifier_cache.py — chemical/gene name → canonical-ID resolver.
+"""identifier_cache.py — chemical/gene identifier cache + request queue.
 
-A deterministic, on-demand utility that maps free-text scientific
-identifiers (chemical names, gene symbols) to canonical IDs (SMILES,
-InChI, Ensembl, UniProt) via PubChem and MyGene.info. Results are
-cached at `.curator/identifiers.db` (SQLite, WAL) so repeated lookups
-don't re-hit the network.
+Cache-only layer for the identifier-resolution flow. NO NETWORK
+calls happen in this script — `urllib` is not imported. The network
+layer lives in `identifier_resolve.py` and runs only when the user
+explicitly approves a batch via `identifier_resolve.py run --yes`.
 
-Design principles
------------------
-- Lazy / on-demand. Never invoked at ingest. Synthesis workers
-  (`summary_table_builder`, `analysis_writer`) call into this when
-  they cite cells from a `[tab]` page whose `normalise_columns` fm
-  flag identifies a chemistry or gene-symbol column.
-- Offline-friendly. `CURIOSITY_ENGINE_OFFLINE=1` env var → skip HTTP,
-  return only cached results. Air-gapped users keep populating the
-  cache offline (it's a local SQLite); resolutions surface when
-  network access returns.
-- No new deps. Stdlib only — `urllib.request`, `sqlite3`, `json`. No
-  Anthropic SDK calls; this is a pure-data utility.
-- Status-aware caching. `status: ok | not_found | offline`. Only
-  `ok` and `not_found` rows are authoritative — `offline` rows are
-  retried on the next call (a cache marker, not a result).
+The split exists for security:
+
+- Workers (synthesis Agents) call this script's `queue` subcommand to
+  record what they'd like resolved. The request lands in
+  `.curator/identifier-requests.jsonl` — a local JSONL file the user
+  can inspect before any network call happens.
+- Workers also call `lookup-chemical` / `lookup-gene` / `bulk-lookup`
+  to read CACHED resolutions from `.curator/identifiers.db`. Cache
+  hits return immediately; cache misses return `status: pending`
+  (the request is queued for the next manual resolve pass).
+- The user periodically inspects the queue (`identifier_resolve.py
+  review`) and explicitly drains it (`identifier_resolve.py run --yes`).
+  That's the only path that hits the network, gated by
+  `identifier_resolution.enabled = true` in `.curator/config.json`.
+
+Why this matters: chemical and gene identifiers are sometimes
+sensitive (proprietary structures, novel target lists). Sending them
+to a public database without explicit user gesture is a
+data-exfiltration risk for some users. The split makes the network
+hop visible, opt-in, and configurable (point at an internal API
+mirror in enterprise settings).
 
 Subcommands
 -----------
     identifier_cache.py lookup-chemical <name>
-        Returns {name, name_norm, smiles, inchi, source, status, cached}.
+        Read-only cache hit by chemical name. Returns the cached row
+        or `{status: pending}` for misses (and queues the lookup).
 
     identifier_cache.py lookup-gene <symbol>
-        Returns {symbol, symbol_norm, ensembl_id, uniprot_id, source,
-                 status, cached}.
+        Read-only cache hit by gene symbol. Same semantics.
 
-    identifier_cache.py bulk-lookup --type chemicals|genes
-                                       --names-json '[...]'
-        Resolve a list of names in one call. Output is a JSON array of
-        per-name resolution dicts. Cache-aware: hits go straight back
-        without HTTP.
+    identifier_cache.py bulk-lookup --type chemicals|genes --names-json '[...]'
+        Cache-aware batch read. Hits go straight back; misses are
+        appended to the request queue and surfaced as
+        `{status: pending}` in the result list.
+
+    identifier_cache.py queue --type chemicals|genes --names-json '[...]'
+                              [--source-page <wiki/path.md>]
+        Append a resolution request to the queue without checking
+        cache. Used by orchestrators that want to record
+        future-needed resolutions explicitly.
+
+    identifier_cache.py pending
+        List queued requests waiting for the next resolve pass.
 
     identifier_cache.py cache-stats
-        Row counts per table + status breakdown. Useful for
-        deployment-time visibility.
-
-Exit codes: 0 = ok, 1 = argument error, 2 = unrecoverable HTTP /
-DB error (rare — most network failures land in cache as `offline`
-status without raising).
+        Row counts per table + status breakdown.
 
 Hash-guarded by evolve_guard.sh.
 """
@@ -53,26 +61,15 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
-import os
 import re
 import sqlite3
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 
 DB_PATH = Path(".curator/identifiers.db")
-HTTP_TIMEOUT = 5.0
-
-PUBCHEM_BASE = (
-    "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/"
-)
-MYGENE_BASE = "https://mygene.info/v3/query"
-
-OFFLINE_ENV = "CURIOSITY_ENGINE_OFFLINE"
+QUEUE_PATH = Path(".curator/identifier-requests.jsonl")
 
 
 # ---- DB lifecycle ----
@@ -115,317 +112,232 @@ def _now_iso() -> str:
 
 
 def _normalise_name(name: str) -> str:
-    """Lowercase + collapse whitespace + strip punctuation noise.
-
-    Used as the cache key so `Tris`, `tris`, and `Tris ` all hit the
-    same row. Preserves Greek letters and hyphens (which carry meaning
-    in chemical names like 2-amino-2-(hydroxymethyl)propane-1,3-diol)
-    by intent — we collapse only structural whitespace.
-    """
+    """Lowercase + collapse whitespace + strip punctuation noise."""
     return re.sub(r"\s+", " ", name.strip().lower())
-
-
-def _is_offline() -> bool:
-    return os.environ.get(OFFLINE_ENV, "").lower() in ("1", "true", "yes")
 
 
 # ---- Cache reads ----
 
-def _read_chemical(conn, name_norm: str) -> Optional[dict]:
+def read_chemical(conn, name_norm: str) -> Optional[dict]:
+    """Public reader — used by identifier_resolve.py to check cache
+    before hitting the network."""
     cur = conn.execute(
         "SELECT name_norm, smiles, inchi, inchikey, cid, source, status, "
         "fetched_at FROM chemicals WHERE name_norm = ?",
         (name_norm,),
     )
-    r = cur.fetchone()
-    if not r:
+    row = cur.fetchone()
+    if row is None:
         return None
     return {
-        "name_norm": r[0], "smiles": r[1], "inchi": r[2],
-        "inchikey": r[3], "cid": r[4], "source": r[5],
-        "status": r[6], "fetched_at": r[7],
+        "name_norm": row[0], "smiles": row[1], "inchi": row[2],
+        "inchikey": row[3], "cid": row[4], "source": row[5],
+        "status": row[6], "fetched_at": row[7],
     }
 
 
-def _read_gene(conn, symbol_norm: str) -> Optional[dict]:
+def read_gene(conn, symbol_norm: str) -> Optional[dict]:
     cur = conn.execute(
         "SELECT symbol_norm, ensembl_id, uniprot_id, entrez_id, taxid, "
         "source, status, fetched_at FROM genes WHERE symbol_norm = ?",
         (symbol_norm,),
     )
-    r = cur.fetchone()
-    if not r:
+    row = cur.fetchone()
+    if row is None:
         return None
     return {
-        "symbol_norm": r[0], "ensembl_id": r[1], "uniprot_id": r[2],
-        "entrez_id": r[3], "taxid": r[4], "source": r[5],
-        "status": r[6], "fetched_at": r[7],
+        "symbol_norm": row[0], "ensembl_id": row[1], "uniprot_id": row[2],
+        "entrez_id": row[3], "taxid": row[4], "source": row[5],
+        "status": row[6], "fetched_at": row[7],
     }
 
 
 # ---- Cache writes ----
 
-def _write_chemical(conn, name_norm: str, *,
-                     smiles: Optional[str], inchi: Optional[str],
-                     inchikey: Optional[str], cid: Optional[int],
-                     source: str, status: str) -> None:
+def write_chemical(conn, name_norm: str, *,
+                    smiles: Optional[str] = None,
+                    inchi: Optional[str] = None,
+                    inchikey: Optional[str] = None,
+                    cid: Optional[int] = None,
+                    source: str, status: str) -> None:
+    """Public writer — used by identifier_resolve.py to record results."""
     conn.execute(
-        "INSERT OR REPLACE INTO chemicals "
-        "(name_norm, smiles, inchi, inchikey, cid, source, status, "
-        " fetched_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (name_norm, smiles, inchi, inchikey, cid, source, status,
-         _now_iso()),
+        "INSERT OR REPLACE INTO chemicals(name_norm, smiles, inchi, inchikey, "
+        "cid, source, status, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (name_norm, smiles, inchi, inchikey, cid, source, status, _now_iso()),
     )
     conn.commit()
 
 
-def _write_gene(conn, symbol_norm: str, *,
-                  ensembl_id: Optional[str], uniprot_id: Optional[str],
-                  entrez_id: Optional[int], taxid: Optional[int],
-                  source: str, status: str) -> None:
+def write_gene(conn, symbol_norm: str, *,
+                ensembl_id: Optional[str] = None,
+                uniprot_id: Optional[str] = None,
+                entrez_id: Optional[int] = None,
+                taxid: Optional[int] = None,
+                source: str, status: str) -> None:
     conn.execute(
-        "INSERT OR REPLACE INTO genes "
-        "(symbol_norm, ensembl_id, uniprot_id, entrez_id, taxid, "
-        " source, status, fetched_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (symbol_norm, ensembl_id, uniprot_id, entrez_id, taxid,
-         source, status, _now_iso()),
+        "INSERT OR REPLACE INTO genes(symbol_norm, ensembl_id, uniprot_id, "
+        "entrez_id, taxid, source, status, fetched_at) VALUES (?, ?, ?, ?, "
+        "?, ?, ?, ?)",
+        (symbol_norm, ensembl_id, uniprot_id, entrez_id, taxid, source,
+         status, _now_iso()),
     )
     conn.commit()
 
 
-# ---- HTTP fetchers ----
+# ---- Queue ----
 
-def _http_get_json(url: str) -> dict:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "curiosity-engine/identifier_cache"},
-    )
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
-        return json.loads(r.read().decode("utf-8"))
+def queue_request(kind: str, names: list, source_page: Optional[str] = None) -> dict:
+    """Append a resolution request to the queue. No network. Idempotent
+    per (kind, name): identical requests already in the queue are
+    deduped. Returns counts."""
+    if kind not in ("chemicals", "genes"):
+        raise ValueError(f"unknown kind {kind!r}")
+    if not isinstance(names, list):
+        raise ValueError("names must be a list")
+    QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+    seen: set = set()
+    if QUEUE_PATH.exists():
+        for line in QUEUE_PATH.read_text().splitlines():
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("kind") == kind:
+                for n in ev.get("names") or []:
+                    seen.add(_normalise_name(n))
 
-def _fetch_chemical_pubchem(name: str) -> Optional[dict]:
-    """Hit PubChem PUG-REST for a chemical name; return None on miss.
+    new_names = []
+    for n in names:
+        nn = _normalise_name(n)
+        if not nn or nn in seen:
+            continue
+        new_names.append(n)
+        seen.add(nn)
+    if not new_names:
+        return {"queued": 0, "skipped": len(names), "reason": "all already queued or empty"}
 
-    Two-stage call: name → CID via the search endpoint, then CID →
-    properties (SMILES + InChI + InChIKey) via the property endpoint.
-    Either stage may 404; both are treated as `not_found`. Network
-    timeouts raise `urllib.error.URLError` — caller catches and
-    records `offline` status.
-    """
-    quoted = urllib.parse.quote(name)
-    cid_url = f"{PUBCHEM_BASE}{quoted}/cids/JSON"
-    data = _http_get_json(cid_url)
-    cids = data.get("IdentifierList", {}).get("CID", [])
-    if not cids:
-        return None
-    cid = int(cids[0])
-    prop_url = (
-        f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/"
-        f"{cid}/property/CanonicalSMILES,InChI,InChIKey/JSON"
-    )
-    pdata = _http_get_json(prop_url)
-    props = (pdata.get("PropertyTable", {}).get("Properties", []) or [{}])[0]
-    return {
-        "cid": cid,
-        "smiles": props.get("CanonicalSMILES"),
-        "inchi": props.get("InChI"),
-        "inchikey": props.get("InChIKey"),
+    event = {
+        "ts": _now_iso(),
+        "kind": kind,
+        "names": new_names,
     }
+    if source_page:
+        event["source_page"] = source_page
+    with QUEUE_PATH.open("a") as fh:
+        fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+    return {"queued": len(new_names), "skipped": len(names) - len(new_names)}
 
 
-def _fetch_gene_mygene(symbol: str) -> Optional[dict]:
-    """Hit MyGene.info for a gene symbol; return None on miss.
-
-    Single search call constrained to symbol field; takes the first
-    hit that has both an Ensembl gene ID and a UniProt accession (the
-    most useful canonical pair for downstream synthesis). When neither
-    field is present we still record the entrez_id so curators can
-    cross-reference manually.
-    """
-    params = urllib.parse.urlencode({
-        "q": f"symbol:{symbol}",
-        "fields": "ensembl.gene,uniprot.Swiss-Prot,entrezgene,taxid",
-        "size": "1",
-    })
-    url = f"{MYGENE_BASE}?{params}"
-    data = _http_get_json(url)
-    hits = data.get("hits", []) or []
-    if not hits:
-        return None
-    h = hits[0]
-    ens = h.get("ensembl", {})
-    if isinstance(ens, list):
-        ens = ens[0] if ens else {}
-    uni = h.get("uniprot", {}) or {}
-    swiss = uni.get("Swiss-Prot")
-    if isinstance(swiss, list):
-        swiss = swiss[0] if swiss else None
-    return {
-        "ensembl_id": ens.get("gene") if isinstance(ens, dict) else None,
-        "uniprot_id": swiss,
-        "entrez_id": h.get("entrezgene"),
-        "taxid": h.get("taxid"),
-    }
+def read_queue() -> list:
+    """Return the current queue as a list of events. Library entry
+    point used by identifier_resolve.py."""
+    if not QUEUE_PATH.exists():
+        return []
+    out = []
+    for line in QUEUE_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
 
 
-# ---- Public lookup helpers ----
+def archive_queue(processed_marker: str = "processed") -> None:
+    """Move the current queue file aside after a resolve pass. Library
+    entry point used by identifier_resolve.py."""
+    if not QUEUE_PATH.exists():
+        return
+    archive_dir = QUEUE_PATH.parent / "identifier-requests.history"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    QUEUE_PATH.rename(archive_dir / f"{ts}-{processed_marker}.jsonl")
 
-def lookup_chemical(name: str, *,
-                       force_refresh: bool = False) -> dict:
-    """Resolve a chemical name. Returns a dict with cache hit info."""
+
+# ---- Lookup helpers (cache-only) ----
+
+def lookup_cached_chemical(name: str, queue_on_miss: bool = True) -> dict:
+    """Return the cached resolution for `name`, or `{status: pending}`
+    if it isn't cached. Optionally queue the miss for the next
+    resolve pass."""
     name_norm = _normalise_name(name)
     if not name_norm:
         return {
             "name": name, "name_norm": name_norm,
-            "smiles": None, "inchi": None, "source": None,
             "status": "not_found", "cached": False,
             "note": "empty name after normalisation",
         }
     conn = _connect()
     try:
-        cached = _read_chemical(conn, name_norm)
-        if (cached and not force_refresh
-                and cached["status"] in ("ok", "not_found")):
-            cached["name"] = name
-            cached["cached"] = True
-            return cached
-        if _is_offline():
-            if cached:
-                cached["name"] = name
-                cached["cached"] = True
-                return cached
-            return {
-                "name": name, "name_norm": name_norm,
-                "smiles": None, "inchi": None, "source": None,
-                "status": "offline", "cached": False,
-            }
-        # Network call.
-        try:
-            result = _fetch_chemical_pubchem(name)
-        except (urllib.error.URLError, urllib.error.HTTPError,
-                TimeoutError, ConnectionError):
-            _write_chemical(conn, name_norm, smiles=None, inchi=None,
-                              inchikey=None, cid=None, source="pubchem",
-                              status="offline")
-            return {
-                "name": name, "name_norm": name_norm,
-                "smiles": None, "inchi": None, "source": "pubchem",
-                "status": "offline", "cached": False,
-            }
-        if result is None:
-            _write_chemical(conn, name_norm, smiles=None, inchi=None,
-                              inchikey=None, cid=None, source="pubchem",
-                              status="not_found")
-            return {
-                "name": name, "name_norm": name_norm,
-                "smiles": None, "inchi": None, "source": "pubchem",
-                "status": "not_found", "cached": False,
-            }
-        _write_chemical(conn, name_norm, smiles=result.get("smiles"),
-                          inchi=result.get("inchi"),
-                          inchikey=result.get("inchikey"),
-                          cid=result.get("cid"), source="pubchem",
-                          status="ok")
-        return {
-            "name": name, "name_norm": name_norm,
-            "smiles": result.get("smiles"),
-            "inchi": result.get("inchi"),
-            "inchikey": result.get("inchikey"),
-            "cid": result.get("cid"),
-            "source": "pubchem", "status": "ok", "cached": False,
-        }
+        cached = read_chemical(conn, name_norm)
     finally:
         conn.close()
+    if cached and cached["status"] in ("ok", "not_found"):
+        cached["name"] = name
+        cached["cached"] = True
+        return cached
+    if queue_on_miss:
+        try:
+            queue_request("chemicals", [name])
+        except Exception:
+            pass
+    return {
+        "name": name, "name_norm": name_norm,
+        "status": "pending", "cached": False,
+        "note": "not in cache; queued for next resolve pass — run "
+                "`identifier_resolve.py review` to inspect, then "
+                "`identifier_resolve.py run --yes`.",
+    }
 
 
-def lookup_gene(symbol: str, *,
-                  force_refresh: bool = False) -> dict:
-    """Resolve a gene symbol. Returns a dict with cache hit info."""
+def lookup_cached_gene(symbol: str, queue_on_miss: bool = True) -> dict:
     symbol_norm = _normalise_name(symbol)
     if not symbol_norm:
         return {
             "symbol": symbol, "symbol_norm": symbol_norm,
-            "ensembl_id": None, "uniprot_id": None, "source": None,
             "status": "not_found", "cached": False,
             "note": "empty symbol after normalisation",
         }
     conn = _connect()
     try:
-        cached = _read_gene(conn, symbol_norm)
-        if (cached and not force_refresh
-                and cached["status"] in ("ok", "not_found")):
-            cached["symbol"] = symbol
-            cached["cached"] = True
-            return cached
-        if _is_offline():
-            if cached:
-                cached["symbol"] = symbol
-                cached["cached"] = True
-                return cached
-            return {
-                "symbol": symbol, "symbol_norm": symbol_norm,
-                "ensembl_id": None, "uniprot_id": None, "source": None,
-                "status": "offline", "cached": False,
-            }
-        try:
-            result = _fetch_gene_mygene(symbol)
-        except (urllib.error.URLError, urllib.error.HTTPError,
-                TimeoutError, ConnectionError):
-            _write_gene(conn, symbol_norm, ensembl_id=None,
-                         uniprot_id=None, entrez_id=None, taxid=None,
-                         source="mygene", status="offline")
-            return {
-                "symbol": symbol, "symbol_norm": symbol_norm,
-                "ensembl_id": None, "uniprot_id": None,
-                "source": "mygene", "status": "offline",
-                "cached": False,
-            }
-        if result is None:
-            _write_gene(conn, symbol_norm, ensembl_id=None,
-                         uniprot_id=None, entrez_id=None, taxid=None,
-                         source="mygene", status="not_found")
-            return {
-                "symbol": symbol, "symbol_norm": symbol_norm,
-                "ensembl_id": None, "uniprot_id": None,
-                "source": "mygene", "status": "not_found",
-                "cached": False,
-            }
-        _write_gene(conn, symbol_norm,
-                     ensembl_id=result.get("ensembl_id"),
-                     uniprot_id=result.get("uniprot_id"),
-                     entrez_id=result.get("entrez_id"),
-                     taxid=result.get("taxid"),
-                     source="mygene", status="ok")
-        return {
-            "symbol": symbol, "symbol_norm": symbol_norm,
-            "ensembl_id": result.get("ensembl_id"),
-            "uniprot_id": result.get("uniprot_id"),
-            "entrez_id": result.get("entrez_id"),
-            "taxid": result.get("taxid"),
-            "source": "mygene", "status": "ok", "cached": False,
-        }
+        cached = read_gene(conn, symbol_norm)
     finally:
         conn.close()
+    if cached and cached["status"] in ("ok", "not_found"):
+        cached["symbol"] = symbol
+        cached["cached"] = True
+        return cached
+    if queue_on_miss:
+        try:
+            queue_request("genes", [symbol])
+        except Exception:
+            pass
+    return {
+        "symbol": symbol, "symbol_norm": symbol_norm,
+        "status": "pending", "cached": False,
+        "note": "not in cache; queued for next resolve pass — run "
+                "`identifier_resolve.py review` to inspect, then "
+                "`identifier_resolve.py run --yes`.",
+    }
 
 
 # ---- CLI ----
 
-def cmd_lookup_chemical(name: str, force: bool) -> int:
-    print(json.dumps(lookup_chemical(name, force_refresh=force),
-                       indent=2))
+def cmd_lookup_chemical(name: str) -> int:
+    print(json.dumps(lookup_cached_chemical(name), indent=2))
     return 0
 
 
-def cmd_lookup_gene(symbol: str, force: bool) -> int:
-    print(json.dumps(lookup_gene(symbol, force_refresh=force),
-                       indent=2))
+def cmd_lookup_gene(symbol: str) -> int:
+    print(json.dumps(lookup_cached_gene(symbol), indent=2))
     return 0
 
 
-def cmd_bulk_lookup(kind: str, names_json: str, force: bool) -> int:
+def cmd_bulk_lookup(kind: str, names_json: str) -> int:
     try:
         names = json.loads(names_json)
     except json.JSONDecodeError as e:
@@ -435,21 +347,75 @@ def cmd_bulk_lookup(kind: str, names_json: str, force: bool) -> int:
         print(json.dumps({"error": "--names-json must be a JSON array"}))
         return 1
     if kind == "chemicals":
-        results = [lookup_chemical(n, force_refresh=force) for n in names]
+        results = [lookup_cached_chemical(n) for n in names]
     elif kind == "genes":
-        results = [lookup_gene(n, force_refresh=force) for n in names]
+        results = [lookup_cached_gene(n) for n in names]
     else:
         print(json.dumps({"error": f"unknown --type: {kind!r}"}))
         return 1
-    print(json.dumps({"type": kind, "count": len(results),
-                       "results": results}, indent=2))
+    pending = sum(1 for r in results if r["status"] == "pending")
+    print(json.dumps({
+        "type": kind, "count": len(results),
+        "pending": pending,
+        "note": (
+            f"{pending} name(s) not in cache and queued for the next "
+            "resolve pass — run `identifier_resolve.py review` then "
+            "`identifier_resolve.py run --yes` (after enabling in config)."
+        ) if pending else None,
+        "results": results,
+    }, indent=2))
+    return 0
+
+
+def cmd_queue(kind: str, names_json: str, source_page: Optional[str]) -> int:
+    try:
+        names = json.loads(names_json)
+    except json.JSONDecodeError as e:
+        print(json.dumps({"error": f"invalid --names-json: {e}"}))
+        return 1
+    if not isinstance(names, list):
+        print(json.dumps({"error": "--names-json must be a JSON array"}))
+        return 1
+    try:
+        result = queue_request(kind, names, source_page=source_page)
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}))
+        return 1
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_pending() -> int:
+    events = read_queue()
+    by_kind: dict = {"chemicals": set(), "genes": set()}
+    sources: set = set()
+    for ev in events:
+        kind = ev.get("kind")
+        if kind not in by_kind:
+            continue
+        for n in ev.get("names") or []:
+            by_kind[kind].add(n)
+        if ev.get("source_page"):
+            sources.add(ev["source_page"])
+    print(json.dumps({
+        "total_events": len(events),
+        "chemicals": sorted(by_kind["chemicals"]),
+        "genes": sorted(by_kind["genes"]),
+        "source_pages": sorted(sources),
+        "queue_path": str(QUEUE_PATH),
+        "next_step": (
+            "Run `identifier_resolve.py review` to see endpoints, then "
+            "`identifier_resolve.py run --yes` to drain. The resolve script "
+            "is gated by `identifier_resolution.enabled = true` in "
+            ".curator/config.json."
+        ) if events else None,
+    }, indent=2))
     return 0
 
 
 def cmd_cache_stats() -> int:
     if not DB_PATH.exists():
-        print(json.dumps({"chemicals": 0, "genes": 0,
-                            "note": "no cache yet"}))
+        print(json.dumps({"chemicals": 0, "genes": 0, "note": "no cache yet"}))
         return 0
     conn = _connect()
     try:
@@ -459,24 +425,15 @@ def cmd_cache_stats() -> int:
         gene = conn.execute(
             "SELECT status, COUNT(*) FROM genes GROUP BY status"
         ).fetchall()
-        chem_total = conn.execute(
-            "SELECT COUNT(*) FROM chemicals"
-        ).fetchone()[0]
-        gene_total = conn.execute(
-            "SELECT COUNT(*) FROM genes"
-        ).fetchone()[0]
+        chem_total = conn.execute("SELECT COUNT(*) FROM chemicals").fetchone()[0]
+        gene_total = conn.execute("SELECT COUNT(*) FROM genes").fetchone()[0]
     finally:
         conn.close()
+    queue_size = len(read_queue())
     print(json.dumps({
-        "chemicals": {
-            "total": chem_total,
-            "by_status": {s: c for s, c in chem},
-        },
-        "genes": {
-            "total": gene_total,
-            "by_status": {s: c for s, c in gene},
-        },
-        "offline_mode": _is_offline(),
+        "chemicals": {"total": chem_total, "by_status": dict(chem)},
+        "genes":     {"total": gene_total, "by_status": dict(gene)},
+        "queue":     {"events_pending": queue_size},
     }, indent=2))
     return 0
 
@@ -486,35 +443,44 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_lc = sub.add_parser("lookup-chemical",
-                           help="resolve one chemical name")
+                           help="cache-only chemical lookup; queue on miss")
     p_lc.add_argument("name")
-    p_lc.add_argument("--force", action="store_true",
-                       help="ignore cache, force a fresh HTTP call")
 
     p_lg = sub.add_parser("lookup-gene",
-                           help="resolve one gene symbol")
+                           help="cache-only gene lookup; queue on miss")
     p_lg.add_argument("symbol")
-    p_lg.add_argument("--force", action="store_true",
-                       help="ignore cache, force a fresh HTTP call")
 
     p_bl = sub.add_parser("bulk-lookup",
-                           help="resolve a JSON array of names in one call")
-    p_bl.add_argument("--type", choices=["chemicals", "genes"],
-                       required=True)
+                           help="cache-only batch lookup; queue misses")
+    p_bl.add_argument("--type", choices=["chemicals", "genes"], required=True)
     p_bl.add_argument("--names-json", required=True,
                        help="JSON array of names/symbols")
-    p_bl.add_argument("--force", action="store_true",
-                       help="ignore cache, force a fresh HTTP call")
 
-    sub.add_parser("cache-stats", help="cache row counts + status breakdown")
+    p_q = sub.add_parser("queue",
+                          help="append a resolution request to the queue (no cache check)")
+    p_q.add_argument("--type", choices=["chemicals", "genes"], required=True)
+    p_q.add_argument("--names-json", required=True,
+                      help="JSON array of names/symbols")
+    p_q.add_argument("--source-page",
+                      help="optional wiki/-relative path of the page that triggered the request")
+
+    sub.add_parser("pending",
+                    help="list queued requests waiting for the next resolve pass")
+
+    sub.add_parser("cache-stats",
+                    help="cache row counts + queue size")
 
     args = ap.parse_args()
     if args.cmd == "lookup-chemical":
-        return cmd_lookup_chemical(args.name, args.force)
+        return cmd_lookup_chemical(args.name)
     if args.cmd == "lookup-gene":
-        return cmd_lookup_gene(args.symbol, args.force)
+        return cmd_lookup_gene(args.symbol)
     if args.cmd == "bulk-lookup":
-        return cmd_bulk_lookup(args.type, args.names_json, args.force)
+        return cmd_bulk_lookup(args.type, args.names_json)
+    if args.cmd == "queue":
+        return cmd_queue(args.type, args.names_json, args.source_page)
+    if args.cmd == "pending":
+        return cmd_pending()
     if args.cmd == "cache-stats":
         return cmd_cache_stats()
     ap.print_usage()

@@ -26,6 +26,11 @@
   "embedding_enabled": false,
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "notes_semantic_dedup_threshold": 0.92,
+  "identifier_resolution": {
+    "enabled": false,
+    "chemicals_endpoint": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/",
+    "genes_endpoint": "https://mygene.info/v3/query"
+  },
   "project_classifier_min_home_pages": 5,
   "project_classifier_confidence_threshold": 0.5,
   "project_classifier_home_min_words": 30,

@@ -840,11 +840,17 @@ the proposal call. Receives the proposal list and judges each candidate.
 > "normalise": [{"tab_stem": "tab-buffers-t1", "column": "Active Ingredient", "as": "chemicals"}, ...]
 > ```
 > The orchestrator will run `identifier_cache.py bulk-lookup` on
-> those columns before persisting and inline the resolutions in your
-> table. Only emit `normalise` when (a) the page's existing
-> `normalise_columns` is empty or doesn't cover what you cite, AND
-> (b) the column unambiguously holds chemical names or gene symbols.
-> Do not invent — if you're not sure, leave the field absent.
+> those columns. Cached values inline immediately; cache misses are
+> queued for the next manual `identifier_resolve.py run --yes` pass
+> (the network step is gated by an `identifier_resolution.enabled`
+> config flag the user controls). Don't expect every requested
+> normalisation to land in this synthesis output — only the cached
+> ones do; misses get filled by a follow-up sweep after the user
+> approves the network resolution. Only emit `normalise` when (a)
+> the page's existing `normalise_columns` is empty or doesn't cover
+> what you cite, AND (b) the column unambiguously holds chemical
+> names or gene symbols. Do not invent — if you're not sure, leave
+> the field absent.
 >
 > Return exactly one JSON object:
 > ```
