@@ -35,16 +35,37 @@ from pathlib import Path
 # the reading agent; rare in any legitimate prose; applied in every
 # mode.
 STRONG_MARKERS = [
-    (r"ignore\s+(all\s+)?(the\s+)?previous\s+instructions", "ignore-previous-instructions"),
-    (r"disregard\s+(all\s+|the\s+)?(previous|above)", "disregard-previous"),
-    (r"forget\s+(all\s+|the\s+)?(previous|above)\s+instructions", "forget-previous"),
+    # Direct command-override patterns — extremely rare in any
+    # legitimate prose.
+    (r"ignore\s+(all\s+)?(the\s+)?(previous|above|prior|earlier)\s+(instructions|rules|prompts?)", "ignore-previous-instructions"),
+    (r"disregard\s+(all\s+|the\s+)?(previous|above|prior|earlier)", "disregard-previous"),
+    (r"forget\s+(all\s+|the\s+)?(previous|above|prior|earlier)\s+(instructions|rules|prompts?)", "forget-previous"),
     (r"new\s+instructions:\s*", "new-instructions"),
-    (r"override\s+(your|the)\s+(rules|instructions|schema|policy)", "override-rules"),
+    (r"updated\s+instructions:\s*", "updated-instructions"),
+    (r"override\s+(your|the)\s+(rules|instructions|schema|policy|prompt|safety|guidelines)", "override-rules"),
+    (r"bypass\s+(your|the|all|any)\s+(rules|instructions|safety|guidelines|filters?)", "bypass-rules"),
+    # Persona hijack — telling the agent it has a different identity.
     (r"you\s+are\s+now\s+(a|an|the)\s+", "persona-hijack"),
     (r"act\s+as\s+if\s+you\s+are", "persona-hijack-act"),
     (r"pretend\s+(to\s+be|you\s+are)", "persona-hijack-pretend"),
+    (r"\bDAN\b\s+mode|\bdeveloper\s+mode\b|\bjailbreak\s+mode\b", "jailbreak-persona"),
+    (r"\b(do\s+anything\s+now)\b", "dan-spelt-out"),
+    # Prompt-extraction attacks.
     (r"reveal\s+(your|the)\s+(system\s+)?prompt", "reveal-prompt"),
+    (r"(show|print|output|display|repeat|echo)\s+(your|the)\s+(system\s+)?(prompt|instructions|rules)", "leak-prompt"),
+    (r"what\s+(are|were)\s+your\s+(system\s+)?(prompt|instructions|rules)", "ask-prompt"),
+    (r"\brepeat\s+(verbatim|exactly|word\s+for\s+word)\b", "repeat-verbatim-jailbreak"),
+    # Exfiltration / shell-execution prompts.
     (r"exfiltrate|base64\s+encode|curl\s+[^\n]*\|", "exfil-pattern"),
+    (r"(execute|run|eval)\s+the\s+following\s+(code|command|script)", "execute-following"),
+    (r"\b(rm\s+-rf|chmod\s+\+x|wget\s+\S+\s*\|\s*(sh|bash))", "shell-exec-pattern"),
+    # Browser-side script injection (rendered HTML viewers can be
+    # tricked into executing inline JS).
+    (r"<\s*script\b", "script-tag"),
+    (r"\bjavascript:", "javascript-uri"),
+    (r"\bdata:text/html", "data-uri-html"),
+    (r"\bonerror\s*=", "html-onerror-handler"),
+    (r"\bonclick\s*=", "html-onclick-handler"),
 ]
 
 # LLM subject-vocabulary markers. Legitimate in prose about LLMs and
