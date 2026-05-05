@@ -2,6 +2,54 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-05 — v0.1.3 — narrow identifier_resolve.py allowlist + DPI doc fix
+
+Closes a gap discovered while reviewing v0.1.2: the
+`identifier_resolution.enabled` config flag was the only gate
+between an orchestrator agent and a network call to PubChem /
+MyGene.info, but `.curator/config.json` is **agent-editable** (the
+workspace allowlist permits `Edit(./.curator/**)`). An agent could
+flip the flag, then invoke the previously broad
+`Bash(... identifier_resolve.py:*)` allowlist rule with `run --yes`,
+firing the network call without user approval. The off-by-default
+config was a convenience default, not a security boundary.
+
+**Fix: subcommand-level allowlist entries.**
+
+- `scripts/setup.sh` allowlist for `identifier_resolve.py` is
+  narrowed from the broad `:*` to two specific subcommand prefixes:
+  `review:*` and `status:*`. Both are read-only / visibility-only.
+  Invoking `identifier_resolve.py run --yes` no longer matches any
+  allowlist rule — Claude Code prompts the user for approval on
+  every invocation. Setup gains a canary that forces regen on
+  v0.1.2 workspaces so the new rule lands automatically.
+
+- `SECURITY.md` adds a new section, "Bash-allowlist as the boundary
+  (general principle)", clarifying that `.curator/config.json`
+  flags are convenience tunables and the bash allowlist is the
+  load-bearing security gate. Future sensitive operations should
+  follow the same pattern: subcommand-level allowlist for safe
+  ops, no allowlist for state-changing ops, config flag on top as
+  a default-off convenience.
+
+- The T7 (data exfiltration) mitigation summary is updated to
+  reflect the new gate ordering.
+
+**DPI tunability — doc-only fix.**
+
+The curator agent flagged that re-extracting suspect `[tab]` pages
+would benefit from higher DPI but figures.py is hash-guarded.
+Investigation showed the existing `--dpi` CLI flag is already
+allowlist-passable (the bash rule is `figures.py:*`, anything-after) —
+the curator just didn't know the flag exists. Earlier draft of
+this release added a `figure_render_dpi` config key; reverted on
+review (same agent-editable-config concern as above) in favour of
+the simpler doc fix.
+
+- `SKILL.md` multimodal-table-extract pre-render step now
+  references the existing `--dpi` CLI flag with `--force` to
+  re-render at higher resolution. No config plumbing.
+
 ## 2026-05-05 — v0.1.2 — security pass
 
 Addresses six findings from the Gen Agent Trust Hub / Socket scan of `v0.1.0`. No breaking changes for default users; the only behaviour shift is that `identifier_cache.py` is now cache-only and external identifier resolution requires explicit user opt-in via `identifier_resolve.py`.

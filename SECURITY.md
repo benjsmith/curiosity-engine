@@ -70,9 +70,26 @@ The boundary between trusted and untrusted is the `<!-- BEGIN/END FETCHED CONTEN
 - **Identifier resolution split.** `scripts/identifier_cache.py` is **cache-only**: no `urllib` import, no network calls. Workers append resolution requests to `.curator/identifier-requests.jsonl` instead of triggering immediate lookups.
 - **`scripts/identifier_resolve.py`** is the only outbound-network script in the skill. It is:
   - Off by default (`identifier_resolution.enabled: false` in template config).
-  - Two-step: `review` shows the queued payload + endpoints with no network call; `run --yes` is required to actually hit endpoints.
+  - **Bash-allowlist gated at the subcommand level.** The allowlist permits only `identifier_resolve.py review` and `identifier_resolve.py status` (visibility, no network). Invoking `identifier_resolve.py run --yes` requires explicit user approval — there is no allowlist rule matching it. This is the load-bearing security gate; the config flag is convenience, not the boundary (see "Bash-allowlist as the boundary" below).
   - Endpoint-configurable. Defaults to PubChem/MyGene.info; enterprise users override `chemicals_endpoint` / `genes_endpoint` to point at internal mirrors. The resolver speaks PubChem-PUG-REST and MyGene.info shapes; mirrors must match those grammars.
 - The user sees exactly which names and endpoints are involved before approving any network call.
+
+### Bash-allowlist as the boundary (general principle)
+
+`.curator/config.json` is editable by orchestrator agents (the workspace's `.claude/settings.json` grants `Edit(./.curator/**)`). This is intentional — agents tune `parallel_workers`, switch model presets, adjust thresholds. But it means **config flags cannot be the security boundary** for sensitive operations: an agent that can write the flag can flip it.
+
+The real security boundary is the bash allowlist itself — `.claude/settings.json` is **not** in the agent-writable scope (no `Edit(./.claude/**)` rule). Subcommand-level allowlist entries (e.g. `Bash(uv run python3 .../identifier_resolve.py review:*)` rather than the broader `:*`) let us permit visibility while requiring explicit user approval for state-changing operations.
+
+When adding a sensitive operation:
+
+1. Don't gate it on a config flag alone.
+2. Pick subcommand-level allowlist entries that name the safe operations (`review`, `status`, dry-run-style commands).
+3. Leave the dangerous subcommand (the one that actually does the thing — egress, write, irreversible change) unallowed; the user is then prompted on every invocation.
+4. The config flag is fine as a default-off convenience switch on top, but it's belt; the allowlist is braces.
+
+Currently in this scope:
+- `identifier_resolve.py run` — requires user approval (allowlist permits only `review` / `status`).
+- `update.sh --yes` — currently allowed under the broader `update.sh:*` rule. Update is bounded by the hardcoded upstream slug (T6 mitigation), so the agent can't redirect; it can only trigger the upstream pull. Future hardening could narrow this further.
 
 ## Cataloged outbound network surfaces
 
