@@ -2,6 +2,26 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-05 — v0.1.2 — security pass
+
+Addresses six findings from the Gen Agent Trust Hub / Socket scan of `v0.1.0`. No breaking changes for default users; the only behaviour shift is that `identifier_cache.py` is now cache-only and external identifier resolution requires explicit user opt-in via `identifier_resolve.py`.
+
+- **PROMPT_INJECTION** — `scripts/scrub_check.py` STRONG_MARKERS broadened to catch updated/new instruction headers, bypass language, jailbreak personas (DAN / developer mode), prompt-extraction templates, shell-execution prompts, and browser-side script injection (`<script` tags, `javascript:` URIs, `onerror=`, `onclick=`). Orchestrator prompts in `SKILL.md` and `template/CLAUDE.md` reinforced with explicit attack-shape lists, nested-quote handling, and worker-output-is-also-data discipline.
+
+- **EXTERNAL_DOWNLOADS** — `scripts/setup.sh` no longer auto-installs `uv` via `curl … | sh`. Refuses with platform-specific install instructions instead. Vendor JS (D3 7.9.0, Fuse.js 7.0.0) committed in-tree at `template/wiki-view/static/vendor/`; viewer build does not call any CDN. SHA-256 hashes recorded in `RELEASE_CHECKLIST.md` for vendor-bundle review on every release.
+
+- **DATA_EXFILTRATION** — `scripts/identifier_cache.py` is refactored to cache-only: `urllib` import removed entirely, `queue` subcommand records resolution requests to `.curator/identifier-requests.jsonl`. New `scripts/identifier_resolve.py` is the only outbound-network script in the skill: off by default (`identifier_resolution.enabled: false` in template config), endpoint-configurable (point at internal API mirrors in enterprise settings), two-step `review` → `run --yes` ceremony. Workflow preserves convenience while making egress visible and gated.
+
+- **REMOTE_CODE_EXECUTION / update.sh anomaly** — `scripts/update.sh` slug is now hardcoded to upstream; `.curator/config.json`'s `update_source_slug` is no longer read. Fork users override per-invocation with `--source <owner>/<repo>`, validated against a strict GitHub-slug regex. Non-default slugs print a prominent ⚠ warning banner in the preview.
+
+- **COMMAND_EXECUTION** — `scripts/tables.py` `__import__("re").compile(...)` replaced with plain `re.compile(...)` (cosmetic; same behaviour). `scripts/viewer_server.py` `subprocess.run` call site annotated with a safety comment documenting why it's safe (list-form argv, no `shell=True`, hardcoded args).
+
+- **`SECURITY.md` declared** — new top-level doc captures the threat model, trust boundaries, mitigation per threat, and a complete catalog of outbound network surfaces + subprocess/dynamic-execution sites. Reviewers can verify what's intentional without source archaeology.
+
+- **`RELEASE_CHECKLIST.md` declared** — pre-release checklist for vendor-bundle review, Socket re-scan, CHANGELOG, smoke-test on a real workspace; tagging and versioning policy.
+
+Verified by re-running the smoke tests on the test workspaces.
+
 ## 2026-05-04 — v0.1.1 — silent on plain wikis with no projects
 
 First patch release. One bugfix-only commit on top of `v0.1.0`; no behaviour change for wikis that use the multi-project model.

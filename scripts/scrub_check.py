@@ -48,7 +48,10 @@ STRONG_MARKERS = [
     (r"you\s+are\s+now\s+(a|an|the)\s+", "persona-hijack"),
     (r"act\s+as\s+if\s+you\s+are", "persona-hijack-act"),
     (r"pretend\s+(to\s+be|you\s+are)", "persona-hijack-pretend"),
-    (r"\bDAN\b\s+mode|\bdeveloper\s+mode\b|\bjailbreak\s+mode\b", "jailbreak-persona"),
+    # Note: input is lowercased before matching, so all literal
+    # tokens here must be lowercase. `dan` (lowercase) matches both
+    # `DAN` and `Dan` in the original input.
+    (r"\bdan\b\s+mode|\bdeveloper\s+mode\b|\bjailbreak\s+mode\b", "jailbreak-persona"),
     (r"\b(do\s+anything\s+now)\b", "dan-spelt-out"),
     # Prompt-extraction attacks.
     (r"reveal\s+(your|the)\s+(system\s+)?prompt", "reveal-prompt"),
