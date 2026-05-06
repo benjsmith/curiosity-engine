@@ -162,7 +162,13 @@ def _fts5_search(conn, query: str, limit: int, include_text: bool) -> list:
 
 def _semantic_search(conn, model, sqlite_vec_mod, query: str,
                       limit: int, include_text: bool) -> list:
-    sqlite_vec_mod.load(conn)
+    # See vault_index._init_embed_tables — load_extension is gated at
+    # runtime; toggle enable_load_extension before/after.
+    conn.enable_load_extension(True)
+    try:
+        sqlite_vec_mod.load(conn)
+    finally:
+        conn.enable_load_extension(False)
     qvec = model.encode(query, normalize_embeddings=True).tolist()
     qbytes = sqlite_vec_mod.serialize_float32(qvec)
     rows = conn.execute("""

@@ -674,7 +674,7 @@ def ingest_one(
             "moved": is_drop,
             "ingest_kind": "archival" if archival else "current",
             "projects": projects or [],
-            "indexed": indexed.get("status") if isinstance(indexed, dict) else None,
+            "indexed": indexed if isinstance(indexed, dict) else None,
         })
         return result
     except Exception as e:

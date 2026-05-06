@@ -76,12 +76,20 @@ def _load_embedder():
     cfg = _load_config()
     model_name = cfg.get("embedding_model", DEFAULT_EMBED_MODEL)
     model = SentenceTransformer(model_name)
-    dim = model.get_sentence_embedding_dimension()
+    dim = model.get_embedding_dimension()
     return model, sqlite_vec, model_name, dim
 
 
 def _init_embed_tables(conn, sqlite_vec_mod, dim: int) -> None:
-    sqlite_vec_mod.load(conn)
+    # Modern stdlib sqlite3 (and pysqlite3) ships extension support compiled
+    # in but disabled at runtime; calling load_extension without first
+    # toggling enable_load_extension raises OperationalError: not authorized.
+    # Mirror the gate sweep.py uses for its embeddings DB.
+    conn.enable_load_extension(True)
+    try:
+        sqlite_vec_mod.load(conn)
+    finally:
+        conn.enable_load_extension(False)
     conn.execute(
         f"CREATE VIRTUAL TABLE IF NOT EXISTS source_embeddings "
         f"USING vec0(embedding float[{dim}])"

@@ -2,6 +2,36 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-06 — v0.1.4 — fix silent embedding-load failure in vault_index / vault_search
+
+`vault_index._init_embed_tables` and `vault_search._semantic_search`
+called `sqlite_vec.load(conn)` without first calling
+`conn.enable_load_extension(True)`. Modern stdlib sqlite3 (and
+pysqlite3) ship extension support compiled in but disabled at
+runtime, so the call raised `OperationalError: not authorized`. The
+chained call from `local_ingest.py` caught the exception but only
+forwarded `indexed.get("status")`, dropping the error message — so
+the visible symptom was just `"indexed": "error"` with no detail,
+and any new vault entries silently lost their embedding while the
+FTS5 row was never even written.
+
+**Fix.** Mirror the gate `sweep.py` already uses for its
+notes-embeddings DB (`enable_load_extension(True)` → `load()` →
+`enable_load_extension(False)`) in both vault_index call sites and
+in vault_search. Update `local_ingest.py` to forward the full
+`indexed` dict so future failures surface their `error` field
+instead of silently degrading. Drive-by: rename the deprecated
+`SentenceTransformer.get_sentence_embedding_dimension()` call to
+`get_embedding_dimension()` so `vault_index.py` stops emitting a
+`FutureWarning` on every model load.
+
+**Operational note.** Workspaces with `embedding_enabled: true`
+that ingested anything since the regression have FTS5 rows but no
+matching vectors for those new sources. Run
+`scripts/vault_index.py --reembed` after upgrading to backfill
+embeddings for existing rows; new ingests pick up embeddings
+automatically.
+
 ## 2026-05-05 — v0.1.3 — narrow identifier_resolve.py allowlist + DPI doc fix
 
 Closes a gap discovered while reviewing v0.1.2: the
