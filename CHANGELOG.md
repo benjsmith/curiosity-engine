@@ -2,6 +2,19 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-13 — v0.2.2 — harden ce-capture.yml workflow (Socket supply-chain warning)
+
+Tightens the GitHub Action template shipped by `setup.sh --register-code-repo --ci-mode` to close a Socket scan warning about supply-chain risk. Four changes, all surface-level — no behavioural change to capture:
+
+- **Default `CE_SKILL_REF` pinned to `v0.2.1`** (was `main`). The mutable-default-branch checkout is replaced with a pinned release tag. Teams can still override the repo variable with a different tag or a 40-char commit SHA for stronger immutability guarantees.
+- **`curl|sh` uv install replaced with `pip install --user uv`** via PyPI (sha256-verified install path). Adds a small `actions/setup-python@v5` step to ensure a known interpreter; uses `python3 -m pip install --user` so we don't fight the runner's externally-managed Python.
+- **Least-privilege `permissions:` block at workflow level**: `contents: read`, `pull-requests: read`, `issues: read`. `GITHUB_TOKEN` can no longer write through any step. Pushes to the wiki repo continue to use the SSH deploy key on a separate auth path.
+- **`persist-credentials: false`** on the code-repo and skill checkouts so `GITHUB_TOKEN` isn't baked into `.git/config` for subsequent steps to reuse implicitly. The wiki checkout deliberately keeps the default (true) — its SSH deploy key needs to remain wired in for the later `git push` step, and the deploy key's scope is already narrowly bounded to the wiki repo by GitHub's deploy-key model.
+
+**Drive-by fix.** The v0.2.0 workflow template had an indentation bug: the `Co-Authored-By:` trailer line in the wiki-push commit message was at column 0, which terminated the YAML `|` block scalar early and made the YAML parser treat `Co-Authored-By:` as a stray top-level mapping key. GitHub Actions would have either rejected the workflow or run it with the trailer missing from the commit message. Re-indented to stay inside the run block.
+
+Workspaces that already wired `--ci-mode` should re-run `setup.sh --register-code-repo --ci-mode` to refresh the workflow file. Setup refuses to overwrite a customised workflow; the previous file (with the bugs) must be deleted manually first if you want the new one.
+
 ## 2026-05-12 — v0.2.1 — viewer: new categorical palette + white-bordered Unclassified
 
 Replaces the Tableau-10-derived viewer palette with a categorical 12-colour

@@ -10,8 +10,28 @@
 #      repo's Actions secrets.
 #   3. Set repository variable `CE_WIKI_REPO` to `org/team-curiosity-wiki`
 #      (the wiki repo's owner/name).
-#   4. Optionally set repository variable `CE_SKILL_REF` to a release tag
-#      or branch of the curiosity-engine skill (default: main).
+#   4. Optionally override repository variable `CE_SKILL_REF` to a
+#      different release tag or commit SHA of the curiosity-engine skill.
+#      Default is the release tag below.
+#
+# Supply-chain hardening notes (Socket scan reviewers):
+#   - The curiosity-engine skill is checked out at a PINNED release tag
+#     by default (`v0.2.1`), not at the mutable `main` ref. Teams that
+#     want stronger guarantees can override `CE_SKILL_REF` with a commit
+#     SHA (any 40-char hex).
+#   - `uv` is installed from PyPI via `pip install --user`, not via
+#     curl|sh. PyPI artifacts ship with sha256 hashes and the pip
+#     resolver verifies them.
+#   - `permissions:` is set to least-privilege at the workflow level:
+#     contents/pull-requests/issues read-only. Writes to the wiki repo
+#     go through the deploy key (separate auth path), not through
+#     GITHUB_TOKEN.
+#   - `persist-credentials: false` keeps GITHUB_TOKEN out of the
+#     working tree's .git/config so subsequent steps can't accidentally
+#     reuse it.
+#   - actions/checkout is pinned to a major tag (@v4). Teams that want
+#     full immutability should pin to a commit SHA — Socket / Dependabot
+#     can suggest the current SHA.
 #
 # Coexistence with the local hook: vault entries are sha256-content-
 # addressed, so re-capturing the same PR is a no-op. To stop engineers'
@@ -20,6 +40,13 @@
 # Action is wired.
 
 name: ce-capture
+
+# Least-privilege defaults. Subsequent steps that need a wider scope
+# would have to opt in explicitly — none of the steps below do.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
 
 on:
   pull_request:
@@ -47,6 +74,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 50
+          # Don't leave the auto-injected GITHUB_TOKEN in .git/config
+          # for subsequent steps to reuse implicitly.
+          persist-credentials: false
 
       - name: Checkout wiki workspace
         uses: actions/checkout@v4
@@ -54,21 +84,38 @@ jobs:
           repository: ${{ vars.CE_WIKI_REPO }}
           ssh-key: ${{ secrets.CE_WIKI_DEPLOY_KEY }}
           path: ce-workspace
+          # NOTE: persist-credentials must stay true here so the SSH key
+          # remains wired into ce-workspace/.git/config for the later
+          # `git push` step. The deploy key's scope is bounded to the
+          # wiki repo only (per setup instructions above), so this
+          # narrower auth path doesn't leak to other repos.
 
-      - name: Checkout curiosity-engine skill
+      - name: Checkout curiosity-engine skill (pinned)
         uses: actions/checkout@v4
         with:
           repository: benjsmith/curiosity-engine
-          ref: ${{ vars.CE_SKILL_REF || 'main' }}
+          # Default pinned to a release tag — NEVER mutable `main`. Teams
+          # that want SHA-level immutability override CE_SKILL_REF with
+          # a 40-char commit SHA in repo variables.
+          ref: ${{ vars.CE_SKILL_REF || 'v0.2.1' }}
           path: ce-skill
+          persist-credentials: false
 
-      - name: Install uv
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv (from PyPI, no curl|sh)
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          python3 -m pip install --user uv
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Capture (PR / changelog / commits)
         env:
+          # The capture script's `gh pr view` call needs an auth token.
+          # GITHUB_TOKEN is auto-scoped to this repo only and is bounded
+          # by the workflow-level `permissions:` block above.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
@@ -90,6 +137,8 @@ jobs:
 
       - name: Push to wiki
         working-directory: ce-workspace
+        # SSH_AUTH_SOCK from the wiki-checkout step provides the deploy
+        # key for this push. GITHUB_TOKEN is not used here.
         run: |
           git config user.name "ce-capture[bot]"
           git config user.email "ce-capture@users.noreply.github.com"
@@ -104,5 +153,5 @@ jobs:
           fi
           git commit -m "$MSG
 
-Co-Authored-By: Claude <noreply@anthropic.com>"
+          Co-Authored-By: Claude <noreply@anthropic.com>"
           git push
