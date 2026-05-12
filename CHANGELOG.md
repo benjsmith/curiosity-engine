@@ -2,6 +2,70 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-12 — v0.2.0 — code-repo mode: capturing the knowledge that escapes the codebase
+
+Curiosity Engine now treats engineering codebases as first-class projects. A code repo registers against an existing CE workspace via a small `.curiosity/config.toml` pointer file; capture flows from PR descriptions, commits, the changelog, and agent session transcripts into the workspace's vault; a per-(repo, branch) session brief gives a fresh agent yesterday's context for files in the current diff; `/curate` from inside a code repo detaches into the workspace so the engineer's coding-session transcript stays clean. The wiki itself stays unchanged — code-repo content lands as `sources`, `entities`, `concepts`, `analyses`, `evidence` per the existing 8-type taxonomy, distinguished only by the project tag and a new `(code:project:path:line)` reference form.
+
+**Full design.** [`docs/code-knowledge.md`](docs/code-knowledge.md) (referenced from the README's new "Using Curiosity Engine for codebases" section). The doc covers the problem framing, the page-type mapping, the pointer-file format, the capture surfaces in v1, and what's deferred.
+
+**Idempotency for existing CE users.** Zero change to the workspace flow. The code-repo branch in `setup.sh` only fires when (a) cwd lacks workspace markers AND (b) the heuristic recognises cwd as a code repo (`.git/` plus a source-marker file like `pyproject.toml`, `package.json`, `Cargo.toml`, etc.). Researchers re-running setup in their workspace cwd see exactly today's behaviour. `--in-repo` is the explicit override for solo / OSS / monorepo users who want the legacy "create the workspace right here" behaviour.
+
+**New setup flow.** From inside a code repo:
+
+```bash
+bash <skill_path>/scripts/setup.sh --register-code-repo \
+  [--ce-workspace-path PATH]   # default: $CURIOSITY_WORKSPACE or ~/Documents/curiosity-workspace
+  [--ce-project NAME]          # default: repo basename
+  [--init-workspace]           # bootstrap a workspace at the path if absent
+  [--yes]                      # accept default-Y prompts non-interactively
+  [--ci-mode]                  # also drop a GitHub Action workflow template
+  [--install-drainer]          # accepted but no-op in v0.2.0; daemon ships in v0.2.x
+```
+
+Writes the committed pointer (`.curiosity/config.toml`), a per-machine allowlist (`.claude/settings.local.json`) rooted at the absolute workspace path, a per-machine capture hook (`.git/hooks/post-merge`), a `.gitignore` block for the per-machine files, slash-command templates into `.claude/commands/`, and (with `--ci-mode`) `.github/workflows/ce-capture.yml`. Cross-platform default path resolution uses `xdg-user-dir DOCUMENTS` on Linux when available, falls back to `~/Documents/curiosity-workspace`, then `~/curiosity-workspace`.
+
+**Capture surfaces (v1).**
+
+- **Commits + PRs + changelog** via a local `post-merge` git hook. Triggers on `git pull` / `git merge`. Writes one vault entry per commit (with diff stat), and if `gh` is on PATH and authenticated, captures the associated PR's thread + reviews. Silently no-ops if the workspace isn't cloned on this engineer's machine, so `git pull` never breaks.
+- **GitHub Action** (`--ci-mode`) as an alternative for teams that don't want every engineer to have the workspace cloned locally. Template ships with secret-wiring instructions; setup.sh writes the file but does not auto-configure secrets (deploy key + `CE_WIKI_DEPLOY_KEY` + `CE_WIKI_REPO` are the team owner's one-time task).
+- **Agent session transcripts** via `session_drainer.py`. Walks `~/.claude/projects/<flatpath>/*.jsonl`, drains completed sessions (mtime > 5min) into vault entries, with a hard skip rule for the workspace's own flatpath — prevents detached curate sessions from being re-ingested as engineer work. On-demand for v0.2.0; daemon/launchd unit deferred.
+
+Every vault entry is sha256-content-addressed, so the local hook and the Action can both fire without producing duplicates.
+
+**Slash commands (route to workspace via pointer-file walk-up):**
+- `/note`, `/decision`, `/gotcha`, `/constraint` — append to topic notes files in the workspace with project autotag. CURATE drains them into the appropriate page types over time.
+- `/distill` — proposes wiki edits from the current coding session transcript; awaits confirmation.
+- `/brief` — regenerates the per-(repo, branch) session brief.
+- `/curate` — when invoked from a code-repo cwd, spawns a detached `claude -p` against the workspace and returns immediately with the session ID. The engineer's coding transcript stays untouched. Hosts without headless support (Gemini, Copilot today) fall back to in-session curate with a banner warning.
+
+**Session brief.** `scripts/session_brief.py` generates `<code-repo>/.curiosity/session-brief.md` (per-machine, gitignored) from the workspace's project-tagged content + the current branch's diff vs. main + recent activity log entries. SKILL.md instructs agents to read this at session start, so a fresh coding agent picks up yesterday's context without grep-and-rediscover. Optional `[brief] regenerate_on_pull = true` in the pointer file wires it into the `post-merge` hook.
+
+**New scripts (all stdlib-only, all hash-guarded by `evolve_guard.sh`):**
+- `scripts/code_repo.py` — detection, pointer-file IO, workspace resolution (with git-bounded walk-up)
+- `scripts/code_capture.py` — `commits` / `pr` / `changelog` / `session` subcommands
+- `scripts/session_drainer.py` — one-shot session-transcript ingestion with workspace-flatpath skip rule
+- `scripts/session_brief.py` — per-(repo, branch) digest generator
+- `scripts/curate_launch.py` — host-aware detached `claude -p` spawn with status file
+- `scripts/curate_status.py` — alive check + log scrape (waves, accepts, rejects)
+
+**Safety properties preserved.**
+- Walk-up for the pointer file is **bounded by git root**: a code repo nested inside an unrelated workspace's directory tree can never be silently mis-routed to that workspace. Workspace discovery by directory proximity is deliberately not supported.
+- `setup.sh` never creates `vault/`, `wiki/`, or `.curator/` inside a code repo. `--in-repo` is the only path that produces the legacy in-repo layout, and it's explicit.
+- Captured content carries the standard `untrusted: true` envelope and runs through `scrub_check.py --mode vault` before being indexed; injection-marker hits land in `vault/_suspect/`.
+- Detached curate sessions write their transcripts to the workspace's project dir in `~/.claude/projects/`, separate from the code repo's project dir — the drainer's skip rule prevents recursion (curate sessions don't re-ingest themselves).
+
+**Bundled bugfix — viewer TYPE_CANONICAL.** `template/wiki-view/static/sidebar.js` and `template/wiki-view/static/graph.js` were missing entries for the `extracted-table` and `summary-table` page subtypes in their `TYPE_CANONICAL` maps. Result: pages of those subtypes (the `wiki/tables/tab-*.md` and `wiki/tables/tbl-*.md` outputs of the existing multimodal-table-extract and summary-table-builder waves) did not collapse under the **Tables** sidebar bucket or share the table colour in the graph view — they got their own unrecognised sections. Fix is two lines per file mapping both subtypes to `table`. Display layer only; the on-disk frontmatter values stay unchanged so `tables.py extracted-query`, the numeric-review pipeline, and graph indexing — all of which key off the subtype values — are unaffected. Viewer template stays outside the hash-guard set per its blast-radius rule.
+
+**Out of scope (deferred to v0.2.x and v1.5+):**
+- Session-drainer daemon unit (launchd / systemd). On-demand drain via `/distill` works today.
+- Code-comment scraping (`WHY:` / `GOTCHA:` / `INVARIANT:` patterns).
+- Slack / Teams / email / Confluence / Notion / Linear connectors.
+- IDE extensions (VS Code / Cursor "Send to CE" command).
+- Native Windows PowerShell setup (bash via Git Bash / WSL still works).
+- Automatic deploy-key wiring for the GitHub Action (template ships, secrets manual).
+- Drift audit for `(code:project:path:line)` citations — extend the existing `table_citation_risk` pattern to code ranges.
+- A `wiki/.recent.md` workspace-wide rolling digest (generalisation of the per-repo session brief).
+
 ## 2026-05-06 — v0.1.4 — fix silent embedding-load failure in vault_index / vault_search
 
 `vault_index._init_embed_tables` and `vault_search._semantic_search`

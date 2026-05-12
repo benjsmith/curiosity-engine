@@ -1,0 +1,108 @@
+# .github/workflows/ce-capture.yml — CE capture on PR merge / changelog
+# change. Committed by `setup.sh --register-code-repo --ci-mode`.
+#
+# Wires the team to a centralised capture flow without requiring every
+# engineer to have the workspace cloned locally.
+#
+# REQUIRED SETUP (one-time, by team owner):
+#   1. Create a deploy key on the wiki repo with WRITE access.
+#   2. Add the deploy key's PRIVATE part as `CE_WIKI_DEPLOY_KEY` in this
+#      repo's Actions secrets.
+#   3. Set repository variable `CE_WIKI_REPO` to `org/team-curiosity-wiki`
+#      (the wiki repo's owner/name).
+#   4. Optionally set repository variable `CE_SKILL_REF` to a release tag
+#      or branch of the curiosity-engine skill (default: main).
+#
+# Coexistence with the local hook: vault entries are sha256-content-
+# addressed, so re-capturing the same PR is a no-op. To stop engineers'
+# local hooks double-capturing what this Action handles canonically, set
+# `[ingest] commit_capture = false` in .curiosity/config.toml after the
+# Action is wired.
+
+name: ce-capture
+
+on:
+  pull_request:
+    types: [closed]
+  push:
+    branches: [main]
+    paths: [CHANGELOG.md]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR to capture (manual trigger only)
+        required: false
+
+jobs:
+  capture:
+    # Only run for merged PRs (not just-closed ones), CHANGELOG pushes,
+    # or explicit dispatch.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+
+      - name: Checkout wiki workspace
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.CE_WIKI_REPO }}
+          ssh-key: ${{ secrets.CE_WIKI_DEPLOY_KEY }}
+          path: ce-workspace
+
+      - name: Checkout curiosity-engine skill
+        uses: actions/checkout@v4
+        with:
+          repository: benjsmith/curiosity-engine
+          ref: ${{ vars.CE_SKILL_REF || 'main' }}
+          path: ce-skill
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Capture (PR / changelog / commits)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          SCRIPTS="${GITHUB_WORKSPACE}/ce-skill/scripts"
+          WORKSPACE="${GITHUB_WORKSPACE}/ce-workspace"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            uv run python3 "$SCRIPTS/code_capture.py" pr \
+              --workspace "$WORKSPACE" \
+              --pr-number "${{ github.event.pull_request.number }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            uv run python3 "$SCRIPTS/code_capture.py" changelog \
+              --workspace "$WORKSPACE"
+          elif [ -n "${{ github.event.inputs.pr_number }}" ]; then
+            uv run python3 "$SCRIPTS/code_capture.py" pr \
+              --workspace "$WORKSPACE" \
+              --pr-number "${{ github.event.inputs.pr_number }}"
+          fi
+
+      - name: Push to wiki
+        working-directory: ce-workspace
+        run: |
+          git config user.name "ce-capture[bot]"
+          git config user.email "ce-capture@users.noreply.github.com"
+          git add vault/
+          if git diff --cached --quiet; then
+            echo "Nothing new to capture."
+            exit 0
+          fi
+          MSG="capture: ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            MSG="capture: PR #${{ github.event.pull_request.number }}"
+          fi
+          git commit -m "$MSG
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+          git push

@@ -32,6 +32,12 @@ GUARDED=(
     "$SCRIPT_DIR/sweep.py"
     "$SCRIPT_DIR/tables.py"
     "$SCRIPT_DIR/figures.py"
+    "$SCRIPT_DIR/code_repo.py"
+    "$SCRIPT_DIR/code_capture.py"
+    "$SCRIPT_DIR/session_drainer.py"
+    "$SCRIPT_DIR/session_brief.py"
+    "$SCRIPT_DIR/curate_launch.py"
+    "$SCRIPT_DIR/curate_status.py"
 )
 
 sha256_cmd() {

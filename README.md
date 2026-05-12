@@ -262,6 +262,31 @@ Many projects live in a single wiki. Project membership is *derived* from the ci
 
 Verbs marked **‡ live in a separate skill, [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge)**. The cross-wiki operations have a different trust model (external data ingestion) and a smaller audience than daily curation, so they ship independently. Offered as an opt-in install from curiosity-engine's `setup.sh`. Public sub-wikis use the GitHub topic **`curiosity-wiki`** — search [`topic:curiosity-wiki`](https://github.com/topics/curiosity-wiki) to discover wikis you can clone, fork, or merge.
 
+## Using Curiosity Engine for codebases
+
+Curiosity Engine treats a codebase like any other project: source files stay where they are, and a single team CE workspace (default `~/Documents/curiosity-workspace`) accumulates the knowledge that *isn't in the code* — decisions, constraints, gotchas, agent-discovered findings, design notes, postmortems. Each code repo registers against the workspace via a small `.curiosity/config.toml` pointer file (committed); capture flows from PR descriptions, commits, the changelog, and your coding-agent session transcripts into the workspace's vault. Curate runs against the workspace — never inside the code repo. A per-machine session brief at `<repo>/.curiosity/session-brief.md` gives a fresh agent yesterday's context for files in the current branch's diff.
+
+Setup, from inside a code repo:
+
+```bash
+# Default — confirm-and-reuse the workspace at ~/Documents/curiosity-workspace
+bash <skill_path>/scripts/setup.sh --register-code-repo
+
+# Non-interactive automation
+bash <skill_path>/scripts/setup.sh --register-code-repo --yes
+
+# Explicit workspace path
+bash <skill_path>/scripts/setup.sh --register-code-repo \
+  --ce-workspace-path ~/Documents/curiosity-workspace
+
+# Also drop a GitHub Action workflow template (team scale)
+bash <skill_path>/scripts/setup.sh --register-code-repo --ci-mode
+```
+
+Existing CE users see no change — the code-repo flow only triggers when cwd has no workspace markers and is detected as a code repo (`.git/` plus a source-marker file). Pass `--in-repo` to preserve the legacy "create the workspace right here" behaviour for solo / OSS / monorepo cases.
+
+Full design and rationale: [`docs/code-knowledge.md`](docs/code-knowledge.md).
+
 ## License
 
 MIT

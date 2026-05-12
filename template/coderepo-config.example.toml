@@ -1,0 +1,50 @@
+# .curiosity/config.toml — committed; routes CE-aware commands run in
+# this repo to the named workspace. See docs/code-knowledge.md.
+#
+# This file is written automatically by:
+#   bash <skill_path>/scripts/setup.sh --register-code-repo
+#
+# Engineers cloning this repo on a new machine inherit the routing.
+# If their workspace lives at a non-default path, they can override
+# without editing this file by exporting CURIOSITY_WORKSPACE in their
+# shell profile.
+
+# Where the team CE workspace lives. ~ expands; absolute paths also fine.
+# Engineers must have the workspace cloned at this path on their machine
+# (or override via $CURIOSITY_WORKSPACE) for capture hooks to fire.
+workspace = "~/Documents/curiosity-workspace"
+
+# Project tag applied to every wiki write originating from this repo.
+# Drives multi-project planner allocation and bridge discovery.
+project = "myapp"
+
+# Used to qualify (code:project:path:line) citations the wiki writes
+# about this codebase. Defaults to the project tag.
+code_citation_root = "myapp"
+
+[ingest]
+# Master switch — set to false to pause all capture for this repo
+# without uninstalling.
+enabled = true
+
+# Repo paths to ingest at setup time and re-ingest when changed.
+paths = ["docs/adr/", "CHANGELOG.md", "README.md"]
+
+# Capture PR descriptions + diff summaries on merge (via local hook
+# or GitHub Action).
+pr_capture = true
+
+# Capture commit messages on `git pull` / `git merge` (via local hook).
+commit_capture = true
+
+# Drain agent session transcripts (~/.claude/projects/...) into the
+# vault on session end. Set to false in privacy-strict environments.
+transcript_capture = true
+
+[brief]
+# Generate session-brief.md on agent session start in this repo.
+auto = true
+
+# Also regenerate after `git pull` (post-merge hook). Off by default
+# to avoid surprise compute on every pull.
+regenerate_on_pull = false

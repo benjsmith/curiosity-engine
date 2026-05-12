@@ -21,6 +21,7 @@ window.Sidebar = (function () {
     fact:         'fact',         facts:    'fact',
     figure:       'figure',       figures:  'figure',
     table:        'table',        tables:   'table',
+    'extracted-table': 'table',   'summary-table': 'table',
     source:       'source',       sources:  'source',
     note:         'note',         notes:    'note',
     todo:         'todo-list',    'todo-list': 'todo-list',

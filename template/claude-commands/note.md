@@ -2,6 +2,8 @@
 description: Append a note. Routes to a topic file on explicit cue, else to wiki/notes/new.md.
 ---
 
+**Workspace context.** Apply the workspace-resolution rule from SKILL.md § Code-repo mode before doing anything. If you established `$WORKSPACE` (code-repo mode), every path below is rooted at `$WORKSPACE` instead of cwd, and add `project: <name>` to the note's frontmatter (the value from `.curiosity/config.toml`).
+
 Determine the target file from the input:
 
 1. **Explicit topic cue** — the input begins with `topic: <name>`, `re: <name>`, `project <name>`, or a similarly clear leading phrase naming a subject. Extract the topic name, kebab-case it, and use `wiki/notes/<slug>.md` as the target. Create the file if missing with `type: note` frontmatter and a `"[note] <title>"` title.

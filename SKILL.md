@@ -57,7 +57,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
 5. `printenv CURATOR_PRESET` — read the per-session preset override (see §Curator config). Run once at the start of any operation that dispatches workers/reviewers; the value is stable for the session.
@@ -77,6 +77,8 @@ Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompt
 **No compound shell:** no pipes, no `&&`, no `$(...)`, no backticks, no heredocs. One command per bash call.
 
 **Why:** any other bash command either has a safe tool-layer equivalent or cannot be scoped to the workspace via prefix matching without risking the user's wider filesystem. Breaking this rule means approval interrupts, which means the loop stops.
+
+**Code-repo mode addendum.** When cwd is a registered code repo (see § Code-repo mode), every workspace-rooted form above takes an **absolute** workspace path: `git -C $WORKSPACE/wiki <subcmd>`, not `git -C wiki <subcmd>`. The allowlist `setup.sh --register-code-repo` writes into the code repo's `.claude/settings.local.json` carries the resolved absolute path, so prefix matching still pre-approves these commands without prompts.
 
 **Pre-approving the bash surface in non-Claude-Code CLIs.** `.claude/settings.json`'s `permissions.allow` array is read by Claude Code only. Other hosts (Codex CLI, Gemini CLI, GitHub Copilot Chat, Cursor) each keep their own allowlist somewhere else; without it pre-populated, every bash call prompts for approval and autonomous loops stall on the first wave. Don't ask the user to hand-copy patterns — propose the install once per workspace per host and apply with their approval.
 
@@ -129,6 +131,38 @@ bash <skill_path>/scripts/update.sh --yes  # applies after user confirms
 Two-step flow by design. The first call inspects the install channel and prints a preview: for git-clone installs it `git fetch`es the skill repo and shows the local..upstream commit log; for npx-skills installs (`.git` absent from the skill dir) it shows the update plan and the slug that will be passed to `npx skills update -g`. Either way it exits without changes — `--yes` is always required to apply, with no TTY-based [y/N] fallback (a prompt would hang under coding-agent CLIs that allocate a PTY but can't forward keystrokes, e.g. GitHub Copilot Chat in VS Code). Relay the preview to the user, wait for confirmation, then re-invoke with `--yes`. Stage 2 auto-commits any dirty wiki with a canned `wip: auto-commit before skill update` message, applies the update (`git pull --ff-only` or `npx skills update -g <slug>`), and runs `setup.sh` (with `CURIOSITY_ENGINE_NONINTERACTIVE=1`) to reapply the migration pass.
 
 The npx-skills slug is read from `.curator/config.json`'s `update_source_slug` key (seeded by setup.sh from the template default); fork users edit the key in their workspace config to repoint.
+
+## Code-repo mode
+
+When cwd is a registered **code repository** rather than a CE workspace, every curiosity-engine write (notes, drains, captures, curate edits) routes to the workspace named in the code repo's `.curiosity/config.toml` pointer file — never to cwd. Detection runs once at session start.
+
+**Detection (run before any other operation):**
+
+1. Is cwd itself a workspace? If `uv run python3 <skill_path>/scripts/code_repo.py is-workspace .` exits 0, cwd is the workspace; the rest of this section does not apply, and every other section of SKILL.md operates as written.
+
+2. Otherwise, is cwd a code repo with a pointer? Run `uv run python3 <skill_path>/scripts/code_repo.py resolve-workspace --from .`. If exit 0, the printed absolute path is the workspace for this session — capture it as `$WORKSPACE`. Also read the pointer for the project tag: `uv run python3 <skill_path>/scripts/code_repo.py read-config .curiosity/config.toml` (the JSON's `project` field).
+
+3. Neither? Cwd is a fresh directory or unrelated tree. Tell the user: "no CE workspace here — run `bash <skill_path>/scripts/setup.sh` to set up a workspace, or `bash <skill_path>/scripts/setup.sh --register-code-repo` to register this repo against an existing workspace." Stop.
+
+**Code-repo-mode rules** (override the cwd-relative defaults elsewhere in SKILL.md):
+
+- All file paths in operations target `$WORKSPACE`, not cwd. `Read("$WORKSPACE/wiki/...")`, `Edit("$WORKSPACE/wiki/...")`, etc. The allowlist baked into the code repo's `.claude/settings.local.json` already names the absolute workspace path.
+- `git -C $WORKSPACE/wiki <subcmd>` instead of `git -C wiki <subcmd>`.
+- Slash-script invocations target the workspace via absolute paths where they need workspace context. Most skill scripts accept a positional `wiki` argument or a `--workspace` flag; pass `$WORKSPACE` or `$WORKSPACE/wiki` explicitly.
+- Every wiki page or notes entry written from this session carries `project: <name>` frontmatter (the value from the pointer file). The recency-weighted planner reads this; the multi-project model handles the rest.
+- Code references in wiki content use `(code:<project>:<repo-relative-path>:<line-range>)`, not `(vault:...)`. Code citations are pointers, not evidentiary citations — they do not gate on the citation-preserving ratchet.
+
+**Session-start brief.** After resolving the workspace, check `[brief] auto` in the pointer file (default true). If true, generate or refresh the per-(code-repo, branch) brief:
+
+```bash
+uv run python3 <skill_path>/scripts/session_brief.py --quiet
+```
+
+The script writes `<code-repo>/.curiosity/session-brief.md` (per-machine, gitignored). Read it and surface the in-flight files, recent decisions, and recent activity to the user before doing anything else — this is the engineer's "yesterday's context" handover. If the brief is empty (no project-tagged content yet), don't lecture about it; just proceed.
+
+**Walk-up for the pointer file is bounded by git-root** — `code_repo.py` never crosses out of the enclosing repo. This is the safety property that keeps a code repo nested inside an unrelated workspace's tree from being mis-routed.
+
+Existing CE workspaces are unaffected. Step 1 of detection short-circuits to the workspace path and the rest of this section is inert. The full design lives in `docs/code-knowledge.md`.
 
 ## Data stores
 

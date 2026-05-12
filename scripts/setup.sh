@@ -1,6 +1,87 @@
 #!/usr/bin/env bash
 set -e
 
+# ---------------------------------------------------------------------------
+# Argument parsing.
+#
+# Default behaviour (no flags): bootstrap or refresh a curiosity-engine
+# workspace at cwd — this is the existing flow and is unchanged.
+#
+# Code-repo mode flags route this invocation to a different branch that
+# registers a code repo against an existing workspace, without ever
+# creating vault/, wiki/, or .curator/ inside the code repo. See
+# docs/code-knowledge.md for the full design.
+# ---------------------------------------------------------------------------
+REGISTER_CODE_REPO=0
+CE_WORKSPACE_PATH=""
+CE_PROJECT=""
+INIT_WORKSPACE=0
+IN_REPO=0
+ASSUME_YES=0
+CI_MODE=0
+INSTALL_DRAINER=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --register-code-repo)
+            REGISTER_CODE_REPO=1; shift ;;
+        --ce-workspace-path)
+            CE_WORKSPACE_PATH="$2"; shift 2 ;;
+        --ce-workspace-path=*)
+            CE_WORKSPACE_PATH="${1#*=}"; shift ;;
+        --ce-project)
+            CE_PROJECT="$2"; shift 2 ;;
+        --ce-project=*)
+            CE_PROJECT="${1#*=}"; shift ;;
+        --init-workspace)
+            INIT_WORKSPACE=1; shift ;;
+        --in-repo)
+            IN_REPO=1; shift ;;
+        --yes|-y)
+            ASSUME_YES=1; shift ;;
+        --ci-mode)
+            CI_MODE=1; shift ;;
+        --install-drainer)
+            INSTALL_DRAINER=1; shift ;;
+        --help|-h)
+            cat <<'HELP'
+Usage: setup.sh [flags]
+
+Default flow (no flags): bootstrap or refresh a curiosity-engine workspace
+at cwd. This is the existing behaviour and is unchanged for existing CE
+users.
+
+Code-repo mode (register a code repo against an existing workspace):
+  --register-code-repo          Enter code-repo mode. Writes
+                                .curiosity/config.toml; never creates
+                                vault/wiki/.curator inside the code repo.
+  --ce-workspace-path <path>    Workspace path to register against.
+                                Defaults to $CURIOSITY_WORKSPACE or
+                                ~/Documents/curiosity-workspace.
+  --ce-project <name>           Project tag applied to writes from this
+                                repo. Defaults to the repo's basename.
+  --init-workspace              Bootstrap the workspace at the resolved
+                                path if it doesn't exist.
+  --in-repo                     Force workspace mode in a code repo
+                                (legacy / OSS / monorepo layout).
+  --yes, -y                     Accept default-Y prompts non-interactively.
+  --ci-mode                     Also drop a GitHub Action workflow
+                                template (Phase 2).
+  --install-drainer             Install the session-drainer service
+                                (Phase 2).
+
+See docs/code-knowledge.md for the full design.
+HELP
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown flag: $1" >&2
+            echo "Run 'setup.sh --help' for usage." >&2
+            exit 2
+            ;;
+    esac
+done
+
 echo "=== Curiosity Engine Setup ==="
 
 # Interactive-mode predicate. The historical check was a bare
@@ -132,6 +213,436 @@ ERROR: uv not found on PATH. curiosity-engine needs uv to manage its
 EOF
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Mode detection + code-repo branch.
+#
+# Existing CE users see no change: a directory with workspace markers is
+# always treated as a workspace (existing flow, below). The code-repo
+# branch only fires when (a) cwd is NOT a workspace and (b) either
+# --register-code-repo was passed, or cwd is auto-detected as a code repo
+# and the user confirms.
+#
+# --in-repo forces workspace mode in a code repo (legacy / OSS / monorepo).
+# ---------------------------------------------------------------------------
+
+CODE_REPO_PY="$SCRIPT_DIR/code_repo.py"
+
+# Resolve mode. python3 is stdlib-only here — code_repo.py has no uv
+# dependency.
+_is_workspace=0
+_is_code_repo=0
+if python3 "$CODE_REPO_PY" is-workspace . >/dev/null 2>&1; then
+    _is_workspace=1
+fi
+if python3 "$CODE_REPO_PY" detect . >/dev/null 2>&1; then
+    _is_code_repo=1
+fi
+
+_mode="workspace"   # default
+if [ "$_is_workspace" = "1" ]; then
+    _mode="workspace"
+elif [ "$IN_REPO" = "1" ]; then
+    _mode="workspace"
+elif [ "$REGISTER_CODE_REPO" = "1" ]; then
+    _mode="code-repo"
+elif [ "$_is_code_repo" = "1" ]; then
+    # Auto-detected code repo with no workspace markers and no explicit
+    # flag. Prompt in interactive mode; refuse with guidance otherwise.
+    if _is_interactive; then
+        echo ""
+        echo "  Detected a code repository (\`.git/\` plus a source-marker file)."
+        echo "  Curiosity Engine in code-repo mode never creates vault/, wiki/,"
+        echo "  or .curator/ inside this repo — it registers the repo against"
+        echo "  an existing workspace via .curiosity/config.toml."
+        echo ""
+        printf "  Register this code repo against a CE workspace? [Y/n/i (in-repo)] "
+        read -r _reply_mode || _reply_mode="y"
+        case "$_reply_mode" in
+            ""|y|Y|yes|YES) _mode="code-repo" ;;
+            i|I|in-repo)    _mode="workspace" ; IN_REPO=1 ;;
+            *)
+                echo "  Aborted. Re-run with --register-code-repo or --in-repo to choose."
+                exit 0
+                ;;
+        esac
+    else
+        cat <<EOF >&2
+
+ERROR: cwd is a code repository but no mode flag was given.
+
+Pass one of:
+  --register-code-repo [--ce-workspace-path PATH] [--yes]
+                                  register against an existing workspace
+                                  (writes .curiosity/config.toml; never
+                                  creates vault/wiki/.curator inside this repo)
+  --in-repo                       legacy: create a workspace inside this repo
+
+See \`setup.sh --help\` or docs/code-knowledge.md for the full design.
+EOF
+        exit 2
+    fi
+fi
+
+if [ "$_mode" = "code-repo" ]; then
+    # ----- code-repo flow (Phase 1: pointer file only) ------------------
+    #
+    # Subsequent phases extend this branch with allowlist injection
+    # (Phase 3), local hook + Action template (Phase 2), and session-brief
+    # auto-generation (Phase 3.5).
+
+    REPO_ROOT="$(pwd)"
+    REPO_BASENAME="$(basename "$REPO_ROOT")"
+
+    # Resolve target workspace path. Order:
+    #   1. --ce-workspace-path
+    #   2. $CURIOSITY_WORKSPACE
+    #   3. xdg / ~/Documents / ~ default via code_repo.py
+    if [ -n "$CE_WORKSPACE_PATH" ]; then
+        TARGET_WS="$CE_WORKSPACE_PATH"
+    elif [ -n "${CURIOSITY_WORKSPACE:-}" ]; then
+        TARGET_WS="$CURIOSITY_WORKSPACE"
+    else
+        TARGET_WS="$(python3 "$CODE_REPO_PY" default-workspace-root)"
+    fi
+    # Expand ~ for our own checks.
+    TARGET_WS_EXPANDED="${TARGET_WS/#\~/$HOME}"
+
+    # Resolve project tag.
+    if [ -z "$CE_PROJECT" ]; then
+        CE_PROJECT="$REPO_BASENAME"
+    fi
+
+    echo ""
+    echo "  Code-repo mode."
+    echo "    Code repo:        $REPO_ROOT"
+    echo "    Workspace target: $TARGET_WS_EXPANDED"
+    echo "    Project tag:      $CE_PROJECT"
+    echo ""
+
+    # Workspace-existence check + confirm-and-reuse.
+    if python3 "$CODE_REPO_PY" is-workspace "$TARGET_WS_EXPANDED" >/dev/null 2>&1; then
+        # Existing CE workspace. Confirm reuse unless --yes or
+        # --ce-workspace-path was passed (both are explicit signals).
+        if [ "$ASSUME_YES" != "1" ] && [ -z "$CE_WORKSPACE_PATH" ] \
+           && [ -z "${CURIOSITY_WORKSPACE:-}" ] && _is_interactive; then
+            printf "  Workspace at %s already exists as a CE workspace.\n" "$TARGET_WS_EXPANDED"
+            printf "  Use it for this code repo? [Y/n] "
+            read -r _reply_use || _reply_use="y"
+            case "$_reply_use" in
+                ""|y|Y|yes|YES) ;;
+                *)
+                    printf "  Enter alternative workspace path: "
+                    read -r TARGET_WS || TARGET_WS=""
+                    if [ -z "$TARGET_WS" ]; then
+                        echo "  Aborted." >&2
+                        exit 1
+                    fi
+                    TARGET_WS_EXPANDED="${TARGET_WS/#\~/$HOME}"
+                    if ! python3 "$CODE_REPO_PY" is-workspace "$TARGET_WS_EXPANDED" >/dev/null 2>&1; then
+                        if [ "$INIT_WORKSPACE" != "1" ]; then
+                            echo "  $TARGET_WS_EXPANDED is not a CE workspace." >&2
+                            echo "  Re-run with --init-workspace to bootstrap it, or" >&2
+                            echo "  point at a different existing workspace path." >&2
+                            exit 1
+                        fi
+                    fi
+                    ;;
+            esac
+        fi
+    elif [ -d "$TARGET_WS_EXPANDED" ]; then
+        # Path exists but isn't a CE workspace — likely a name collision
+        # with an unrelated directory. Refuse to silently adopt it.
+        echo "  $TARGET_WS_EXPANDED exists but is not a CE workspace." >&2
+        if [ "$INIT_WORKSPACE" = "1" ]; then
+            echo "  --init-workspace passed; bootstrap is not yet implemented in" >&2
+            echo "  this Phase 1 build. Bootstrap the workspace by running:" >&2
+            echo "    cd $TARGET_WS_EXPANDED && bash $0" >&2
+            echo "  then re-run setup.sh --register-code-repo from this code repo." >&2
+            exit 1
+        fi
+        if _is_interactive && [ "$ASSUME_YES" != "1" ]; then
+            printf "  Bootstrap a CE workspace there? [y/N] "
+            read -r _reply_boot || _reply_boot="n"
+            case "$_reply_boot" in
+                y|Y|yes|YES)
+                    echo "  Bootstrap not yet implemented in Phase 1." >&2
+                    echo "  Run: cd $TARGET_WS_EXPANDED && bash $0" >&2
+                    echo "  then re-run --register-code-repo from this repo." >&2
+                    exit 1
+                    ;;
+                *)
+                    echo "  Aborted." >&2
+                    exit 1
+                    ;;
+            esac
+        else
+            echo "  Re-run with --init-workspace to bootstrap (Phase 2+) or" >&2
+            echo "  --ce-workspace-path PATH to point at a different existing workspace." >&2
+            exit 1
+        fi
+    else
+        # Path doesn't exist. Bootstrap if requested.
+        if [ "$INIT_WORKSPACE" = "1" ]; then
+            echo "  Bootstrapping workspace at $TARGET_WS_EXPANDED ..."
+            mkdir -p "$TARGET_WS_EXPANDED"
+            (cd "$TARGET_WS_EXPANDED" && bash "$0")
+            echo "  Workspace bootstrapped. Continuing code-repo registration."
+        else
+            echo "  No CE workspace found at $TARGET_WS_EXPANDED." >&2
+            echo "  Re-run with --init-workspace to bootstrap one, or" >&2
+            echo "  --ce-workspace-path PATH to point at an existing workspace." >&2
+            exit 1
+        fi
+    fi
+
+    # Write the pointer file. JSON → write_pointer in code_repo.py.
+    POINTER_DIR="$REPO_ROOT/.curiosity"
+    POINTER_FILE="$POINTER_DIR/config.toml"
+    mkdir -p "$POINTER_DIR"
+
+    # Compose the pointer-file dict as JSON via heredoc, pipe to
+    # code_repo.py write-config. Defaults match the example template.
+    python3 "$CODE_REPO_PY" write-config "$POINTER_FILE" <<JSON
+{
+  "workspace": "$TARGET_WS",
+  "project": "$CE_PROJECT",
+  "code_citation_root": "$CE_PROJECT",
+  "ingest": {
+    "enabled": true,
+    "paths": ["docs/adr/", "CHANGELOG.md", "README.md"],
+    "pr_capture": true,
+    "commit_capture": true,
+    "transcript_capture": true
+  },
+  "brief": {
+    "auto": true,
+    "regenerate_on_pull": false
+  }
+}
+JSON
+    echo "  Wrote $POINTER_FILE"
+
+    # Add .curiosity/config.toml to git's index if the repo allows.
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        # Stage but don't commit — let the engineer review and commit
+        # with their own message.
+        git add .curiosity/config.toml 2>/dev/null || true
+        echo "  Staged .curiosity/config.toml for commit."
+    fi
+
+    # ---- Phase 3: Allowlist injection (per-machine, gitignored) ----------
+    #
+    # Write .claude/settings.local.json with the same canonical bash
+    # surface the workspace's settings.json carries, but rooted at the
+    # absolute workspace path so prefix matching pre-approves operations
+    # the agent issues from this code-repo cwd.
+    #
+    # Backup-and-overwrite if a prior file exists (matches the existing
+    # refresh_template_md pattern). Per-machine file: not committed.
+    mkdir -p "$REPO_ROOT/.claude"
+    SETTINGS_LOCAL="$REPO_ROOT/.claude/settings.local.json"
+    if [ -s "$SETTINGS_LOCAL" ]; then
+        _backup="${SETTINGS_LOCAL}.bak.$(date +%Y%m%d-%H%M%S)"
+        cp "$SETTINGS_LOCAL" "$_backup"
+        echo "  Existing $SETTINGS_LOCAL backed up to $_backup"
+    fi
+
+    # Header + git entries scoped to the absolute workspace path.
+    cat > "$SETTINGS_LOCAL" <<EOF
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki add:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki commit:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki status:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki log:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki diff:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki revert:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki checkout:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki rev-parse:*)",
+      "Bash(git -C $TARGET_WS_EXPANDED/wiki show:*)",
+EOF
+    # Skill-script entries — same set as workspace mode, both physical
+    # and logical install roots when they differ (symlinked install).
+    for root in "${SKILL_ROOTS[@]}"; do
+        cat >> "$SETTINGS_LOCAL" <<EOF
+      "Bash(uv run python3 $root/scripts/lint_scores.py:*)",
+      "Bash(uv run python3 $root/scripts/vault_search.py:*)",
+      "Bash(uv run python3 $root/scripts/vault_index.py:*)",
+      "Bash(uv run python3 $root/scripts/local_ingest.py:*)",
+      "Bash(uv run python3 $root/scripts/scrub_check.py:*)",
+      "Bash(uv run python3 $root/scripts/score_diff.py:*)",
+      "Bash(uv run python3 $root/scripts/sweep.py:*)",
+      "Bash(uv run python3 $root/scripts/epoch_summary.py:*)",
+      "Bash(uv run python3 $root/scripts/graph.py:*)",
+      "Bash(uv run python3 $root/scripts/tables.py:*)",
+      "Bash(uv run python3 $root/scripts/figures.py:*)",
+      "Bash(uv run python3 $root/scripts/naming.py:*)",
+      "Bash(uv run python3 $root/scripts/projects.py:*)",
+      "Bash(uv run python3 $root/scripts/identifier_resolve.py review:*)",
+      "Bash(uv run python3 $root/scripts/identifier_resolve.py status:*)",
+      "Bash(uv run python3 $root/scripts/activity_log.py:*)",
+      "Bash(uv run python3 $root/scripts/planner.py:*)",
+      "Bash(uv run python3 $root/scripts/wiki_render.py:*)",
+      "Bash(uv run python3 $root/scripts/viewer_server.py:*)",
+      "Bash(uv run python3 $root/scripts/code_repo.py:*)",
+      "Bash(python3 $root/scripts/code_repo.py:*)",
+      "Bash(uv run python3 $root/scripts/code_capture.py:*)",
+      "Bash(uv run python3 $root/scripts/session_drainer.py:*)",
+      "Bash(uv run python3 $root/scripts/session_brief.py:*)",
+      "Bash(uv run python3 $root/scripts/curate_launch.py:*)",
+      "Bash(uv run python3 $root/scripts/curate_status.py:*)",
+      "Bash(bash $root/scripts/evolve_guard.sh:*)",
+      "Bash(bash $root/scripts/viewer.sh:*)",
+      "Bash(bash $root/scripts/update.sh:*)",
+EOF
+    done
+    # Workspace-rooted Edit/Write (absolute paths) + read access to skill.
+    cat >> "$SETTINGS_LOCAL" <<EOF
+      "Edit($TARGET_WS_EXPANDED/wiki/**)",
+      "Write($TARGET_WS_EXPANDED/wiki/**)",
+      "Edit($TARGET_WS_EXPANDED/.curator/**)",
+      "Write($TARGET_WS_EXPANDED/.curator/**)",
+      "Edit($TARGET_WS_EXPANDED/vault/**)",
+      "Write($TARGET_WS_EXPANDED/vault/**)",
+      "Read($TARGET_WS_EXPANDED/**)",
+      "Write(/tmp/**)",
+      "Edit(/tmp/**)",
+EOF
+    for root in "${SKILL_ROOTS[@]}"; do
+        printf '      "Read(%s/**)",\n' "$root" >> "$SETTINGS_LOCAL"
+    done
+    cat >> "$SETTINGS_LOCAL" <<EOF
+      "Bash(date:*)",
+      "Bash(printenv CURATOR_PRESET:*)"
+    ]
+  }
+}
+EOF
+    echo "  Wrote $SETTINGS_LOCAL (workspace-rooted allowlist)"
+
+    # Ensure per-machine curiosity-engine files are gitignored. The
+    # pointer file (.curiosity/config.toml) is the only thing in
+    # .curiosity/ that should commit; everything else (session brief,
+    # allowlist-install markers) is per-machine state.
+    _gi="$REPO_ROOT/.gitignore"
+    _gi_added=0
+    _ensure_gi() {
+        local pattern="$1"
+        local pattern_re="$2"
+        if [ ! -f "$_gi" ] || ! grep -qE "$pattern_re" "$_gi" 2>/dev/null; then
+            if [ ! -f "$_gi" ]; then
+                printf '# curiosity-engine: per-machine state\n%s\n' "$pattern" > "$_gi"
+            else
+                printf '%s\n' "$pattern" >> "$_gi"
+            fi
+            _gi_added=$((_gi_added + 1))
+        fi
+    }
+    _ensure_gi ".claude/settings.local.json" '^\.claude/settings\.local\.json$'
+    _ensure_gi ".curiosity/session-brief.md" '^\.curiosity/session-brief\.md$'
+    _ensure_gi ".curiosity/.allowlist-installed-*" '^\.curiosity/\.allowlist-installed-\*$'
+    if [ "$_gi_added" -gt 0 ]; then
+        echo "  Updated .gitignore ($_gi_added curiosity-engine entries)"
+    fi
+
+    # Drop a marker so the non-Claude-Code allowlist auto-installer
+    # (described in SKILL.md § Bash discipline) doesn't re-prompt for
+    # Claude Code on subsequent sessions in this code repo.
+    touch "$REPO_ROOT/.curiosity/.allowlist-installed-claude"
+
+    # ---- Slash commands -------------------------------------------------
+    #
+    # Copy the slash-command templates into the code repo's
+    # .claude/commands/ so /note, /decision, /gotcha, /constraint,
+    # /distill register in Claude Code sessions opened here. Engineer
+    # decides whether to commit these (gitignore by default — they're
+    # regenerable from the skill template, like settings.local.json).
+    mkdir -p "$REPO_ROOT/.claude/commands"
+    if [ -d "$TEMPLATE_DIR/claude-commands" ]; then
+        for _cmd in "$TEMPLATE_DIR/claude-commands"/*.md; do
+            [ -f "$_cmd" ] || continue
+            _cmd_name="$(basename "$_cmd")"
+            cp "$_cmd" "$REPO_ROOT/.claude/commands/$_cmd_name"
+        done
+        echo "  Installed slash commands into .claude/commands/"
+    fi
+    # Slash commands gitignored by default (regenerable from the skill
+    # template; engineer can remove the entry from .gitignore to commit
+    # them and share with their team).
+    _ensure_gi ".claude/commands/" '^\.claude/commands/?$'
+
+    # ---- Phase 2: Capture hook (per-machine git hook) -------------------
+    HOOK_TEMPLATE="$TEMPLATE_DIR/coderepo-hooks/post-merge"
+    HOOK_DEST="$REPO_ROOT/.git/hooks/post-merge"
+    if [ -f "$HOOK_TEMPLATE" ] && [ -d "$REPO_ROOT/.git/hooks" ]; then
+        if [ -f "$HOOK_DEST" ] && ! grep -q "code_capture.py" "$HOOK_DEST" 2>/dev/null; then
+            # User-customised hook present; chain via .d directory pattern
+            # would be cleanest but git hooks don't support .d natively.
+            # Back up theirs with timestamp; advise manual merge.
+            _hook_bak="${HOOK_DEST}.bak.$(date +%Y%m%d-%H%M%S)"
+            cp "$HOOK_DEST" "$_hook_bak"
+            echo "  Existing post-merge hook backed up to $_hook_bak"
+            echo "  Review and merge its logic into the new hook manually."
+        fi
+        # Substitute __CE_SCRIPTS_DIR__ → absolute scripts/ path so the
+        # hook resolves regardless of where the skill is installed (the
+        # engineer's machine path may differ from any CE_SCRIPTS_DIR env
+        # var).
+        sed "s|__CE_SCRIPTS_DIR__|$SCRIPT_DIR|g" "$HOOK_TEMPLATE" > "$HOOK_DEST"
+        chmod +x "$HOOK_DEST"
+        echo "  Installed .git/hooks/post-merge"
+    fi
+
+    # ---- Phase 2: Optional GitHub Action template (--ci-mode) ----------
+    if [ "$CI_MODE" = "1" ]; then
+        WORKFLOW_TEMPLATE="$TEMPLATE_DIR/coderepo-workflows/ce-capture.yml"
+        WORKFLOW_DIR="$REPO_ROOT/.github/workflows"
+        WORKFLOW_DEST="$WORKFLOW_DIR/ce-capture.yml"
+        if [ -f "$WORKFLOW_DEST" ]; then
+            echo "  $WORKFLOW_DEST already exists; not overwriting."
+            echo "  Diff against the template at $WORKFLOW_TEMPLATE if needed."
+        elif [ -f "$WORKFLOW_TEMPLATE" ]; then
+            mkdir -p "$WORKFLOW_DIR"
+            cp "$WORKFLOW_TEMPLATE" "$WORKFLOW_DEST"
+            echo "  Wrote $WORKFLOW_DEST"
+            echo "  Wire the secrets per the workflow file's header comments:"
+            echo "    1. Deploy key on the wiki repo with WRITE access"
+            echo "    2. Add the private key as CE_WIKI_DEPLOY_KEY secret"
+            echo "    3. Set CE_WIKI_REPO repository variable to the wiki repo"
+        fi
+    fi
+
+    # Phase 1 + 3 + 2 done. Subsequent phases (3.5 session brief,
+    # 4 detached /curate) extend this further.
+    if [ "$INSTALL_DRAINER" = "1" ]; then
+        echo ""
+        echo "  Note: --install-drainer (launchd / systemd unit for the"
+        echo "  session drainer) is accepted but not yet implemented in"
+        echo "  this build. Until it ships, the drainer runs on demand"
+        echo "  via /distill or:"
+        echo "    uv run python3 $SCRIPT_DIR/session_drainer.py --workspace $TARGET_WS_EXPANDED"
+    fi
+
+    echo ""
+    echo "  Code repo registered."
+    echo "    Pointer file:        .curiosity/config.toml (committed)"
+    echo "    Allowlist:           .claude/settings.local.json (per-machine)"
+    echo "    Slash commands:      .claude/commands/*.md (regenerable)"
+    echo "    Capture hook:        .git/hooks/post-merge (per-machine)"
+    if [ "$CI_MODE" = "1" ]; then
+        echo "    GitHub Action:       .github/workflows/ce-capture.yml (committed)"
+    fi
+    echo ""
+    echo "  On your next \`git pull\`, commits + (PR via gh) + changelog"
+    echo "  will capture into the workspace. Full design: docs/code-knowledge.md"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Workspace flow (existing — unchanged below this line for existing users).
+# ---------------------------------------------------------------------------
 
 # Workspace-local uv cache (sandbox-safe by default). Coding-agent CLIs
 # with strict filesystem sandboxes (Codex CLI is the prominent case) deny

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# post-merge — capture commits + PR (if available) + changelog into the
+# CE workspace whenever a merge lands in this code repo (typically
+# `git pull` on a feature branch or main).
+#
+# Installed by `bash <skill_path>/scripts/setup.sh --register-code-repo`.
+# Per-machine (lives in .git/hooks/, never committed). Silently no-ops
+# when the workspace path doesn't exist on this machine, so engineers
+# without the workspace cloned never see hook errors.
+#
+# Pause capture without uninstalling: set `[ingest] enabled = false`
+# in .curiosity/config.toml.
+
+set -e
+
+# Resolve the workspace path from the pointer file. The CE_SCRIPTS_DIR
+# placeholder is rewritten by setup.sh at install time to the absolute
+# scripts/ path — this lets the hook find code_repo.py regardless of
+# where the skill is installed.
+SCRIPTS_DIR="__CE_SCRIPTS_DIR__"
+if [ ! -d "$SCRIPTS_DIR" ]; then
+    # Skill moved or uninstalled; nothing we can do — silently exit.
+    exit 0
+fi
+
+# Pointer + workspace resolution (stdlib only).
+WORKSPACE="$(python3 "$SCRIPTS_DIR/code_repo.py" resolve-workspace --from . 2>/dev/null || true)"
+if [ -z "$WORKSPACE" ] || [ ! -d "$WORKSPACE/vault" ]; then
+    # Engineer hasn't cloned the workspace on this machine, or the path
+    # was renamed. Silent no-op so `git pull` keeps working.
+    exit 0
+fi
+
+# Read [ingest] block flags. Cheap grep — pointer schema is fixed.
+POINTER=".curiosity/config.toml"
+if [ ! -f "$POINTER" ]; then
+    exit 0
+fi
+if grep -qE '^\s*enabled\s*=\s*false' "$POINTER"; then
+    exit 0
+fi
+PR_CAPTURE=$(grep -qE '^\s*pr_capture\s*=\s*false' "$POINTER" && echo 0 || echo 1)
+COMMIT_CAPTURE=$(grep -qE '^\s*commit_capture\s*=\s*false' "$POINTER" && echo 0 || echo 1)
+
+# Capture commits in the merged range.
+if [ "$COMMIT_CAPTURE" = "1" ]; then
+    uv run python3 "$SCRIPTS_DIR/code_capture.py" commits \
+        --workspace "$WORKSPACE" \
+        --since-marker \
+        >/dev/null 2>&1 || true
+fi
+
+# Capture changelog if it changed in the merged range.
+if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -qE '^CHANGELOG\.md$'; then
+    uv run python3 "$SCRIPTS_DIR/code_capture.py" changelog \
+        --workspace "$WORKSPACE" \
+        >/dev/null 2>&1 || true
+fi
+
+# Capture the most recently merged PR if `gh` is available.
+if [ "$PR_CAPTURE" = "1" ] && command -v gh >/dev/null 2>&1; then
+    # Find PR # for the just-merged commit. `gh pr list --state merged
+    # --search <sha>` is the most reliable query — it matches any PR
+    # that touched the SHA. Pick the first hit.
+    PR_NUM=$(gh pr list --state merged --search "$(git rev-parse HEAD)" \
+                --json number --jq '.[0].number' 2>/dev/null || true)
+    if [ -n "$PR_NUM" ] && [ "$PR_NUM" != "null" ]; then
+        uv run python3 "$SCRIPTS_DIR/code_capture.py" pr \
+            --workspace "$WORKSPACE" \
+            --pr-number "$PR_NUM" \
+            >/dev/null 2>&1 || true
+    fi
+fi
+
+# Regenerate the session brief if [brief] regenerate_on_pull = true.
+if grep -qE '^\s*regenerate_on_pull\s*=\s*true' "$POINTER"; then
+    uv run python3 "$SCRIPTS_DIR/session_brief.py" --quiet \
+        >/dev/null 2>&1 || true
+fi
+
+exit 0
