@@ -33,33 +33,36 @@
 }
 
 :root {
-  /* Palette — Tableau-10-derived, all 10 hues + unclassified clearly
-   * separable. Mirror of PALETTE in wiki_render.py. Singular and
-   * plural forms because frontmatter uses singular while subdir names
-   * are plural. */
-  --type-source:        #4a7ab8;
-  --type-sources:       #4a7ab8;
-  --type-entity:        #f28e2b;
-  --type-entities:      #f28e2b;
-  --type-concept:       #59a14f;
-  --type-concepts:      #59a14f;
-  --type-analysis:      #a76aaa;
-  --type-analyses:      #a76aaa;
-  --type-evidence:      #e8c547;
-  --type-fact:          #d44a47;
-  --type-facts:         #d44a47;
-  --type-table:         #4ec0c5;
-  --type-tables:        #4ec0c5;
-  --type-figure:        #e377c2;
-  --type-figures:       #e377c2;
-  --type-note:          #9aa0a8;
-  --type-notes:         #9aa0a8;
-  --type-todo:          #c8744a;
-  --type-todo-list:     #c8744a;
-  --type-project:       #3a4ca8;
-  --type-projects:      #3a4ca8;
-  --type-unclassified:  #a8a29e;
-  --type-default:       #7a7a7a;
+  /* Palette — categorical 11-colour set assigned to canonical types
+   * in sidebar TYPE_ORDER. Mirror of PALETTE in wiki_render.py.
+   * Singular and plural forms because frontmatter uses singular while
+   * subdir names are plural.
+   *
+   * Unclassified is white fill + black border (see .dot.dot-
+   * unclassified and .node[data-type="unclassified"] rules below). */
+  --type-project:       #4d1ae8;
+  --type-projects:      #4d1ae8;
+  --type-analysis:      #1d6996;
+  --type-analyses:      #1d6996;
+  --type-concept:       #38a6a5;
+  --type-concepts:      #38a6a5;
+  --type-entity:        #0f8554;
+  --type-entities:      #0f8554;
+  --type-evidence:      #73af48;
+  --type-fact:          #edad08;
+  --type-facts:         #edad08;
+  --type-figure:        #e17c05;
+  --type-figures:       #e17c05;
+  --type-table:         #cc503e;
+  --type-tables:        #cc503e;
+  --type-source:        #94346e;
+  --type-sources:       #94346e;
+  --type-note:          #6f4070;
+  --type-notes:         #6f4070;
+  --type-todo:          #9656a2;
+  --type-todo-list:     #9656a2;
+  --type-unclassified:  #ffffff;   /* black border applied separately */
+  --type-default:       #bbbbbb;
 
   --sidebar-w:    280px;
 
@@ -246,7 +249,13 @@ body[data-sidebar="collapsed"] #sidebar > * { display: none; }
 .dot.dot-todo-list    { background: var(--type-todo-list); }
 .dot.dot-project      { background: var(--type-project); }
 .dot.dot-projects     { background: var(--type-projects); }
-.dot.dot-unclassified { background: var(--type-unclassified); }
+/* Unclassified is white-fill with a thin black ring (inset shadow
+ * keeps the dot exactly 7×7 without a layout shift). Used by both the
+ * sidebar group dots (wiki browser) and the label-picker swatches. */
+.dot.dot-unclassified {
+  background: var(--type-unclassified);
+  box-shadow: inset 0 0 0 1px #000;
+}
 
 .sidebar-foot {
   display: flex;
@@ -308,6 +317,13 @@ body[data-sidebar="collapsed"] .sidebar-restore { display: inline-flex; }
   stroke: var(--bg);
   stroke-width: 1.2px;
   transition: stroke-width 100ms;
+}
+/* Unclassified nodes: white fill needs a visible boundary against
+ * the background. Black stroke, slightly thicker than the default
+ * background-coloured stroke, distinguishes them at a glance. */
+.node[data-type="unclassified"] circle {
+  stroke: #000;
+  stroke-width: 2px;
 }
 .node-label {
   font-family: var(--font-sans);
@@ -861,6 +877,12 @@ body[data-sidebar="collapsed"] #modal {
   stroke: var(--bg-modal);
   stroke-width: 1.2px;
   transition: stroke 100ms;
+}
+/* Unclassified nodes in the subgraph view: same treatment as main
+ * graph — white fill needs a visible boundary. */
+.sub-circle[data-type="unclassified"] circle {
+  stroke: #000;
+  stroke-width: 2px;
 }
 .sub-circle:not(.sub-center):hover circle {
   stroke: var(--accent);

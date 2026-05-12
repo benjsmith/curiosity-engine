@@ -2,6 +2,34 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-12 — v0.2.1 — viewer: new categorical palette + white-bordered Unclassified
+
+Replaces the Tableau-10-derived viewer palette with a categorical 12-colour
+set, mapped to the 11 canonical types in sidebar `TYPE_ORDER` plus a
+distinct treatment for Unclassified. The same colours now appear in the
+graph view, the wiki-browser sidebar group dots, and the label-picker
+swatches (driven by a single source of truth in `wiki_render.py PALETTE`
+and mirrored CSS `--type-*` vars).
+
+**Type → colour:** project `#4d1ae8`, analysis `#1d6996`, concept `#38a6a5`,
+entity `#0f8554`, evidence `#73af48`, fact `#edad08`, figure `#e17c05`,
+table `#cc503e`, source `#94346e`, note `#6f4070`, todo-list `#9656a2`.
+
+**Unclassified** renders as a white fill with a thicker black border —
+SVG `stroke: #000; stroke-width: 2px` on graph + subgraph circles,
+`box-shadow: inset 0 0 0 1px #000` on sidebar dots (keeps the 7×7 dot
+size without a layout shift). Distinguishes loose-ends pages at a
+glance without competing chromatically with the named types.
+
+**Fallback** (`default` slot, for any type that escapes the canonical
+set) becomes a neutral `#bbbbbb` grey — rarely visible since
+`KNOWN_TYPES` buckets unrecognised frontmatter values to `unclassified`
+at render time.
+
+No data-contract changes; the on-disk frontmatter is untouched. The
+viewer rebuild on next `viewer.sh build` re-emits the bundle with the
+new palette and no further action is needed in existing workspaces.
+
 ## 2026-05-12 — v0.2.0 — code-repo mode: capturing the knowledge that escapes the codebase
 
 Curiosity Engine now treats engineering codebases as first-class projects. A code repo registers against an existing CE workspace via a small `.curiosity/config.toml` pointer file; capture flows from PR descriptions, commits, the changelog, and agent session transcripts into the workspace's vault; a per-(repo, branch) session brief gives a fresh agent yesterday's context for files in the current diff; `/curate` from inside a code repo detaches into the workspace so the engineer's coding-session transcript stays clean. The wiki itself stays unchanged — code-repo content lands as `sources`, `entities`, `concepts`, `analyses`, `evidence` per the existing 8-type taxonomy, distinguished only by the project tag and a new `(code:project:path:line)` reference form.

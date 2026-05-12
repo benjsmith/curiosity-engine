@@ -36,40 +36,44 @@ from naming import (  # noqa: E402
 )
 
 
-# Palette — derived from Tableau 10 with a few adjustments so all 10
-# canonical types + Unclassified are clearly distinguishable. Single
+# Palette — categorical 11-colour set assigned to canonical types in
+# the sidebar's TYPE_ORDER (project, analysis, ..., todo-list). Single
 # source of truth: this dict is emitted into data.json so the front-end
 # can read it without a CSS parse; CSS mirrors the values via :root
 # vars (manually kept in sync — runtime palette from data.json wins
 # at SVG fill time).
+#
+# Unclassified is rendered as white-fill with a thicker black stroke
+# (graph + subgraph circles) or an inset-shadow ring (sidebar + label-
+# picker dots) — see .node[data-type="unclassified"] / .dot.dot-
+# unclassified rules in main.css. The PALETTE value for unclassified is
+# the fill colour; the border comes from CSS.
 PALETTE = {
-    "source":       "#4a7ab8",  # steel blue
-    "sources":      "#4a7ab8",
-    "entity":       "#f28e2b",  # bright orange
-    "entities":     "#f28e2b",
-    "concept":      "#59a14f",  # green
-    "concepts":     "#59a14f",
-    "analysis":     "#a76aaa",  # mauve purple
-    "analyses":     "#a76aaa",
-    "evidence":     "#e8c547",  # golden yellow
-    "fact":         "#d44a47",  # crimson red
-    "facts":        "#d44a47",
-    "table":        "#4ec0c5",  # cyan-teal
-    "tables":       "#4ec0c5",
-    "figure":       "#e377c2",  # rose pink
-    "figures":      "#e377c2",
-    "note":         "#9aa0a8",  # silver
-    "notes":        "#9aa0a8",
-    "todo":         "#c8744a",  # terracotta
-    "todo-list":    "#c8744a",
-    "project":      "#3a4ca8",  # deep indigo — distinct from source
-                                  # steel-blue and analysis mauve;
-                                  # reads as "container/group"
-    "projects":     "#3a4ca8",
-    "unclassified": "#a8a29e",  # warm taupe-grey — visually recedes
-                                  # so loose-ends pages don't compete
-                                  # with primary categories
-    "default":      "#7a7a7a",  # neutral fallback (rarely visible)
+    "project":      "#4d1ae8",  # vivid violet
+    "projects":     "#4d1ae8",
+    "analysis":     "#1d6996",  # blue
+    "analyses":     "#1d6996",
+    "concept":      "#38a6a5",  # teal
+    "concepts":     "#38a6a5",
+    "entity":       "#0f8554",  # green
+    "entities":     "#0f8554",
+    "evidence":     "#73af48",  # lime
+    "fact":         "#edad08",  # yellow-orange
+    "facts":        "#edad08",
+    "figure":       "#e17c05",  # orange
+    "figures":      "#e17c05",
+    "table":        "#cc503e",  # red
+    "tables":       "#cc503e",
+    "source":       "#94346e",  # magenta
+    "sources":      "#94346e",
+    "note":         "#6f4070",  # purple
+    "notes":        "#6f4070",
+    "todo":         "#9656a2",  # lighter purple
+    "todo-list":    "#9656a2",
+    "unclassified": "#ffffff",  # white fill; black stroke added via CSS
+    "default":      "#bbbbbb",  # neutral grey fallback for unrecognised
+                                  # types (rarely visible — KNOWN_TYPES
+                                  # buckets unknowns to "unclassified")
 }
 
 # Canonical type set. Pages whose frontmatter `type:` isn't here get
