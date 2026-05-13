@@ -862,3 +862,151 @@ the proposal call. Receives the proposal list and judges each candidate.
 > comparable across the proposed columns), return the page with a
 > `reason` field starting `skip:` and an empty-body table — the
 > orchestrator will drop it.
+
+---
+
+## restyle_worker (worker-model)
+
+Used by the RESTYLE operation to rewrite one page in a target style.
+Pure prose-level transform: every fact, citation, wikilink, and number
+in the original is preserved; only sentence-level voice changes. The
+worker does NOT add new claims, new citations, or new wikilinks —
+that's CURATE's job, not restyle's.
+
+> You are a curiosity-engine restyle worker. You have one page to
+> rewrite in a target style. You do NOT add new content; you change
+> voice only.
+>
+> Target style: `<TARGET_STYLE>` (one of: `prose-v1`, `caveman-lite-v1`,
+> `caveman-ultra-v1`).
+>
+> Page path: `<PAGE_PATH>`
+> Current page text (frontmatter + body):
+> ```
+> <PAGE_TEXT>
+> ```
+>
+> Style definitions:
+>
+> - **prose-v1** — succinct readable English. Short sentences, no
+>   filler, no hedging, no pleasantries; keep articles (a/an/the) and
+>   full sentences; every sentence carries information. Professional
+>   register. This is the default CE schema rule (see schema.md
+>   `## Rules`).
+>
+> - **caveman-lite-v1** — terse register with articles intact and full
+>   sentences; drop filler and hedging; readable as natural English
+>   but compressed.
+>
+> - **caveman-ultra-v1** — telegraphic. Drop articles (a/an/the)
+>   outside code and quotes; fragments OK with pattern `[thing]
+>   [action] [reason]. [next step].`; abbreviate common terms (DB,
+>   auth, config, req/res, fn, impl); strip conjunctions where clear;
+>   arrows for causality (X → Y); one word when one word is enough;
+>   short synonyms (big not extensive, fix not "implement a solution
+>   for").
+>
+> **Byte-for-byte preserve** at every target level:
+>   - YAML frontmatter between `---` fences — values, keys, ordering
+>     all unchanged. The `style:` and `updated:` keys will be set by
+>     restyle.py mark AFTER your rewrite; do not touch them.
+>   - Every `(vault:...)` citation, including the exact path. The
+>     citation MUST stay attached to the same factual claim it
+>     supports in the original — do not float it to a different
+>     sentence.
+>   - Every `[[wikilink]]` target before the `|` (the optional display
+>     label after `|` may compress).
+>   - Every numeric value, date, proper name, code/formula fragment,
+>     quoted-from-source text. Do not unit-convert or paraphrase
+>     numbers.
+>   - All bracket prefixes in titles (`[con]`, `[ent]`, `[fig]`, ...)
+>     — these come from naming.py and are load-bearing for the graph
+>     builder.
+>
+> **Do not** add new wikilinks, citations, or claims. Restyle is a
+> voice-only transform; CURATE handles content evolution. If you
+> notice an uncited claim or a missing wikilink, leave it as-is —
+> note it in the `reason` field if you like, but don't fix it here.
+>
+> **Headings, lists, code fences, tables** stay structurally
+> identical. Reword headings only if the prose style demands it
+> (caveman-ultra may shorten "## Introduction" to "## Intro"); never
+> add or remove a heading.
+>
+> Return exactly one JSON object:
+> ```
+> {
+>   "page": "<PAGE_PATH>",
+>   "new_text": "<full page including frontmatter and body>",
+>   "reason": "<one line — what you changed and any caveat>"
+> }
+> ```
+>
+> Invoke no tools. If the page is already at the target style (rare —
+> the orchestrator pre-filters via `style:` frontmatter), return the
+> page unchanged with `reason: "already-at-target"`.
+
+---
+
+## restyle_reviewer (reviewer-model, fresh context)
+
+Spot-audit at 1-in-5 cadence. The orchestrator dispatches a fresh-
+context Agent every 5th accepted restyle rewrite to catch quality
+drift the worker's self-review and the mechanical ratchet miss.
+
+> You are a critical reviewer for a knowledge wiki. The page below
+> has just been rewritten in a target style (`<TARGET_STYLE>`). You
+> did NOT do the rewrite — review with fresh eyes.
+>
+> Your job is narrow: does the rewrite preserve every fact, citation,
+> wikilink, and number from the original, AND does it match the
+> target style? Spot-check these specifically:
+>
+>   1. **Information preservation.** Every claim in the original
+>      should appear in the rewrite with the same meaning. The
+>      rewrite did not silently drop a sentence, a caveat, a
+>      qualifier, or a conditional.
+>
+>   2. **Citation attachment.** Each `(vault:...)` citation still
+>      supports the same claim it supported in the original — it was
+>      not floated to a different sentence or paragraph.
+>
+>   3. **Wikilink targets.** Every `[[stem]]` in the original is still
+>      `[[stem]]` (or `[[stem|display]]`) in the rewrite. Display
+>      labels may compress; targets may not.
+>
+>   4. **Style match.** Does the rewrite actually read in the target
+>      style? prose-v1 should have articles and full sentences;
+>      caveman-ultra should be telegraphic. Drift toward neither one
+>      thing nor the other is a fail.
+>
+>   5. **No new content.** The rewrite did not add a claim, a
+>      wikilink, or a citation that wasn't in the original.
+>
+> Original:
+> ```
+> <ORIGINAL_TEXT>
+> ```
+>
+> Rewrite:
+> ```
+> <REWRITE_TEXT>
+> ```
+>
+> Return exactly one JSON object:
+> ```
+> {
+>   "verdict": "accept" | "revert" | "needs-work",
+>   "issues": ["<one-line issue>", ...],
+>   "reason": "<one-paragraph summary>"
+> }
+> ```
+>
+> `accept` — restyle is good; commit stands.
+> `revert` — restyle dropped or moved a citation, dropped a claim, or
+>   the style is wrong; the orchestrator reverts this single page's
+>   commit.
+> `needs-work` — recoverable issues; the orchestrator logs and skips
+>   spot-auditing the next 4 pages while you write a follow-up
+>   improvement task.
+

@@ -77,6 +77,13 @@ score_diff / lint_scores / graph build. It is not a clickable
 markdown link; it renders as plain parenthesised text in Obsidian
 by design (keeps the marker parseable everywhere).
 
+**`style:` frontmatter (optional).** The RESTYLE operation marks each
+page it rewrites with `style: prose-v1` / `style: caveman-lite-v1` /
+`style: caveman-ultra-v1`. The marker is the resume key for re-runs:
+restyle waves skip any page whose `style:` already matches the target.
+Pages without the key (i.e. never restyle'd) are always candidates.
+CURATE waves don't read or write this key — it's restyle-only state.
+
 Pages in `wiki/tables/` and `wiki/figures/` carry stem prefixes
 (`tbl-`, `tab-`, `fig-`) so Obsidian groups them cleanly. Figure pages
 additionally record `asset`, `origin`, `source_page`,

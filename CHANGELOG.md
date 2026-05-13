@@ -2,6 +2,33 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-13 — v0.3.0 — RESTYLE wave: hydrate caveman wikis to prose (and the inverse)
+
+Caveman compression is a one-way door today: a workspace that ran with `caveman.enabled = true` accumulates telegraphic pages that CURATE will never re-style because well-cited, well-linked, unbloated pages score fine and never enter the worst-page queue. The new RESTYLE operation inverts the selection — every page is in scope — so a one-time-style-flip terminates.
+
+**Surface.** `/restyle <target>` slash command, or natural language ("restyle the wiki to readable prose", "compress everything to caveman"). Targets: `prose-v1` (succinct readable English — the default schema rule), `caveman-lite-v1` (terse, full sentences with articles), `caveman-ultra-v1` (telegraphic). Bidirectional — hydrate caveman to prose for readability, or compress prose to caveman if the denser register fits the team better.
+
+**Resumable + idempotent.** Each restyle'd page gains a `style: <target-id>` frontmatter marker (new optional schema key). Re-runs filter out pages already at the target, so an interrupted wave (rate limit, manual stop, model error) resumes cleanly with no duplicated work and no separate progress file.
+
+**New script `scripts/restyle.py`** (hash-guarded, stdlib-only) with four subcommands:
+
+- `plan wiki --target <id> [--types ...] [--limit N]` — enumerate + filter + cost estimate. Returns the candidate list, count of pages already at target, count in other styles, rough USD cost range (input tokens × Sonnet rate + 1-in-5 reviewer overhead).
+- `mark <page> --style <id>` — set the `style:` and `updated:` frontmatter keys atomically; orchestrator calls this once per accepted rewrite.
+- `progress wiki` — print counts by style state for end-of-wave reporting.
+- `score-check <page> --target <id> --new-text-stdin` — `score_diff.py` wrapper with target-specific bloat cap baked in (2.0× for `prose-v1` because hydration legitimately expands the body ~1.5–1.65×; 1.5× for caveman targets — compression direction). Citations still gated unconditionally.
+
+**Worker / reviewer prompts** added to `.curator/prompts.md`: `restyle_worker` (voice-only transform; preserves every citation, wikilink, number, heading, and frontmatter byte-for-byte — no new claims, no new citations) and `restyle_reviewer` (1-in-5 spot-audit at reviewer-model with fresh context, narrow scope: information preservation + citation attachment + wikilink targets + style match).
+
+**Mechanical gate change.** `score_diff.py` gains a `--bloat-mult <float>` flag (default 1.5, preserves existing behaviour). Restyle waves pass 2.0; CURATE waves do not touch the flag. Pure-additive — existing callers see no change.
+
+**Orchestration.** SKILL.md's new `### RESTYLE` section walks the agent through the loop: config check (warn if `caveman.enabled` conflicts with target), plan, per-page worker dispatch with the restyle_worker template, score-check ratchet, write+mark+commit per page, spot-audit every 5th accepted page with the restyle_reviewer template (revert verdict triggers `git -C wiki revert` on the page's single-page commit). Per-page commits keep individual rewrites git-revertable; rejections log to `.curator/log.md` under `## restyle-rejections` and skip without commit.
+
+**Cost discipline.** Restyle hits every page, not just worst-scoring ones — a 200-page wiki is roughly $5–$20 at Sonnet rates. The plan subcommand prints a cost-range estimate before any worker fires; `--limit 20` is recommended for a small validation batch first if you're unsure how the rewrite reads in your domain.
+
+**Coexistence with caveman.** Caveman stays an option. If `caveman.enabled = true` and the target is `prose-v1`, the agent warns and offers to flip the config before the wave runs — otherwise new CURATE edits would re-cavemanise pages restyle just hydrated, leaving the wiki in a fighting state.
+
+Files: new `scripts/restyle.py`, new `template/claude-commands/restyle.md`, modified `scripts/score_diff.py` (additive `--bloat-mult` flag), modified `scripts/evolve_guard.sh` (hash-guard entry for restyle.py), modified `scripts/setup.sh` (allowlist entries for both workspace and code-repo modes + a canary so existing workspaces refresh `.claude/settings.json`), modified `template/prompts.md` (two new prompt blocks), modified `template/schema.md` (documents the `style:` key), modified `SKILL.md` (RESTYLE operation + restyle.py in bash discipline script list).
+
 ## 2026-05-13 — v0.2.2 — harden ce-capture.yml workflow (Socket supply-chain warning)
 
 Tightens the GitHub Action template shipped by `setup.sh --register-code-repo --ci-mode` to close a Socket scan warning about supply-chain risk. Four changes, all surface-level — no behavioural change to capture:

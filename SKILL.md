@@ -57,7 +57,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, `restyle.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
 5. `printenv CURATOR_PRESET` — read the per-session preset override (see §Curator config). Run once at the start of any operation that dispatches workers/reviewers; the value is stable for the session.
@@ -615,6 +615,33 @@ Canonical class-table (`wiki/todos.md` declares the schema in its frontmatter; r
 - `/note` — append to `notes/new.md`, or to `notes/<slug>.md` if the input has an explicit `topic:` / `re:` / `project <name>` cue
 
 Non-Claude-Code CLIs ignore `.claude/commands/`; users invoke the same operations via natural language with equivalent results.
+
+### RESTYLE — "restyle the wiki", "hydrate the wiki to prose", "compress the wiki to caveman"
+
+One-shot wave that enumerates every page (not just worst-scoring ones, as repair-mode does) and rewrites each in a target style: `prose-v1` (succinct readable English — the default schema rule), `caveman-lite-v1` (terse but full sentences), or `caveman-ultra-v1` (telegraphic). Bidirectional: hydrate caveman → prose for readability, or compress prose → caveman if you prefer the denser register. Resumable and idempotent via a per-page `style:` frontmatter marker — re-running picks up exactly where the last run left off.
+
+When invoked (slash command `/restyle <target>` or natural language):
+
+1. **Read the workspace's caveman config.** `printenv CURATOR_PRESET` then read `.curator/config.json`. If `caveman.enabled = true` and the target is `prose-v1`, warn: "caveman read/write compression is on; new CURATE edits will re-cavemanise pages restyle just hydrates. Disable in `.curator/config.json` (set `caveman.enabled` to `false`) before running, or accept the fighting state." Wait for the user to confirm or flip the config.
+
+2. **Plan.** `uv run python3 <skill_path>/scripts/restyle.py plan wiki --target <target>`. Read the JSON: `pages_to_restyle`, `pages_already_target`, `estimated_cost_usd_low/high`, `bloat_cap`. Surface the page count and cost range to the user; ask to proceed. `--types analyses,evidence,concepts` scopes; `--limit N` caps the candidate set (use for a small validation pass first).
+
+3. **Dispatch workers per page.** For each candidate path in the plan:
+   - Read the page (raw, no caveman read-time stripping — caveman.enabled must be off for restyle).
+   - Dispatch a worker-model Agent with the `restyle_worker` template from `.curator/prompts.md`; fill `<TARGET_STYLE>`, `<PAGE_PATH>`, `<PAGE_TEXT>`. The worker preserves frontmatter, citations, wikilinks, numbers, headings — voice-only transform.
+   - Pipe the worker's `new_text` to `uv run python3 <skill_path>/scripts/restyle.py score-check <page> --target <target> --new-text-stdin` — this wraps `score_diff.py` with the target-specific bloat cap (2.0× for prose-v1; 1.5× for caveman targets). Citations are still gated normally.
+   - If accept: Write the new text to the page; `uv run python3 <skill_path>/scripts/restyle.py mark <page> --style <target>` updates the `style:` and `updated:` frontmatter keys; `git -C wiki add <page> && git -C wiki commit -m "restyle: <relpath> to <target>"` — one commit per page so individual rewrites are git-revertable.
+   - If reject: append a one-liner to `.curator/log.md` under `## restyle-rejections` with the page and the reason; skip — no commit.
+
+4. **Spot-audit every 5th accepted page.** Dispatch a reviewer-model Agent (fresh context) with the `restyle_reviewer` template, passing original + rewrite. Verdict `accept`: continue. `revert`: `git -C wiki revert <commit> --no-edit` on the page's just-made commit. `needs-work`: append to `## restyle-followups` in `.curator/log.md`, skip the next 4 spot-audits to amortise the reviewer cost, and surface to the user at end of wave.
+
+5. **Resumable.** If the wave is interrupted (rate limit, user `Ctrl-C`, model error), restart it the same way — `restyle.py plan` re-filters to pages whose `style:` doesn't match the target, so already-restyled pages are skipped automatically.
+
+6. **At wave end.** `uv run python3 <skill_path>/scripts/restyle.py progress wiki` to print final counts by style state. Summarise to the user: total restyled, accepts vs reverts, any `needs-work` items in the log.
+
+**Cost discipline.** Restyle hits *every* page, not just worst-scoring ones — for a 200-page wiki this is ~200 worker invocations (~$5-20 at Sonnet rates). Use `--dry-run` semantics via `restyle.py plan` to print the candidate count + cost estimate before any worker fires; validate quality with `--limit 20` on a small batch first if you're unsure about the rewrite character.
+
+**Why not run this inside CURATE?** CURATE picks worst-scoring pages by composite score. A caveman-compressed page that's well-cited, well-linked, and unbloated scores fine; CURATE never touches it. Restyle inverts the selection — every page is in scope — which is the only way a one-time-style-flip terminates.
 
 ### CONTRADICTION — "scan contradictions", "check contradictions"
 

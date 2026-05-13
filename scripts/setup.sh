@@ -478,6 +478,7 @@ EOF
       "Bash(uv run python3 $root/scripts/graph.py:*)",
       "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(uv run python3 $root/scripts/figures.py:*)",
+      "Bash(uv run python3 $root/scripts/restyle.py:*)",
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/projects.py:*)",
       "Bash(uv run python3 $root/scripts/identifier_resolve.py review:*)",
@@ -1104,6 +1105,8 @@ else
                                               # rule from v0.1.2 — narrowing it
                                               # to review/status only requires
                                               # the file be rewritten
+        "scripts/restyle.py"                 # v0.3.0 — RESTYLE wave
+                                              # orchestrator
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -1194,6 +1197,7 @@ EOF
       "Bash(uv run python3 $root/scripts/graph.py:*)",
       "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(uv run python3 $root/scripts/figures.py:*)",
+      "Bash(uv run python3 $root/scripts/restyle.py:*)",
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/projects.py:*)",
       "Bash(uv run python3 $root/scripts/identifier_resolve.py review:*)",

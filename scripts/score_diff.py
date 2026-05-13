@@ -280,11 +280,18 @@ def metrics(text: str) -> dict:
     }
 
 
-def verdict(before: dict, after: dict) -> tuple:
+def verdict(before: dict, after: dict, bloat_mult: float = 1.5) -> tuple:
+    """Mechanical gate. `bloat_mult` overrides the default 1.5× ceiling
+    on body-token growth — restyle waves pass 2.0× because prose
+    hydration of caveman-compressed pages legitimately expands the
+    body (typically ~1.5–1.65×) without adding new content. Citation
+    floor is unconditional; the multiplier only relaxes the bloat
+    side of the gate."""
     if after["citations"] < before["citations"]:
         return False, f"citation loss ({before['citations']}->{after['citations']})"
-    if before["tokens"] > 0 and after["tokens"] > before["tokens"] * 1.5:
-        return False, f"bloat ({before['tokens']}->{after['tokens']}, >50%)"
+    if before["tokens"] > 0 and after["tokens"] > before["tokens"] * bloat_mult:
+        pct = int((bloat_mult - 1) * 100)
+        return False, f"bloat ({before['tokens']}->{after['tokens']}, >{pct}%)"
     return True, "pass"
 
 
@@ -439,6 +446,10 @@ def main():
                     help="Path to vault.db for citation verification.")
     ap.add_argument("--tables-db", default=None,
                     help="Path to tables.db for (table:X#id=Y) citation verification.")
+    ap.add_argument("--bloat-mult", type=float, default=1.5,
+                    help="Override the body-token bloat cap. Default 1.5; "
+                         "restyle waves pass 2.0 because prose hydration of "
+                         "caveman-compressed pages legitimately expands ~1.5-1.65×.")
     args = ap.parse_args()
 
     page = Path(args.page)
@@ -493,7 +504,7 @@ def main():
     old_text = page.read_text()
     before = metrics(old_text)
     after = metrics(new_text)
-    accept, reason = verdict(before, after)
+    accept, reason = verdict(before, after, bloat_mult=args.bloat_mult)
 
     # notes/ pages enforce append-only on user-authored content.
     # Curator writes can add wikilinks and mint markers; they cannot
