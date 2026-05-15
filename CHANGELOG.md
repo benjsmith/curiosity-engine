@@ -2,6 +2,21 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-16 — v0.3.1 — docs: deferred-design note for wiki translation
+
+Adds `docs/translation-design.md` capturing the design space for a future `/translate <target-language>` operation analogous to v0.3.0's RESTYLE. No code change — the operation is not implemented and no SKILL.md, prompts.md, or script touches it. The doc exists so the design thinking is recorded while it's fresh; a future implementer doesn't have to re-derive the load-bearing decisions.
+
+Key recorded decisions:
+
+- **CE doc-class ontology stays English** under any translation. Type names (`source`, `entity`, ...), directory names, bracket prefixes (`[src]`, `[con]`, ...), frontmatter keys, citation DSL, wikilink targets, and filenames are infrastructure that every skill script pattern-matches on. Translation operates on body prose + wikilink display labels (`[[stem|target-language-display]]`) + title body after the bracket prefix. Same separation `style:` already uses.
+- **`lang:` frontmatter marker** (per-page, parallel to `style:`) drives idempotency + resumability.
+- **Per-language bloat-cap map** in the eventual `translate.py` because expansion ratios vary materially (EN→DE ~1.3×, EN→ZH ~0.4-0.5×). `score_diff.py --bloat-mult` from v0.3.0 covers this already.
+- **CURATE feedback loop** is the architectural decision: Path A (one-shot translate, CURATE stays English — ship first) vs Path B (`workspace_language` config + CURATE prompt fill — eventual end-state). Doc recommends Path A v1, Path B v3.1.
+- **Numbers, dates, units, decimal separators, quoted-source text, code, citations, wikilink stems** all stay byte-for-byte unchanged. The numbers/units rule is the new genuinely-translation-specific gotcha.
+- **Vault stays in original language by design** — provenance, not a quote requirement. Translated wiki page citing English vault source is fine.
+
+Implementation deferred until a user actually asks. Estimated v1 effort if/when un-deferred: ~250-350 lines, parallel surface to v0.3.0 RESTYLE.
+
 ## 2026-05-13 — v0.3.0 — RESTYLE wave: hydrate caveman wikis to prose (and the inverse)
 
 Caveman compression is a one-way door today: a workspace that ran with `caveman.enabled = true` accumulates telegraphic pages that CURATE will never re-style because well-cited, well-linked, unbloated pages score fine and never enter the worst-page queue. The new RESTYLE operation inverts the selection — every page is in scope — so a one-time-style-flip terminates.
