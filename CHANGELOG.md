@@ -2,6 +2,84 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-05-16 — v0.4.0 — project-directory ingest + drop ci-mode Action template
+
+**Two threads in one release.**
+
+### 1. Project-directory ingest (the new feature)
+
+Extends the v0.2.0 code-repo pointer-file pattern to non-code project directories. A user with research projects, due-diligence folders, contracts, design decks, etc., on their filesystem can now register those directories against a CE workspace without copying anything into the vault. Only `.extracted.md` files land in the vault; the originals stay where the user keeps them. A scanner walks the registered directories on demand and on three auto-trigger paths (start of CURATE, viewer rebuild, skill update) so the user rarely has to remember to ingest manually.
+
+**Surface.** From inside any directory:
+
+```bash
+bash <skill_path>/scripts/setup.sh --register-project-dir \
+  [--ce-workspace-path PATH]      # default: $CURIOSITY_WORKSPACE or ~/Documents/curiosity-workspace
+  [--ce-project NAME]             # default: directory basename
+  [--ingest-paths LIST]           # default: "."
+  [--ingest-extensions LIST]      # default: .pdf,.md,.txt,.docx,.pptx,.csv,.xlsx,.html,.rst
+  [--no-initial-scan]             # skip the scan at end of setup
+  [--init-workspace]              # bootstrap workspace if absent
+  [--yes]
+```
+
+Writes `.curiosity/config.toml` with `project_kind = "documents"`, registers the directory against the workspace's project-dir registry (`<workspace>/.curator/project-dirs.json`), validates pointer paths for safety, and optionally runs an initial scan. Never copies originals to vault.
+
+**Vault layout (Path A — source-path-only).** Each extraction's frontmatter carries:
+
+```yaml
+source_path: /absolute/path/to/original.pdf
+sha256: <hash-of-original>
+source_in_place: true
+```
+
+scan.py uses `sha256` to detect changes; on change, the stale extraction moves to `vault/_stale/` and the new one takes the canonical name. On delete, the orphaned extraction gets `orphan: true` in frontmatter and is excluded from the default planner.
+
+**Scan triggers.** Three automatic, one manual:
+
+- **Start of CURATE** (phase 1, step 2 in SKILL.md): `scan.py all` runs once at the start of a CURATE session before the first wave. No-op when no project-dirs are registered. Subsequent waves in the same session skip — directory state changes infrequently relative to wave cadence.
+- **Viewer rebuild**: `viewer.sh build` runs `scan.py check-stale` (cheap mtime walk; no ingestion) and `wiki_render.py` reads the resulting `.curator/scan-staleness.json` into `data.json`. `main.js` emits a dismissible banner at the top of the viewer if any project-dir has stale files: *"N unscanned change(s) in project-dirs: research: 5 · contracts: 2+1 orphan. Run `curate` or `/scan` to ingest."*
+- **Skill update**: `update.sh` runs `scan.py all` at the end of the update flow, catching up on filesystem changes the user made between sessions. One-line summary printed.
+- **Manual**: `/scan` slash command or natural language ("scan project dirs", "ingest the new files"). Invokes `scan.py all` directly.
+
+**New script** `scripts/scan.py` (hash-guarded, stdlib only) with three subcommands:
+
+- `one --workspace W --pointer P [--dry-run]` — scan a single project-dir's pointer.
+- `all --workspace W [--dry-run]` — iterate the workspace's project-dir registry and scan each. Writes the staleness sidecar.
+- `check-stale --workspace W` — cheap mtime-only walk; reports unscanned-file counts without reading any bytes.
+
+**code_repo.py extensions** (additive, back-compat preserved):
+
+- `validate-paths <pointer>` — runs the path-traversal guard (no `..`, no absolute paths, all resolve inside pointer-dir; null bytes rejected; symlink-walk escapes caught via canonical resolution).
+- `register-project-dir`, `unregister-project-dir`, `list-project-dirs` — registry IO.
+- Pointer schema gains `project_kind` (default `"code"` for back-compat) + `[ingest] extensions`, `exclude`, `follow_symlinks`.
+
+**local_ingest.py extensions** (additive):
+
+- `--source-path-only` flag — skip the copy to `vault/<base>.<ext>`; only the `.extracted.md` is written, with the frontmatter recording the original's filesystem location.
+- `--file <path>` flag — ingest a single file rather than rglob a directory. Used by scan.py to ingest one specific candidate without rglob picking up its siblings.
+
+**Security (new threat T8 in SECURITY.md).** A malicious pointer file attempts to direct scan.py at filesystem paths outside the pointer's own subtree to exfiltrate sensitive content. Mitigations:
+
+- `validate_pointer_paths()` runs before any scan; refuses `..`, absolute paths, null bytes, and paths whose canonical resolution escapes the pointer-dir.
+- Symlinks not followed by default. Even with `follow_symlinks: true`, scan.py rechecks every resolved path with `relative_to(pointer_dir)` and skips escapes.
+- Workspace itself cannot be registered as a project-dir (`setup.sh` refuses to avoid ingestion loops).
+- Extension whitelist enforced (no `*` glob); `.env`, dotfiles, binaries, etc., not on the default list.
+- Standard collateral excluded at scan time regardless of pointer entries (`.git/`, `node_modules/`, `__pycache__/`, `.venv/`, etc.).
+- Every extraction still wraps in the standard `untrusted: true` + `<!-- BEGIN FETCHED CONTENT -->` envelope and runs through `scrub_check.py --mode vault` before being indexed.
+
+### 2. Drop --ci-mode + Action template (security cleanup)
+
+Retired the `--ci-mode` flag and the `template/coderepo-workflows/ce-capture.yml` workflow template shipped since v0.2.0. Reason: even after v0.2.2's hardening (pinned `CE_SKILL_REF`, `pip install` instead of `curl|sh`, least-privilege `permissions:`, `persist-credentials: false`), Socket/Snyk scanners kept flagging the workflow's *shape* (external-repo checkout + write-capable deploy key + push to a second repo) as a supply-chain anomaly regardless of the specific hardening. The pattern matched their template heuristics.
+
+The capture script (`scripts/code_capture.py pr/commits/changelog`) remains the stable API. Teams that want centralised capture build their own CI job (GitHub Action / GitLab CI / Jenkins) calling that script with their own auth surface, their own pinning policy, and their own audit trail. `docs/code-knowledge.md` documents the integration shape and the required steps; the workflow file is no longer shipped by the skill.
+
+**Breaking note:** the `--ci-mode` flag is removed. Workspaces that were using the shipped template (none in production that we know of, given v0.2.0 was 12 days ago) need to copy `template/coderepo-workflows/ce-capture.yml` from before the v0.4.0 commit and maintain it themselves. The capture script signatures are unchanged.
+
+### Files
+
+New: `scripts/scan.py`, `template/claude-commands/scan.md`. Modified: `scripts/code_repo.py` (validate-paths + registry + project_kind), `scripts/local_ingest.py` (--source-path-only, --file), `scripts/setup.sh` (--register-project-dir branch + workspace-cwd guard + ci-mode removal), `scripts/viewer.sh` (pre-build check-stale), `scripts/wiki_render.py` (data.json carries scan_staleness), `scripts/update.sh` (post-update scan), `scripts/evolve_guard.sh` (hash-guard scan.py), `template/wiki-view/static/main.js` (staleness banner), `SKILL.md` (### SCAN section + CURATE phase 1 scan step + bash-discipline script list), `SECURITY.md` (T8 threat + mitigations), `README.md` (drop --ci-mode example), `docs/code-knowledge.md` (Action template retirement note + centralised-capture rewrite). Deleted: `template/coderepo-workflows/` directory.
+
 ## 2026-05-16 — v0.3.1 — docs: deferred-design note for wiki translation
 
 Adds `docs/translation-design.md` capturing the design space for a future `/translate <target-language>` operation analogous to v0.3.0's RESTYLE. No code change — the operation is not implemented and no SKILL.md, prompts.md, or script touches it. The doc exists so the design thinking is recorded while it's fresh; a future implementer doesn't have to re-derive the load-bearing decisions.

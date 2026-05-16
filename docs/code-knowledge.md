@@ -217,9 +217,6 @@ setup.sh --register-code-repo --init-workspace ~/Documents/curiosity-workspace
 
 # Solo / OSS: create the workspace inside this code repo (legacy behaviour)
 setup.sh --in-repo
-
-# Also drop a GitHub Action workflow template into .github/workflows/
-setup.sh --register-code-repo --ci-mode
 ```
 
 What `--register-code-repo` writes:
@@ -230,11 +227,20 @@ What `--register-code-repo` writes:
   patterns scoped to the resolved workspace's absolute path.
 - `.git/hooks/post-merge` — per-machine, not committed. The default
   capture hook.
-- (with `--ci-mode`) `.github/workflows/ce-capture.yml` — committed; team
-  reviews and merges.
 
 Setup never creates `vault/`, `wiki/`, or `.curator/` inside a code
 repo unless `--in-repo` is passed explicitly.
+
+**Centralised capture via CI.** Teams that want PR-merge capture to
+run server-side (rather than via each engineer's local hook) can build
+their own GitHub Action / GitLab CI / Jenkins job that calls
+`scripts/code_capture.py pr --workspace <wiki-path> --pr-number N` and
+pushes the resulting `vault/` changes to the wiki repo. Earlier skill
+versions shipped a workflow template under `--ci-mode`; that template
+was retired in v0.4.0 to avoid maintaining a supply-chain-scanned
+artefact on consumers' behalf. The capture script itself remains the
+stable API — wiring it into CI is a one-time team task documented as
+out-of-scope for the skill.
 
 ### Pointer file format
 
@@ -270,9 +276,7 @@ the workspace — hooks no-op silently. They never break `git pull`.
 Re-running `setup.sh --register-code-repo` on an already-registered repo
 diffs the config and produces no change unless something needs updating
 (e.g., the user passed a different workspace path). The allowlist file,
-hook, and pointer file are all overwrite-safe; setup refuses to clobber
-a customised `.github/workflows/ce-capture.yml` if `--ci-mode` is re-run
-on a repo that already has one.
+hook, and pointer file are all overwrite-safe.
 
 For existing CE users with a research workspace at, say, `~/research/`:
 nothing changes. Setup invocations inside `~/research/` see the existing
@@ -322,7 +326,7 @@ range of commits just merged. It reads:
 
 Each input becomes a vault entry with sha256-based deduplication, so
 re-running the capture (or running it from both a local hook and a
-GitHub Action) is idempotent — no duplicate entries.
+team's own CI integration) is idempotent — no duplicate entries.
 
 ### The local git hook (default)
 
@@ -343,68 +347,39 @@ The hook is installed per-machine; an engineer who doesn't want capture
 can simply disable it, or set `[ingest] enabled = false` in the
 committed pointer file (which the hook respects).
 
-### The optional GitHub Action (team scale)
+### Centralised capture (team-built CI)
 
-For larger teams, a centralised Action removes the requirement that
-every engineer have the workspace cloned locally. `setup.sh
---register-code-repo --ci-mode` drops a workflow template into
-`.github/workflows/ce-capture.yml`:
+For larger teams that don't want every engineer to have the workspace
+cloned locally, the recommended path is to build a CI job (GitHub
+Action, GitLab CI, Jenkins) that calls `code_capture.py` server-side
+and pushes results to the wiki repo.
 
-```yaml
-# .github/workflows/ce-capture.yml — committed by setup.sh --ci-mode
-name: ce-capture
-on:
-  pull_request: { types: [closed] }
-  push: { branches: [main], paths: [CHANGELOG.md] }
-  workflow_dispatch:
-jobs:
-  capture:
-    if: github.event.pull_request.merged == true || github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Checkout wiki workspace
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ vars.CE_WIKI_REPO }}
-          ssh-key: ${{ secrets.CE_WIKI_DEPLOY_KEY }}
-          path: ce-workspace
-      - name: Capture
-        run: |
-          uv run python3 ${{ github.workspace }}/.curiosity/scripts/code_capture.py \
-            ${{ github.event_name == 'pull_request' && 'pr' || 'commits' }} \
-            --workspace ${{ github.workspace }}/ce-workspace \
-            --pr-number ${{ github.event.pull_request.number }}
-      - name: Push to wiki
-        working-directory: ce-workspace
-        run: |
-          git config user.name "ce-capture[bot]"
-          git config user.email "ce-capture@users.noreply.github.com"
-          git add vault/
-          git diff --cached --quiet || \
-            git commit -m "capture: PR #${{ github.event.pull_request.number }}
+Earlier skill versions (v0.2.0 — v0.3.x) shipped a `--ci-mode` workflow
+template under `template/coderepo-workflows/ce-capture.yml`. **That
+template was retired in v0.4.0.** Reason: shipping a workflow file with
+`actions/checkout@v4`, a write-capable deploy key, and a vault push
+pattern matched supply-chain-anomaly heuristics in Socket / Snyk
+regardless of the specific hardening in the file. The capture *script*
+(`scripts/code_capture.py`) is the stable API; wiring it into a team's
+CI is a one-time setup step that belongs in each team's own
+infrastructure, not in a template shipped by every CE workspace.
 
-Co-Authored-By: Claude <noreply@anthropic.com>"
-          git push
-```
+A team's CI job needs to:
 
-Setup writes the workflow file but does **not** wire secrets. The team
-owner adds:
+1. Check out the code repo.
+2. Check out the wiki repo (write access via deploy key or token).
+3. Check out the curiosity-engine skill at a pinned ref.
+4. Install `uv` via the team's preferred method (PyPI / pinned Action /
+   etc.).
+5. Run `code_capture.py pr` / `code_capture.py changelog` /
+   `code_capture.py commits` as appropriate for the trigger.
+6. `git -C <wiki-checkout> commit && git push`, ideally with
+   `Co-Authored-By: Claude <noreply@anthropic.com>` in the message so
+   CE's activity log correctly classifies the commit as an agent edit.
 
-- A deploy key to the wiki repo with write access.
-- The private key as the `CE_WIKI_DEPLOY_KEY` secret in each code repo.
-- A `CE_WIKI_REPO` repository variable naming the wiki repo
-  (`org/team-curiosity-wiki`).
-
-The Action commits with `Co-Authored-By: Claude` so existing CE activity
-filtering correctly classifies these as agent edits, not user signal.
-
-**Coexistence with the local hook.** Both can run; the
-sha256-content-addressed vault entries dedupe automatically. Recommended
-configuration when both are installed: set
-`[ingest] commit_capture = false` in the pointer file so engineers'
-local hooks don't double-capture the same PRs that the Action handles
-canonically.
+To avoid double-capture between team CI and engineers' local hooks,
+set `[ingest] commit_capture = false` in the pointer file when CI is
+canonical.
 
 ### Why these and not others
 

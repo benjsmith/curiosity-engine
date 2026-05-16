@@ -13,18 +13,33 @@ set -e
 # docs/code-knowledge.md for the full design.
 # ---------------------------------------------------------------------------
 REGISTER_CODE_REPO=0
+REGISTER_PROJECT_DIR=0
 CE_WORKSPACE_PATH=""
 CE_PROJECT=""
+INGEST_PATHS=""
+INGEST_EXTENSIONS=""
 INIT_WORKSPACE=0
 IN_REPO=0
 ASSUME_YES=0
-CI_MODE=0
 INSTALL_DRAINER=0
+INITIAL_SCAN=1
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --register-code-repo)
             REGISTER_CODE_REPO=1; shift ;;
+        --register-project-dir)
+            REGISTER_PROJECT_DIR=1; shift ;;
+        --ingest-paths)
+            INGEST_PATHS="$2"; shift 2 ;;
+        --ingest-paths=*)
+            INGEST_PATHS="${1#*=}"; shift ;;
+        --ingest-extensions)
+            INGEST_EXTENSIONS="$2"; shift 2 ;;
+        --ingest-extensions=*)
+            INGEST_EXTENSIONS="${1#*=}"; shift ;;
+        --no-initial-scan)
+            INITIAL_SCAN=0; shift ;;
         --ce-workspace-path)
             CE_WORKSPACE_PATH="$2"; shift 2 ;;
         --ce-workspace-path=*)
@@ -39,8 +54,6 @@ while [ $# -gt 0 ]; do
             IN_REPO=1; shift ;;
         --yes|-y)
             ASSUME_YES=1; shift ;;
-        --ci-mode)
-            CI_MODE=1; shift ;;
         --install-drainer)
             INSTALL_DRAINER=1; shift ;;
         --help|-h)
@@ -65,10 +78,20 @@ Code-repo mode (register a code repo against an existing workspace):
   --in-repo                     Force workspace mode in a code repo
                                 (legacy / OSS / monorepo layout).
   --yes, -y                     Accept default-Y prompts non-interactively.
-  --ci-mode                     Also drop a GitHub Action workflow
-                                template (Phase 2).
   --install-drainer             Install the session-drainer service
-                                (Phase 2).
+                                (deferred — accepted but no-op).
+
+Project-directory mode (register a non-code documents directory against
+a workspace; originals stay in-place, only .extracted.md goes to vault):
+  --register-project-dir        Enter project-directory mode. Writes
+                                .curiosity/config.toml with
+                                project_kind=documents.
+  --ingest-paths <list>         Comma-separated relative paths to scan
+                                (default: ".").
+  --ingest-extensions <list>    Comma-separated file extensions to
+                                include (default: .pdf,.md,.txt,.docx,
+                                .pptx,.csv,.xlsx,.html,.rst).
+  --no-initial-scan             Skip the initial scan at end of setup.
 
 See docs/code-knowledge.md for the full design.
 HELP
@@ -241,9 +264,21 @@ fi
 
 _mode="workspace"   # default
 if [ "$_is_workspace" = "1" ]; then
+    # Workspace cwd wins, but if the user passed an explicit --register-*
+    # flag they almost certainly meant something else — error rather
+    # than silently refresh.
+    if [ "$REGISTER_PROJECT_DIR" = "1" ] || [ "$REGISTER_CODE_REPO" = "1" ]; then
+        echo "  ERROR: cwd is already a CE workspace ($(pwd))." >&2
+        echo "  --register-* flags operate on other directories to be" >&2
+        echo "  registered AGAINST a workspace, not on the workspace" >&2
+        echo "  itself. Run from the directory you want to register." >&2
+        exit 1
+    fi
     _mode="workspace"
 elif [ "$IN_REPO" = "1" ]; then
     _mode="workspace"
+elif [ "$REGISTER_PROJECT_DIR" = "1" ]; then
+    _mode="project-dir"
 elif [ "$REGISTER_CODE_REPO" = "1" ]; then
     _mode="code-repo"
 elif [ "$_is_code_repo" = "1" ]; then
@@ -479,6 +514,7 @@ EOF
       "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(uv run python3 $root/scripts/restyle.py:*)",
+      "Bash(uv run python3 $root/scripts/scan.py:*)",
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/projects.py:*)",
       "Bash(uv run python3 $root/scripts/identifier_resolve.py review:*)",
@@ -596,25 +632,6 @@ EOF
         echo "  Installed .git/hooks/post-merge"
     fi
 
-    # ---- Phase 2: Optional GitHub Action template (--ci-mode) ----------
-    if [ "$CI_MODE" = "1" ]; then
-        WORKFLOW_TEMPLATE="$TEMPLATE_DIR/coderepo-workflows/ce-capture.yml"
-        WORKFLOW_DIR="$REPO_ROOT/.github/workflows"
-        WORKFLOW_DEST="$WORKFLOW_DIR/ce-capture.yml"
-        if [ -f "$WORKFLOW_DEST" ]; then
-            echo "  $WORKFLOW_DEST already exists; not overwriting."
-            echo "  Diff against the template at $WORKFLOW_TEMPLATE if needed."
-        elif [ -f "$WORKFLOW_TEMPLATE" ]; then
-            mkdir -p "$WORKFLOW_DIR"
-            cp "$WORKFLOW_TEMPLATE" "$WORKFLOW_DEST"
-            echo "  Wrote $WORKFLOW_DEST"
-            echo "  Wire the secrets per the workflow file's header comments:"
-            echo "    1. Deploy key on the wiki repo with WRITE access"
-            echo "    2. Add the private key as CE_WIKI_DEPLOY_KEY secret"
-            echo "    3. Set CE_WIKI_REPO repository variable to the wiki repo"
-        fi
-    fi
-
     # Phase 1 + 3 + 2 done. Subsequent phases (3.5 session brief,
     # 4 detached /curate) extend this further.
     if [ "$INSTALL_DRAINER" = "1" ]; then
@@ -632,12 +649,172 @@ EOF
     echo "    Allowlist:           .claude/settings.local.json (per-machine)"
     echo "    Slash commands:      .claude/commands/*.md (regenerable)"
     echo "    Capture hook:        .git/hooks/post-merge (per-machine)"
-    if [ "$CI_MODE" = "1" ]; then
-        echo "    GitHub Action:       .github/workflows/ce-capture.yml (committed)"
-    fi
     echo ""
     echo "  On your next \`git pull\`, commits + (PR via gh) + changelog"
     echo "  will capture into the workspace. Full design: docs/code-knowledge.md"
+    exit 0
+fi
+
+if [ "$_mode" = "project-dir" ]; then
+    # ----- project-directory flow (v0.4.0) -------------------------------
+    #
+    # Same pointer-file shape as code-repo mode, with project_kind=
+    # documents. The scanner (scripts/scan.py) walks the configured
+    # paths, applies the extension whitelist + exclude globs, and
+    # invokes local_ingest.py --source-path-only to produce .extracted.md
+    # in the workspace's vault — originals stay where the user keeps
+    # them.
+
+    PROJECT_DIR_ROOT="$(pwd)"
+    PROJECT_DIR_BASENAME="$(basename "$PROJECT_DIR_ROOT")"
+
+    # Resolve target workspace path (same logic as code-repo flow).
+    if [ -n "$CE_WORKSPACE_PATH" ]; then
+        TARGET_WS="$CE_WORKSPACE_PATH"
+    elif [ -n "${CURIOSITY_WORKSPACE:-}" ]; then
+        TARGET_WS="$CURIOSITY_WORKSPACE"
+    else
+        TARGET_WS="$(python3 "$CODE_REPO_PY" default-workspace-root)"
+    fi
+    TARGET_WS_EXPANDED="${TARGET_WS/#\~/$HOME}"
+
+    if [ -z "$CE_PROJECT" ]; then
+        CE_PROJECT="$PROJECT_DIR_BASENAME"
+    fi
+
+    # Refuse to register the workspace itself, a parent of it, or any
+    # path that contains the workspace — registering these would have
+    # scan.py walk into the vault and re-ingest its own outputs.
+    case "$TARGET_WS_EXPANDED" in
+        "$PROJECT_DIR_ROOT"|"$PROJECT_DIR_ROOT"/*)
+            echo "  ERROR: workspace ($TARGET_WS_EXPANDED) is at or under" >&2
+            echo "  the directory you're registering ($PROJECT_DIR_ROOT)." >&2
+            echo "  Pick a workspace path that lives elsewhere." >&2
+            exit 1
+            ;;
+    esac
+    case "$PROJECT_DIR_ROOT" in
+        "$TARGET_WS_EXPANDED"|"$TARGET_WS_EXPANDED"/*)
+            echo "  ERROR: cannot register a directory at or inside the" >&2
+            echo "  workspace ($TARGET_WS_EXPANDED) — would create an" >&2
+            echo "  ingestion loop." >&2
+            exit 1
+            ;;
+    esac
+
+    echo ""
+    echo "  Project-directory mode."
+    echo "    Project dir:      $PROJECT_DIR_ROOT"
+    echo "    Workspace target: $TARGET_WS_EXPANDED"
+    echo "    Project tag:      $CE_PROJECT"
+
+    # Workspace existence — same checks as code-repo flow.
+    if ! python3 "$CODE_REPO_PY" is-workspace "$TARGET_WS_EXPANDED" >/dev/null 2>&1; then
+        if [ -d "$TARGET_WS_EXPANDED" ] && [ "$INIT_WORKSPACE" != "1" ]; then
+            echo "  ERROR: $TARGET_WS_EXPANDED exists but is not a CE workspace." >&2
+            echo "  Re-run with --init-workspace, or point at an existing workspace." >&2
+            exit 1
+        fi
+        if [ "$INIT_WORKSPACE" = "1" ]; then
+            echo "  Bootstrapping workspace at $TARGET_WS_EXPANDED ..."
+            mkdir -p "$TARGET_WS_EXPANDED"
+            (cd "$TARGET_WS_EXPANDED" && bash "$0")
+        else
+            echo "  ERROR: no CE workspace at $TARGET_WS_EXPANDED." >&2
+            echo "  Re-run with --init-workspace or --ce-workspace-path PATH." >&2
+            exit 1
+        fi
+    fi
+
+    # Defaults for ingest config.
+    if [ -z "$INGEST_PATHS" ]; then
+        INGEST_PATHS="."
+    fi
+    if [ -z "$INGEST_EXTENSIONS" ]; then
+        INGEST_EXTENSIONS=".pdf,.md,.txt,.docx,.pptx,.csv,.xlsx,.html,.rst"
+    fi
+    # Convert comma lists → JSON arrays for write-config.
+    _to_json_array() {
+        local IFS=','
+        local out="["
+        local first=1
+        for item in $1; do
+            item="${item## }"; item="${item%% }"
+            if [ -z "$item" ]; then continue; fi
+            if [ "$first" = "1" ]; then first=0; else out="$out, "; fi
+            out="$out\"$item\""
+        done
+        echo "$out]"
+    }
+    _paths_json=$(_to_json_array "$INGEST_PATHS")
+    _exts_json=$(_to_json_array "$INGEST_EXTENSIONS")
+
+    POINTER_DIR="$PROJECT_DIR_ROOT/.curiosity"
+    POINTER_FILE="$POINTER_DIR/config.toml"
+    mkdir -p "$POINTER_DIR"
+    python3 "$CODE_REPO_PY" write-config "$POINTER_FILE" <<JSON
+{
+  "workspace": "$TARGET_WS",
+  "project": "$CE_PROJECT",
+  "project_kind": "documents",
+  "ingest": {
+    "enabled": true,
+    "paths": $_paths_json,
+    "extensions": $_exts_json,
+    "exclude": [],
+    "follow_symlinks": false
+  }
+}
+JSON
+    echo "  Wrote $POINTER_FILE"
+
+    # Validate paths up-front. If anything is unsafe, refuse to proceed.
+    if ! python3 "$CODE_REPO_PY" validate-paths "$POINTER_FILE" >/dev/null 2>&1; then
+        echo "" >&2
+        echo "  ERROR: validation of [ingest] paths failed. Details:" >&2
+        python3 "$CODE_REPO_PY" validate-paths "$POINTER_FILE" >&2 || true
+        echo "  Fix .curiosity/config.toml and re-run." >&2
+        exit 1
+    fi
+
+    # Register with the workspace's project-dir registry. This is what
+    # `scan.py all` reads to enumerate.
+    python3 "$CODE_REPO_PY" register-project-dir "$TARGET_WS_EXPANDED" \
+        --path "$PROJECT_DIR_ROOT" --project "$CE_PROJECT" >/dev/null
+    echo "  Registered with workspace project-dir registry."
+
+    # Optional initial scan. Skip with --no-initial-scan or in non-
+    # interactive mode without --yes.
+    _do_scan=0
+    if [ "$INITIAL_SCAN" = "1" ]; then
+        if [ "$ASSUME_YES" = "1" ]; then
+            _do_scan=1
+        elif _is_interactive; then
+            printf "  Run an initial scan now? [Y/n] "
+            read -r _reply_scan || _reply_scan="y"
+            case "$_reply_scan" in
+                ""|y|Y|yes|YES) _do_scan=1 ;;
+            esac
+        fi
+    fi
+    if [ "$_do_scan" = "1" ]; then
+        echo "  Scanning ..."
+        (cd "$TARGET_WS_EXPANDED" && uv run python3 \
+            "$SCRIPT_DIR/scan.py" one --workspace "$TARGET_WS_EXPANDED" \
+            --pointer "$POINTER_FILE") || true
+    fi
+
+    echo ""
+    echo "  Project directory registered."
+    echo "    Pointer file:        .curiosity/config.toml"
+    echo "    Workspace:           $TARGET_WS_EXPANDED"
+    echo "    Project tag:         $CE_PROJECT"
+    echo ""
+    echo "  Auto-scan runs at start of CURATE, on viewer rebuild, and on"
+    echo "  skill update. Manual rescan:"
+    echo "    uv run python3 $SCRIPT_DIR/scan.py one \\"
+    echo "      --workspace $TARGET_WS_EXPANDED \\"
+    echo "      --pointer $POINTER_FILE"
     exit 0
 fi
 
@@ -1107,6 +1284,8 @@ else
                                               # the file be rewritten
         "scripts/restyle.py"                 # v0.3.0 — RESTYLE wave
                                               # orchestrator
+        "scripts/scan.py"                    # v0.4.0 — project-dir
+                                              # scanner
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -1198,6 +1377,7 @@ EOF
       "Bash(uv run python3 $root/scripts/tables.py:*)",
       "Bash(uv run python3 $root/scripts/figures.py:*)",
       "Bash(uv run python3 $root/scripts/restyle.py:*)",
+      "Bash(uv run python3 $root/scripts/scan.py:*)",
       "Bash(uv run python3 $root/scripts/naming.py:*)",
       "Bash(uv run python3 $root/scripts/projects.py:*)",
       "Bash(uv run python3 $root/scripts/identifier_resolve.py review:*)",

@@ -57,7 +57,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, `restyle.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, `restyle.py`, `scan.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
 5. `printenv CURATOR_PRESET` — read the per-session preset override (see §Curator config). Run once at the start of any operation that dispatches workers/reviewers; the value is stable for the session.
@@ -376,8 +376,9 @@ Worker + reviewer prompt templates live in `.curator/prompts.md` — read them v
 The plan is mechanical and fast (sub-second). No reviewer call. Every bucket below is pre-ranked by `epoch_summary.py` + `sweep.py concept-candidates`; the orchestrator just picks top-K.
 
 1. **Snapshot guarded scripts.** `bash <skill_path>/scripts/evolve_guard.sh snapshot .curator/.guard.snapshot`.
-2. **Gather.** `uv run python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON (aggregate scores, dimension distributions, vault frontier, connection candidates, saturation signal, recent log). Also: `uv run python3 <skill_path>/scripts/sweep.py concept-candidates wiki` for demand-ranked missing-concept stems.
-3. **Pick wave mode.** Exactly one of:
+2. **Scan registered project-dirs.** Before the first wave only, run `uv run python3 <skill_path>/scripts/scan.py all --workspace <ws-abs>`. This walks every project-dir registered against this workspace, ingests new/changed files, and marks orphans. No-op if no project-dirs are registered. See § SCAN for details. (Skip on subsequent waves in the same CURATE run — registered project-dirs change infrequently relative to wave cadence, and a per-wave scan would re-walk the filesystem unnecessarily.)
+3. **Gather.** `uv run python3 <skill_path>/scripts/epoch_summary.py wiki` → JSON (aggregate scores, dimension distributions, vault frontier, connection candidates, saturation signal, recent log). Also: `uv run python3 <skill_path>/scripts/sweep.py concept-candidates wiki` for demand-ranked missing-concept stems.
+4. **Pick wave mode.** Exactly one of:
    - **create** — if `summary.saturation.action == "pivot_to_exploration"` OR `summary.vault_frontier.uncited_count < 5`. First-level pool has thinned; time to generate new material.
    - **table-audit** — else if any entry in `summary.table_citation_risk` has `risk > 0.5` (churn since last audit × time since last audit exceeds half the audit period). Dispatch one opus worker per high-risk table: pass the table's cited rows + current state, ask whether any citing evidence/analysis page needs an update. Findings become repair-wave tasks on the next wave. This prevents evidence from drifting out of sync with rows as tables churn.
    - **figure-extract** — else if `uv run python3 <skill_path>/scripts/sweep.py figure-candidates wiki` returns any candidate with `distinct_citers >= figure_extract_min_citers` (default 2). Dispatch one sonnet `figure_extractor` Agent per top-K candidate source: each worker reads the source's pre-rendered PNGs (produced up-front via `figures.py render-all`) and returns figure specs. Orchestrator creates `wiki/figures/fig-<stem>.md` per spec, then calls `figures.py mark-extracted` on each processed extraction so the source drops off the candidate list next wave. See Phase 2 for the full protocol.
@@ -385,7 +386,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    - **numeric-review** — else if `uv run python3 <skill_path>/scripts/sweep.py pending-numeric-review wiki` returns any candidates. These are `[tab]` pages produced by the multimodal-table-extract wave that haven't been audited yet — every multimodal extraction goes through this pass before its rows are trusted by `extracted-query`. Dispatch one opus `numeric_transcription_review` Agent per page: each reviewer reads the source PNGs + the `[tab]` page's GFM table and returns `{verdict, flagged_cells, notes}`. Orchestrator persists each verdict via `apply-numeric-review`. `wrong` verdicts auto-overwrite (with backup) and log a rewind invocation; `suspect` verdicts annotate the page and exclude it from `extracted-query` until a curator triages. See Phase 2 for the full protocol.
    - **wire** — else if `summary.orphan_dominance.ratio > orphan_dominance_threshold` (default 0.6). The `orphan_dominance` field in epoch_summary is pre-computed *excluding* `sources/` pages, so this signal isn't skewed by source stubs being definitionally orphaned until wired in.
    - **repair** — otherwise. Editorial + frontier work remains; most pages are under-sourced or under-linked.
-4. **Fill the wave** with up to `parallel_workers` targets of the chosen mode.
+5. **Fill the wave** with up to `parallel_workers` targets of the chosen mode.
 
    **Cluster scoping** (activates on large wikis). If `summary.wave_scope` is non-null (non-source pages ≥ `cluster_scope_threshold`, default 500), restrict **repair-mode** target selection to pages within `wave_scope.pages` — the worst-scoring page plus its 2-hop wikilink neighborhood. Keeps each repair wave locally coherent so plan and execute stay bounded as the wiki grows. Create and wire modes stay global: create-mode new pages don't exist in the graph yet, and wire-mode inbound-link starvation can legitimately cross clusters. Ignore `wave_scope` when null (small wikis don't need scoping).
 
@@ -642,6 +643,31 @@ When invoked (slash command `/restyle <target>` or natural language):
 **Cost discipline.** Restyle hits *every* page, not just worst-scoring ones — for a 200-page wiki this is ~200 worker invocations (~$5-20 at Sonnet rates). Use `--dry-run` semantics via `restyle.py plan` to print the candidate count + cost estimate before any worker fires; validate quality with `--limit 20` on a small batch first if you're unsure about the rewrite character.
 
 **Why not run this inside CURATE?** CURATE picks worst-scoring pages by composite score. A caveman-compressed page that's well-cited, well-linked, and unbloated scores fine; CURATE never touches it. Restyle inverts the selection — every page is in scope — which is the only way a one-time-style-flip terminates.
+
+### SCAN — "scan project dirs", "/scan", "ingest changes"
+
+Walks every project-dir registered against this workspace, ingests new/changed files via `local_ingest.py --source-path-only` (only `.extracted.md` lands in the vault; originals stay where the user keeps them), and marks orphaned extractions when originals are deleted/moved. The wiki tells you what was learned; project-dirs tell the wiki where new evidence lives.
+
+Triggered three ways:
+
+- **Automatically at the start of every CURATE run** (Phase 1, step 2 — see § CURATE). Idempotent: a scan with no changes is a sub-second walk and a no-op.
+- **By the user via `/scan`** (slash command) or natural language ("scan project dirs", "ingest the new files").
+- **By the viewer + skill update**: viewer rebuild and `update.sh` both invoke `scan.py all` after the rebuild/update completes, so the workspace catches up to filesystem changes the user made between sessions.
+
+Mechanics:
+
+1. **Enumerate registered project-dirs.** `uv run python3 <skill_path>/scripts/code_repo.py list-project-dirs <workspace>` returns the registry's `project-dirs` array. Each entry has `path` + `pointer` + `project`.
+2. **Per project-dir, validate paths.** `uv run python3 <skill_path>/scripts/code_repo.py validate-paths <pointer>` runs the path-traversal guard (no `..`, no absolute paths, all resolve inside the pointer-dir). If any path fails validation, the scan refuses to act on that project-dir and reports the violation — never partially ingests under an unsafe pointer.
+3. **Per project-dir, scan.** `uv run python3 <skill_path>/scripts/scan.py one --workspace <ws> --pointer <pointer>` walks the configured paths, filters by extension whitelist + exclude globs, sha256-dedupes against existing extractions, and ingests new/changed files via `local_ingest.py --file <abs> --source-path-only`. Changed files quarantine their stale extraction to `vault/_stale/`. Deleted files get their extraction marked `orphan: true`.
+4. **Batch mode.** `scan.py all --workspace <ws>` does steps 1-3 in one invocation and writes `<workspace>/.curator/scan-staleness.json` for the viewer's freshness banner.
+
+**Stale check (cheap, no scan).** `scan.py check-stale --workspace <ws>` walks the configured paths counting files whose mtime is newer than the last scan-staleness sidecar. No reads, no shas — just mtime comparisons. Used by:
+- The viewer to emit a banner when files are unscanned ("N unscanned files across K project-dirs — run `curate` or `/scan` to ingest them").
+- The orchestrator on CURATE-start to skip the scan when zero files are stale (saves the per-wave walk).
+
+**Path safety.** Pointer-driven scanning is a privileged operation — the agent walks user filesystem paths derived from pointer config. `validate-paths` is the gate: no absolute paths, no `..` segments, all paths must resolve inside the pointer-dir's tree. Symlinks are not followed by default (`follow_symlinks: false`) and symlinks inside scanned paths are skipped even when following is allowed, to prevent exfil via crafted links. Standard collateral (`.git/`, `node_modules/`, `__pycache__/`, `.venv/`, etc.) is always excluded.
+
+**What gets ingested.** Default extensions are `.pdf, .md, .txt, .docx, .pptx, .csv, .xlsx, .html, .rst` — whitelist only, no `*` glob. The user can narrow further via `[ingest] extensions` in the pointer file. All extractions carry the standard `untrusted: true` envelope + `<!-- BEGIN FETCHED CONTENT -->` markers + scrub_check at write time, identical to manual `local_ingest.py` ingest.
 
 ### CONTRADICTION — "scan contradictions", "check contradictions"
 

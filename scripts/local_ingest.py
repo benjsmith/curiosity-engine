@@ -411,7 +411,17 @@ def ingest_one(
     is_drop: bool,
     archival: bool = False,
     projects: list[str] | None = None,
+    source_path_only: bool = False,
 ) -> dict:
+    """Ingest one file.
+
+    source_path_only: if True, do not copy/move the original into
+    vault/. Only the `.extracted.md` is written, with `source_path`
+    pointing at the original's absolute filesystem location. Used by
+    scan.py for project-directory ingest where originals stay where
+    they are. `is_drop` is forced to False under this mode — drop-mode
+    moves the original, which would defeat the point.
+    """
     result = {"source_path": str(path), "ok": False, "reason": None}
     if path.is_symlink():
         result["reason"] = "symlink (not ingested)"
@@ -440,10 +450,24 @@ def ingest_one(
             kept_path = VAULT_DIR / base
         else:
             kept_path = VAULT_DIR / f"{base}.{raw_ext}"
-        if is_drop:
+        if source_path_only:
+            # Original stays in-place; record its absolute path in the
+            # extraction frontmatter (set below). kept_path is still
+            # used as the in-vault NAME root for the extraction file,
+            # but no bytes are copied. References to the "original"
+            # in extraction-failure placeholders use the absolute path.
+            pass
+        elif is_drop:
             shutil.move(str(path), str(kept_path))
         else:
             shutil.copyfile(path, kept_path)
+
+        # Human-readable pointer used inside extraction-failure
+        # placeholder bodies. Vault-resident original → file-name only
+        # (the user can find it by listing vault/). In-place original →
+        # absolute path (the user needs the full path to locate it on
+        # the filesystem).
+        _original_ref = str(path) if source_path_only else kept_path.name
 
         # Dispatch on extension. PDFs get pypdf (+ pdfplumber when the
         # math/table heuristic fires) plus a sanity pass; structured
@@ -501,7 +525,7 @@ def ingest_one(
                     f"(PDF text extraction did not pass sanity "
                     f"[{reason_combined}]; flagged for multimodal upgrade. "
                     f"See `sweep.py pending-multimodal wiki`; the original "
-                    f"is at `{kept_path.name}`.)"
+                    f"is at `{_original_ref}`.)"
                 )
 
             if n_tables > 0:
@@ -549,7 +573,7 @@ def ingest_one(
                         "(XLSX extraction unavailable — `openpyxl` not "
                         "installed. Install it in the workspace venv "
                         "(`uv pip install openpyxl`) and re-run "
-                        f"`local_ingest.py`. Original is at `{kept_path.name}`.)"
+                        f"`local_ingest.py`. Original is at `{_original_ref}`.)"
                     )
                 else:
                     extraction_method = "openpyxl" if not ext_note else f"xlsx_failed:{ext_note}"
@@ -563,7 +587,7 @@ def ingest_one(
                         "(PPTX extraction unavailable — `python-pptx` not "
                         "installed. Install it in the workspace venv "
                         "(`uv pip install python-pptx`) and re-run "
-                        f"`local_ingest.py`. Original is at `{kept_path.name}`.)"
+                        f"`local_ingest.py`. Original is at `{_original_ref}`.)"
                     )
                 else:
                     extraction_method = "python-pptx" if not ext_note else f"pptx_failed:{ext_note}"
@@ -589,14 +613,24 @@ def ingest_one(
             f"ingested_at: {datetime.now(timezone.utc).isoformat()}",
             f"sha256: {sha}",
             f"bytes: {len(raw)}",
-            f"kept_as: {kept_path.name}",
+        ]
+        if source_path_only:
+            # Original lives in-place on the user's filesystem — vault
+            # stores only this extraction. scan.py re-checks `source_path`
+            # against `sha256` to detect content changes and reingests
+            # accordingly. If the path disappears, scan.py marks the
+            # extraction orphaned.
+            fm_lines.append("source_in_place: true")
+        else:
+            fm_lines.append(f"kept_as: {kept_path.name}")
+        fm_lines.extend([
             f"extraction: {extraction_mode}",
             f"extraction_method: {extraction_method}",
             f"extraction_quality: {extraction_quality}",
             f"max_extract_bytes: {cfg['max_extract_bytes']}",
             "untrusted: true",
             "source_type: local_file",
-        ]
+        ])
         # Multi-project metadata: ingest_kind ("archival" only emitted when
         # set; absence implies current — keeps frontmatter clean for the
         # common case). projects pre-tags the source so the citation-graph
@@ -660,7 +694,8 @@ def ingest_one(
 
         result.update({
             "ok": True,
-            "kept": str(kept_path),
+            "kept": None if source_path_only else str(kept_path),
+            "source_in_place": source_path_only,
             "extracted": str(extracted_path),
             "bytes": len(raw),
             "extraction": extraction_mode,
@@ -686,6 +721,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("directory", type=Path, nargs="?", default=None,
                     help="directory to ingest (omit to process vault/raw/ drop folder)")
+    ap.add_argument("--file", type=Path, default=None,
+                    help="ingest a single file (mutually exclusive with "
+                         "directory mode). Used by scan.py to ingest one "
+                         "specific candidate without rglob picking up its "
+                         "siblings.")
     ap.add_argument("--exts", type=str, default=None,
                     help="comma-separated extensions to include (default: md,txt,rst,html,json,yaml,org)")
     ap.add_argument("--max-files", type=int, default=500)
@@ -700,31 +740,48 @@ def main() -> int:
                          "and seeds the projects: frontmatter directly. "
                          "Use when the user explicitly invokes "
                          "'add ... to <project>' or 'archive ... to <project>'.")
+    ap.add_argument("--source-path-only", action="store_true",
+                    help="Do not copy originals to vault/. Only the "
+                         ".extracted.md is written; `source_path` in "
+                         "frontmatter points at the original's filesystem "
+                         "location. Used by scan.py for project-directory "
+                         "ingest where originals stay where they are.")
     args = ap.parse_args()
 
-    if args.directory is None:
-        args.directory = DROP_DIR
-    is_drop = args.directory.resolve() == DROP_DIR.resolve()
-
-    if not args.directory.is_dir():
-        if is_drop:
-            args.directory.mkdir(parents=True, exist_ok=True)
-        else:
-            print(json.dumps({"error": f"not a directory: {args.directory}"}))
-            return 2
-
-    exts = {f".{e.strip().lstrip('.')}" for e in args.exts.split(",")} if args.exts else DEFAULT_EXTS
+    # Single-file mode (scan.py uses this). Mutually exclusive with
+    # directory mode: --file wins if both are given.
     cfg = load_config()
-
-    candidates = [p for p in args.directory.rglob("*")
-                  if p.is_file() and not p.is_symlink()
-                  and p.suffix.lower() in exts]
-    candidates.sort()
-    candidates = candidates[: args.max_files]
+    if args.file is not None:
+        f = args.file.resolve()
+        if not f.is_file():
+            print(json.dumps({"error": f"not a file: {f}"}))
+            return 2
+        is_drop = False
+        candidates = [f]
+        root_for_slug = f.parent
+    else:
+        if args.directory is None:
+            args.directory = DROP_DIR
+        is_drop = args.directory.resolve() == DROP_DIR.resolve()
+        if not args.directory.is_dir():
+            if is_drop:
+                args.directory.mkdir(parents=True, exist_ok=True)
+            else:
+                print(json.dumps({"error": f"not a directory: {args.directory}"}))
+                return 2
+        exts = {f".{e.strip().lstrip('.')}" for e in args.exts.split(",")} if args.exts else DEFAULT_EXTS
+        candidates = [p for p in args.directory.rglob("*")
+                      if p.is_file() and not p.is_symlink()
+                      and p.suffix.lower() in exts]
+        candidates.sort()
+        candidates = candidates[: args.max_files]
+        root_for_slug = args.directory
 
     if not candidates:
-        print(json.dumps({"directory": str(args.directory), "considered": 0,
-                           "ok": 0, "mode": "drop" if is_drop else "copy"}))
+        print(json.dumps({"directory": str(args.directory) if args.directory else None,
+                           "file": str(args.file) if args.file else None,
+                           "considered": 0, "ok": 0,
+                           "mode": "drop" if is_drop else "copy"}))
         return 0
 
     projects = (
@@ -732,10 +789,15 @@ def main() -> int:
         if args.projects else None
     )
 
+    # source-path-only mode forces is_drop=False: drop semantics MOVE
+    # the original, which directly contradicts "leave the original where
+    # it is". If someone asks for both, prefer source-path-only.
+    is_drop_effective = is_drop and not args.source_path_only
     t0 = time.time()
     results = [
-        ingest_one(p, args.directory, cfg, is_drop,
-                   archival=args.archival, projects=projects)
+        ingest_one(p, root_for_slug, cfg, is_drop_effective,
+                   archival=args.archival, projects=projects,
+                   source_path_only=args.source_path_only)
         for p in candidates
     ]
     elapsed = time.time() - t0
@@ -744,7 +806,8 @@ def main() -> int:
     snippet = sum(1 for r in results if r.get("extraction") == "snippet")
     multimodal_pending = sum(1 for r in results if r.get("multimodal_recommended"))
     summary = {
-        "directory": str(args.directory),
+        "directory": str(args.directory) if args.directory else None,
+        "file": str(args.file) if args.file else None,
         "mode": "drop" if is_drop else "copy",
         "considered": len(candidates),
         "ok": ok,

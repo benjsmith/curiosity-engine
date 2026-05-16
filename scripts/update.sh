@@ -274,6 +274,29 @@ echo "Running setup.sh (migration pass) ..."
 # equivalent to a non-TTY shell and uses each prompt's documented default.
 CURIOSITY_ENGINE_NONINTERACTIVE=1 bash "$SCRIPT_DIR/setup.sh"
 
+# Catch up on filesystem changes the user made to registered project-
+# dirs between sessions. No-op when no project-dirs are registered.
+# Best-effort: a scan failure must not break the update.
+echo ""
+echo "Scanning registered project-dirs ..."
+uv run python3 "$SCRIPT_DIR/scan.py" all --workspace "$(pwd)" 2>&1 \
+    | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    n = d.get('project_dirs_total', 0)
+    t = d.get('totals', {})
+    if n == 0:
+        print('  (no project-dirs registered)')
+    else:
+        print(f\"  {n} project-dir(s) scanned: \"
+              f\"ingested={t.get('ingested_ok', 0)}, \"
+              f\"changed={t.get('changed', 0)}, \"
+              f\"orphans={t.get('orphans', 0)}\")
+except Exception:
+    print('  (scan output unparseable; check scripts/scan.py manually)')
+" || true
+
 echo ""
 echo "=== Update complete ==="
 if [ "$UPDATE_METHOD" = "git" ]; then

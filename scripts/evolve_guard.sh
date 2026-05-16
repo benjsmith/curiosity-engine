@@ -33,6 +33,7 @@ GUARDED=(
     "$SCRIPT_DIR/tables.py"
     "$SCRIPT_DIR/figures.py"
     "$SCRIPT_DIR/restyle.py"
+    "$SCRIPT_DIR/scan.py"
     "$SCRIPT_DIR/code_repo.py"
     "$SCRIPT_DIR/code_capture.py"
     "$SCRIPT_DIR/session_drainer.py"

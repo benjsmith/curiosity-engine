@@ -36,6 +36,12 @@ OUTPUT_ROOT="$HOME/.cache/curiosity-engine/wiki-view"
 OUTPUT_DIR="$OUTPUT_ROOT/$WORKSPACE_NAME"
 
 build() {
+    # Refresh project-dir scan-staleness sidecar before the bundle is
+    # emitted so wiki_render.py picks up a fresh staleness count for
+    # the freshness banner. Cheap (mtime-only walk; no ingestion).
+    # No-op when the workspace has no registered project-dirs.
+    uv run python3 "$SCRIPT_DIR/scan.py" check-stale \
+        --workspace "$(pwd)" >/dev/null 2>&1 || true
     uv run python3 "$SCRIPT_DIR/wiki_render.py" build "$WIKI_ABS" \
         --output-dir "$OUTPUT_DIR"
 }

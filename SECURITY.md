@@ -15,6 +15,7 @@ Threats the skill is designed to resist:
 - **T5 — Supply-chain compromise of dependencies.** A package or installer the skill pulls in is replaced with a malicious version.
 - **T6 — Update redirection.** A malicious actor or compromised config redirects skill updates to a fork shipping arbitrary code.
 - **T7 — Unwitting data exfiltration.** Identifier strings (chemical names, gene symbols) sent to public databases when the user didn't intend to share them.
+- **T8 — Project-directory pointer escape.** A `.curiosity/config.toml` pointer at a non-code directory directs scan.py to read filesystem paths outside the pointer's own subtree (path-traversal, absolute paths, symlink walks).
 
 Threats explicitly out of scope:
 
@@ -64,6 +65,21 @@ The boundary between trusted and untrusted is the `<!-- BEGIN/END FETCHED CONTEN
 - Fork users override per-invocation with `--source <owner>/<repo>`. The override is validated against a strict GitHub-slug regex (`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`); URLs, paths, shell metacharacters all rejected.
 - Non-default slugs print a prominent ⚠ banner in the update preview before any code is fetched.
 - Two-step approval: `update.sh` (preview) and `update.sh --yes` (apply) are separate invocations. The preview always runs first.
+
+### T8 — Project-directory pointer escape
+
+Introduced in v0.4.0. `setup.sh --register-project-dir` writes a `.curiosity/config.toml` pointer at a non-code directory; `scan.py` then walks the pointer's configured `[ingest] paths` and ingests matching files into the workspace's vault. Threat shape: a malicious pointer file (committed to a project-dir, then synced to another user's machine) attempts to direct scan.py at filesystem paths outside the pointer's directory — `/etc/passwd`, `~/.ssh/`, etc. — to exfiltrate sensitive content into the vault.
+
+Mitigations:
+
+- **`code_repo.validate_pointer_paths()` runs before any scan**, rejecting paths with `..` segments, absolute paths, null bytes, or paths that resolve outside the pointer's directory (canonicalised via `Path.resolve()` so symlinks can't paper over a `..`-free escape). `scan.py one` and `scan.py all` refuse to act on any pointer with unsafe paths and surface the violation. Invariant: a scan never reads bytes outside the pointer-dir's filesystem subtree.
+- **Symlinks not followed by default.** `[ingest] follow_symlinks` defaults to `false` in the pointer. Even when set to `true`, scan.py rechecks every resolved path with `relative_to(pointer_dir)` and skips anything that escaped — defence-in-depth against symlink-walking attacks.
+- **Workspace itself cannot be a project-dir.** `setup.sh --register-project-dir` refuses if the workspace path is at or under the proposed project-dir (would create an ingest loop scanning the vault's own outputs).
+- **Extension whitelist enforced.** The pointer's `[ingest] extensions` is a whitelist (default: `.pdf, .md, .txt, .docx, .pptx, .csv, .xlsx, .html, .rst`); nothing outside the list is read. No `*` glob escape. `.env`, `.ssh/`, dotfiles, binaries, etc., are not on the default list.
+- **Standard collateral always excluded.** `.git/`, `.venv/`, `node_modules/`, `__pycache__/`, etc., are added to the exclude list at scan time regardless of the pointer's user-supplied exclude entries.
+- **Same untrusted-content envelope as today.** Every extraction wraps body bytes in `<!-- BEGIN FETCHED CONTENT -->` markers with `untrusted: true` frontmatter, runs through `scrub_check.py --mode vault` at write time, and quarantines on injection markers. No new write path; v0.4.0 just adds new INPUT paths to the existing pipeline.
+
+The pointer file itself is committed (sharing routing across a team), so a malicious pointer in a shared project-dir would be visible in code review before it ran. Plus `validate-paths` is the failsafe regardless of code-review hygiene.
 
 ### T7 — Unwitting data exfiltration
 

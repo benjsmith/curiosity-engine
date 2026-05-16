@@ -495,6 +495,18 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
 
     workspace_name = wiki_dir.parent.name
 
+    # Read the project-dir scan-staleness sidecar (refreshed by
+    # viewer.sh's pre-build `scan.py check-stale` call). Absent on
+    # workspaces that have no project-dirs registered — fine, the
+    # banner just isn't emitted then.
+    scan_staleness = None
+    sidecar = wiki_dir.parent / ".curator" / "scan-staleness.json"
+    if sidecar.is_file():
+        try:
+            scan_staleness = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            scan_staleness = None
+
     data = {
         "workspace": workspace_name,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -502,6 +514,7 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
         "nodes": nodes,
         "edges": edges,
         "pages": page_data,
+        "scan_staleness": scan_staleness,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)

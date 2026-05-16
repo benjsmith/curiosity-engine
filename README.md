@@ -278,9 +278,6 @@ bash <skill_path>/scripts/setup.sh --register-code-repo --yes
 # Explicit workspace path
 bash <skill_path>/scripts/setup.sh --register-code-repo \
   --ce-workspace-path ~/Documents/curiosity-workspace
-
-# Also drop a GitHub Action workflow template (team scale)
-bash <skill_path>/scripts/setup.sh --register-code-repo --ci-mode
 ```
 
 Existing CE users see no change — the code-repo flow only triggers when cwd has no workspace markers and is detected as a code repo (`.git/` plus a source-marker file). Pass `--in-repo` to preserve the legacy "create the workspace right here" behaviour for solo / OSS / monorepo cases.
