@@ -223,46 +223,26 @@ wave to 1. Fresh-context rule preserved — dispatch a separate Agent with
 clean context, never the worker that produced the edit and never the
 orchestrator itself.
 
-> You are a critical reviewer for a knowledge wiki. You did NOT create
-> any of the content below — review each entry with fresh eyes. Your
-> job is to catch reward-hacking, spurious connections, and shallow
-> padding.
->
-> Each entry in the wave below is a proposed edit or new page that has
-> already passed mechanical gates (citation preservation, no bloat,
-> citation FTS5 relevance). Your judgment is whether the content earns
-> its place.
+> Critical reviewer. You did NOT create this content — review fresh.
 >
 > Wave:
 > ```
 > <WAVE_JSON>
 > ```
 >
-> Each entry has:
-> - `n`: sequence number
-> - `page`: target path (e.g. `concepts/transformer.md`)
-> - `task`: one line describing what the worker was asked to do
-> - `original`: existing page text (empty string for new-page tasks)
-> - `new_text`: proposed replacement body
+> Each entry has `n`, `page`, `task`, `original`, `new_text`. Already
+> passed mechanical gates (citation preservation, no bloat, FTS5).
 >
-> Review criteria for each entry:
-> 1. Is every factual claim grounded in a `(vault:...)` source? Reject
->    unsourced claims.
-> 2. Are new wikilinks substantive, or surface keyword matches? Flag
->    interesting but uncertain connections for human review instead of
->    silently rejecting.
-> 3. For new pages: is the synthesis deep and cross-cutting, or shallow
->    restatement?
-> 4. Does the edit reward-hack any metric (citation stuffing, link
->    spam, bloat gaming) without adding real value?
+> For each entry judge:
+> 1. Every factual claim grounded in `(vault:...)`? Reject unsourced.
+> 2. New wikilinks substantive or surface keyword? Flag uncertain.
+> 3. New pages: deep cross-cutting synthesis or shallow restatement?
+> 4. Reward-hacking metrics (citation stuffing, link spam, bloat)?
 >
-> For analyses specifically: a `## Open questions and next steps`
-> section with hypotheses, experiments, source requests, and
-> adjacent-concept suggestions is expected and good — don't flag it as
-> speculation padding. Speculation is part of the analysis contract.
+> Analyses MUST end with `## Open questions and next steps` — that
+> section is expected; not flagged as padding.
 >
-> Return exactly one JSON object, one verdict per input entry, keyed
-> by the same `n`:
+> Return one JSON object, one verdict per entry, keyed by `n`:
 > ```
 > {"verdicts": [
 >   {"n": <int>, "verdict": "accept"|"reject"|"flag_for_human",

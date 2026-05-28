@@ -3109,6 +3109,31 @@ def _parse_source_pages(description: Optional[str]) -> list:
     return sorted(pages)
 
 
+def _looks_spurious_table(headers: list, rows: list) -> tuple:
+    """Filter false-positive table extractions from pdfplumber.
+
+    pdfplumber's table detector misfires on multi-column PDF layouts
+    (newspaper-style two-column papers): the gap between text columns
+    is mistaken for a column boundary, and paragraph text from each
+    column gets bundled into one "cell" of a single-column table. We
+    also see real data columns whose adjacent label column was missed,
+    leaving an orphan 1-col table that's useless without context.
+
+    Three filters, applied in order. Returns (is_spurious, reason).
+    """
+    if len(headers) < 2:
+        return True, "single-column"
+    if rows:
+        means = [sum(len(c) for c in r) / max(len(r), 1) for r in rows]
+        if sum(1 for m in means if m > 150) / len(means) > 0.5:
+            return True, "cells-look-like-prose"
+    if len(rows) <= 1:
+        for h in headers:
+            if len(h.split()) > 10:
+                return True, "prose-header-single-row"
+    return False, ""
+
+
 def _parse_gfm_tables_from_body(body: str) -> list:
     """Extract every GFM table block in `body` as a structured dict.
 
@@ -3356,6 +3381,13 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
             headers = tbl["headers"]
             rows = tbl["rows"]
             if not headers or not rows:
+                continue
+            # Filter pdfplumber false-positives: 1-col prose blocks
+            # misdetected as tables, orphan single-column data, prose
+            # masquerading as a one-row table.
+            spurious, why = _looks_spurious_table(headers, rows)
+            if spurious:
+                no_stub.append(f"{extraction.name}#t{ti}:spurious-{why}")
                 continue
 
             base_topic = f"{stub_stem}-t{ti}"
