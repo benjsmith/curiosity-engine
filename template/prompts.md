@@ -199,6 +199,18 @@ this file; don't duplicate prompts there.
 > proper noun or abstract) with normal fan-out and review. Do NOT populate this for non-analysis tasks; do NOT return
 > a concept instead of the analysis — the analysis must still be
 > delivered.
+>
+> Optional for analyses/ new-page tasks only: you may also include
+> `"spawn_table": {"stem": "hyphen-case-name", "title": "Human readable
+> title", "rationale": "one line why a table is clearer than prose",
+> "columns": ["col1", "col2", ...], "sources": ["path/to/a.extracted.md",
+> ...]}`. One at most per analysis. Use ONLY when the analysis
+> enumerates ≥3 parallel entities/measurements across ≥2 attributes —
+> the canonical case where a table is genuinely clearer than prose.
+> Skip for narrative / conceptual synthesis that doesn't decompose
+> naturally into rows + columns. The orchestrator harvests into the
+> NEXT wave's summary-table bucket (create mode); a
+> `summary_table_builder` worker writes `wiki/tables/tbl-<stem>.md`.
 
 ---
 
@@ -798,6 +810,27 @@ the proposal call. Receives the proposal list and judges each candidate.
 > - Numbers should include units in the column header, not each cell
 >   (e.g. column `training loss (log-10)`, not each cell `-1.2 log-10`).
 >
+> Identifier normalisation (optional escape hatch). When the source
+> tables you're synthesising contain chemical names or gene symbols
+> that aren't already flagged on their `[tab]` page's
+> `normalise_columns` fm — but you can tell from context they should
+> be — emit a `normalise` field listing the columns you want resolved
+> for THIS citation only:
+> ```
+> "normalise": [{"tab_stem": "tab-buffers-t1", "column": "Active Ingredient", "as": "chemicals"}, ...]
+> ```
+> The orchestrator will run `identifier_cache.py bulk-lookup` on
+> those columns. Cached values inline immediately; cache misses are
+> queued for the next manual `identifier_resolve.py run --yes` pass
+> (the network step is gated by an `identifier_resolution.enabled`
+> config flag the user controls). Don't expect every requested
+> normalisation to land in this synthesis output — only the cached
+> ones do; misses get filled by a follow-up sweep after the user
+> approves the network resolution. Only emit `normalise` when (a)
+> the page's existing `normalise_columns` is empty or doesn't cover
+> what you cite, AND (b) the column unambiguously holds chemical
+> names or gene symbols. Do not invent — if you're not sure, leave
+> the field absent.
 >
 > Return exactly one JSON object:
 > ```
