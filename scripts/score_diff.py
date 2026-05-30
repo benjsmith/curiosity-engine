@@ -283,8 +283,8 @@ def metrics(text: str) -> dict:
 def verdict(before: dict, after: dict, bloat_mult: float = 1.5) -> tuple:
     """Mechanical gate. `bloat_mult` overrides the default 1.5× ceiling
     on body-token growth — restyle waves pass 2.0× because prose
-    hydration of caveman-compressed pages legitimately expands the
-    body (typically ~1.5–1.65×) without adding new content. Citation
+    hydration of compressed pages legitimately expands the body
+    (typically ~1.5–1.65×) without adding new content. Citation
     floor is unconditional; the multiplier only relaxes the bloat
     side of the gate."""
     if after["citations"] < before["citations"]:
@@ -449,7 +449,7 @@ def main():
     ap.add_argument("--bloat-mult", type=float, default=1.5,
                     help="Override the body-token bloat cap. Default 1.5; "
                          "restyle waves pass 2.0 because prose hydration of "
-                         "caveman-compressed pages legitimately expands ~1.5-1.65×.")
+                         "compressed pages legitimately expands ~1.5-1.65×.")
     args = ap.parse_args()
 
     page = Path(args.page)

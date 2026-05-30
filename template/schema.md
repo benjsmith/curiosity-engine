@@ -173,7 +173,7 @@ at `.curator/identifiers.db`. Air-gapped: set
 `CURIOSITY_ENGINE_OFFLINE=1` for cache-only mode.
 
 ## Rules
-- If caveman is installed, write at the configured level: ultra for most page
+- Write at the configured `compression` level: ultra for most page
   types (dense, telegraphic), lite for `analyses/` (human-comfortable).
   Users wanting expanded prose should request an analysis page.
 - Cite every factual claim: `(vault:path/to/source.extracted.md)`

@@ -3,9 +3,11 @@
 
 Restyle is a CURATE-shaped wave that enumerates every page (not just
 the worst-scoring ones, as repair-mode does) and rewrites each in a
-target style: succinct readable prose, caveman-lite, or caveman-ultra.
-Bidirectional — hydrate from caveman to prose, or compress prose to
-caveman, on demand.
+target style: succinct readable prose (`prose-v1`), lite-compression
+(`caveman-lite-v1` — historical name retained for backward compat),
+or ultra-compression (`caveman-ultra-v1` — likewise historical).
+Bidirectional — hydrate compressed pages to prose, or compress prose
+back, on demand.
 
 Resumability + idempotency come from a frontmatter marker `style:
 <target-id>` on each page. The wave skips pages whose style already

@@ -27,18 +27,7 @@ this file; don't duplicate prompts there.
 > model params and training tokens should scale equally, cited to
 > (vault:chinchilla-compute-optimal.extracted.md)")
 >
-> **Compression (write at the target level as you go).** Rules below
-> are inlined verbatim from the "Rules" and "Intensity" sections of
-> [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)'s
-> SKILL.md. We normally compose skills rather than replicate them, per
-> Anthropic's skill guidance; we break that here because (a) invoking
-> `Skill(caveman)` inside this worker triggers caveman's own
-> Auto-Clarity clause ("Code/commits/PRs: write normal") against the
-> JSON return — silent no-op — and (b) spawning a dedicated compressor
-> subagent per page adds cold-start latency that dominates the actual
-> compression work in the CURATE hot loop. The duplicated ruleset is
-> small; correctness is the worker's responsibility, not a downstream
-> pass.
+> **Compression (write at the target level as you go).**
 >
 > For `analyses/` new-page tasks, write at **lite** level: no filler,
 > no hedging, no pleasantries; keep articles and full sentences

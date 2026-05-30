@@ -35,7 +35,7 @@
   "project_classifier_confidence_threshold": 0.5,
   "project_classifier_home_min_words": 30,
   "cluster_scope_threshold": 500,
-  "caveman": {
+  "compression": {
     "read": "ultra",
     "write_analysis": "lite",
     "write_other": "ultra"

@@ -151,7 +151,7 @@ Mechanical, contained. No deleted-table writes (use `delete` if you want recover
 
 ## Wiki merge
 
-**Ships as a separate skill: [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge).** The merge / subgraph-export / discover-bridges verbs operate on external data (someone else's wiki) and have a different trust model than daily curation, a smaller audience, and an independent release cadence. Installable from curiosity-engine's `setup.sh` optional-install menu alongside caveman and semantic-search. Public sub-wikis use the GitHub topic tag [`curiosity-wiki`](https://github.com/topics/curiosity-wiki) for discovery.
+**Ships as a separate skill: [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge).** The merge / subgraph-export / discover-bridges verbs operate on external data (someone else's wiki) and have a different trust model than daily curation, a smaller audience, and an independent release cadence. Installable from curiosity-engine's `setup.sh` optional-install menu alongside semantic-search. Public sub-wikis use the GitHub topic tag [`curiosity-wiki`](https://github.com/topics/curiosity-wiki) for discovery.
 
 `curiosity-merge merge ../wiki-b --as-origin <name>`:
 

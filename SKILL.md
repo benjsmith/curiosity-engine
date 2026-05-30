@@ -7,7 +7,7 @@ description: "Self-improving knowledge wiki with a vault of raw sources. Use whe
 
 A self-improving knowledge wiki. Add sources to a vault, build interlinked wiki pages, and let autonomous loops make the wiki better overnight.
 
-Inspired by Karpathy's LLM-Wiki (the wiki as compounding artifact), Autoresearch (keep-or-revert ratchet, fixed-wallclock epochs), MemPalace (store everything verbatim), and [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) (optional read-time compression skill). The acceptance criterion is a citation-preserving ratchet: no sourced claim is lost, no catastrophic bloat.
+Inspired by Karpathy's LLM-Wiki (the wiki as compounding artifact), Autoresearch (keep-or-revert ratchet, fixed-wallclock epochs), and MemPalace (store everything verbatim). The acceptance criterion is a citation-preserving ratchet: no sourced claim is lost, no catastrophic bloat.
 
 ## Identity
 
@@ -221,7 +221,7 @@ Read `.curator/schema.md` before any operation.
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "notes_semantic_dedup_threshold": 0.92,
   "cluster_scope_threshold": 500,
-  "caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
+  "compression": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
 }
 ```
 
@@ -249,12 +249,12 @@ A preset block may also carry per-preset overrides for any top-level key (e.g. `
 - **embedding_enabled** / **embedding_model** — opt-in semantic vault search. When `true`, `vault_index.py` computes an embedding alongside every FTS5 row (stored in sqlite-vec), and `vault_search.py --mode hybrid` merges FTS5 + cosine rankings via RRF. Default model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim, ~80MB). Install the deps (`uv pip install sentence-transformers sqlite-vec`) before flipping `embedding_enabled` to true. Setup prompts for this at bootstrap time. When enabled, `sweep.py sync-notes` also runs semantic dedup on notes (see below).
 - **notes_semantic_dedup_threshold** — cosine-similarity floor for `sync-notes` to merge a new note onto an existing note's ID rather than mint a fresh one (default 0.92). Active only when `embedding_enabled: true`. Lower values (e.g. 0.85) catch more fuzzy dupes at the cost of occasionally merging distinct-but-related thoughts; higher (0.95+) is stricter. Two-stage pipeline: content-hash first (free, catches verbatim dupes), embedding comparison only on miss.
 - **cluster_scope_threshold** — when non-source wiki pages exceed this count, `epoch_summary.py` returns a `wave_scope` field (worst-scoring page + its 2-hop wikilink neighborhood). Phase 1 restricts **repair-mode** target selection to that scope; create and wire modes stay global. Default 500 pages; set to 0 to disable cluster scoping entirely.
-- **caveman** — compression levels for the optional [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) skill. Three keys:
+- **compression** — write-time compression levels for the inlined ruleset in `.curator/prompts.md`'s worker template. Three keys:
   - `read` — applied when reading any wiki/vault text into context (orchestrator briefs, epoch_summary input). Ultra strips articles, copula, filler adverbs, pronouns, transitions, prepositions. ~30-40% token reduction.
   - `write_analysis` — applied when writing `analyses/` pages. Lite strips only filler adverbs and transition words, keeping articles and prepositions. Human-comfortable prose. ~10-15% token reduction.
   - `write_other` — applied when writing all other page types (`entities/`, `concepts/`, `sources/`, `evidence/`, `facts/`). Ultra for maximum density. Users wanting expanded prose can request an analysis page.
-  
-  Absent caveman, see the "No-caveman fallback" note below.
+
+  Lineage: the ruleset originated from [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman). The companion skill is no longer invoked (it was a silent no-op on JSON-returning workers via Auto-Clarity); rules live inlined in the worker template. See `docs/skill-rationale.md` for the full rationale.
 
 ## Operations
 
@@ -465,7 +465,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
    ```
    (zero or more). Non-analysis workers must not populate `spawn_concept`.
 
-3. **Mechanical gate.** Workers emit already-compressed prose at the target level (rules inlined in the worker template — see the Caveman integration section below). Pipe each `new_text` into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db` (add `--new-page` for newly-created pages). The gate enforces citation preservation, body-token non-bloat (>1.5×, frontmatter excluded), citation FTS5 relevance, and new-page floors. It writes the file on accept.
+3. **Mechanical gate.** Workers emit already-compressed prose at the target level (rules inlined in the worker template — see the Write-time compression section below). Pipe each `new_text` into `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page> --new-text-stdin --vault-db vault/vault.db` (add `--new-page` for newly-created pages). The gate enforces citation preservation, body-token non-bloat (>1.5×, frontmatter excluded), citation FTS5 relevance, and new-page floors. It writes the file on accept.
 
 4. **Scrub.** Run `uv run python3 <skill_path>/scripts/scrub_check.py --mode wiki <page1> [<page2> ...]` on every page that passed the gate in one call (the script accepts multiple paths and emits one JSON line per path). Any hit = quarantine the source(s) that page drew from and stop the wave. Wiki mode applies strict imperative-injection markers only (ignore-previous, disregard, persona-hijack, reveal-prompt, exfil patterns); LLM subject-vocabulary like "system prompt" or ChatML tokens is allowed in authored prose because wikis about LLMs reference these terms legitimately — the full ruleset still runs on any `<!-- BEGIN FETCHED CONTENT -->` block quoted inside a wiki page.
 
@@ -617,20 +617,20 @@ Canonical class-table (`wiki/todos.md` declares the schema in its frontmatter; r
 
 Non-Claude-Code CLIs ignore `.claude/commands/`; users invoke the same operations via natural language with equivalent results.
 
-### RESTYLE — "restyle the wiki", "hydrate the wiki to prose", "compress the wiki to caveman"
+### RESTYLE — "restyle the wiki", "hydrate the wiki to prose", "compress the wiki"
 
-One-shot wave that enumerates every page (not just worst-scoring ones, as repair-mode does) and rewrites each in a target style: `prose-v1` (succinct readable English — the default schema rule), `caveman-lite-v1` (terse but full sentences), or `caveman-ultra-v1` (telegraphic). Bidirectional: hydrate caveman → prose for readability, or compress prose → caveman if you prefer the denser register. Resumable and idempotent via a per-page `style:` frontmatter marker — re-running picks up exactly where the last run left off.
+One-shot wave that enumerates every page (not just worst-scoring ones, as repair-mode does) and rewrites each in a target style: `prose-v1` (succinct readable English — the default schema rule), `caveman-lite-v1` (terse but full sentences), or `caveman-ultra-v1` (telegraphic). The `caveman-*` style identifiers are historical labels (see `docs/skill-rationale.md`); they remain the canonical style IDs for backward compatibility with any wiki pages already carrying `style: caveman-ultra-v1` in their frontmatter. Bidirectional: hydrate compressed → prose for readability, or compress prose → dense register if you prefer it. Resumable and idempotent via a per-page `style:` frontmatter marker — re-running picks up exactly where the last run left off.
 
 When invoked (slash command `/restyle <target>` or natural language):
 
-1. **Read the workspace's caveman config.** `printenv CURATOR_PRESET` then read `.curator/config.json`. If `caveman.enabled = true` and the target is `prose-v1`, warn: "caveman read/write compression is on; new CURATE edits will re-cavemanise pages restyle just hydrates. Disable in `.curator/config.json` (set `caveman.enabled` to `false`) before running, or accept the fighting state." Wait for the user to confirm or flip the config.
+1. **Read the workspace's compression config.** `printenv CURATOR_PRESET` then read `.curator/config.json`. If a `compression` block is present and the target is `prose-v1`, warn: "compression is on; new CURATE edits will re-compress the pages restyle just hydrated. Remove or relax the `compression` block in `.curator/config.json` before running, or accept the fighting state." Wait for the user to confirm or flip the config.
 
 2. **Plan.** `uv run python3 <skill_path>/scripts/restyle.py plan wiki --target <target>`. Read the JSON: `pages_to_restyle`, `pages_already_target`, `estimated_cost_usd_low/high`, `bloat_cap`. Surface the page count and cost range to the user; ask to proceed. `--types analyses,evidence,concepts` scopes; `--limit N` caps the candidate set (use for a small validation pass first).
 
 3. **Dispatch workers per page.** For each candidate path in the plan:
-   - Read the page (raw, no caveman read-time stripping — caveman.enabled must be off for restyle).
+   - Read the page (raw, no compression read-time stripping — disable the `compression` block for restyle if active).
    - Dispatch a worker-model Agent with the `restyle_worker` template from `.curator/prompts.md`; fill `<TARGET_STYLE>`, `<PAGE_PATH>`, `<PAGE_TEXT>`. The worker preserves frontmatter, citations, wikilinks, numbers, headings — voice-only transform.
-   - Pipe the worker's `new_text` to `uv run python3 <skill_path>/scripts/restyle.py score-check <page> --target <target> --new-text-stdin` — this wraps `score_diff.py` with the target-specific bloat cap (2.0× for prose-v1; 1.5× for caveman targets). Citations are still gated normally.
+   - Pipe the worker's `new_text` to `uv run python3 <skill_path>/scripts/restyle.py score-check <page> --target <target> --new-text-stdin` — this wraps `score_diff.py` with the target-specific bloat cap (2.0× for prose-v1; 1.5× for the compressed targets). Citations are still gated normally.
    - If accept: Write the new text to the page; `uv run python3 <skill_path>/scripts/restyle.py mark <page> --style <target>` updates the `style:` and `updated:` frontmatter keys; `git -C wiki add <page> && git -C wiki commit -m "restyle: <relpath> to <target>"` — one commit per page so individual rewrites are git-revertable.
    - If reject: append a one-liner to `.curator/log.md` under `## restyle-rejections` with the page and the reason; skip — no commit.
 
@@ -642,7 +642,7 @@ When invoked (slash command `/restyle <target>` or natural language):
 
 **Cost discipline.** Restyle hits *every* page, not just worst-scoring ones — for a 200-page wiki this is ~200 worker invocations (~$5-20 at Sonnet rates). Use `--dry-run` semantics via `restyle.py plan` to print the candidate count + cost estimate before any worker fires; validate quality with `--limit 20` on a small batch first if you're unsure about the rewrite character.
 
-**Why not run this inside CURATE?** CURATE picks worst-scoring pages by composite score. A caveman-compressed page that's well-cited, well-linked, and unbloated scores fine; CURATE never touches it. Restyle inverts the selection — every page is in scope — which is the only way a one-time-style-flip terminates.
+**Why not run this inside CURATE?** CURATE picks worst-scoring pages by composite score. A compressed page that's well-cited, well-linked, and unbloated scores fine; CURATE never touches it. Restyle inverts the selection — every page is in scope — which is the only way a one-time-style-flip terminates.
 
 ### SCAN — "scan project dirs", "/scan", "ingest changes"
 
@@ -689,28 +689,22 @@ CURATE cannot edit any skill script at runtime. All scripts that score, gate, ev
 - **Append-only:** `.curator/log.md`. Never rewrite history to inflate rates. Script improvement ideas land under `## improvement-suggestions` as prose notes — no agent-generated code enters the execution path.
 - **Fresh-context rule:** the reviewer MUST run in a fresh Agent with clean context — never the same agent that planned or generated the content.
 
-### Caveman integration
+### Write-time compression
 
-Write-time compression happens **inside the worker**. The worker prompt in `.curator/prompts.md` inlines caveman's rules (the "Rules" and "Intensity" sections of [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)'s SKILL.md) so each worker emits prose at the target level in the same pass it writes content. No `caveman_compressor` subagent, no post-processing pass — zero Agent spawns for compression.
-
-**Why we inline instead of compose.** Anthropic's general guidance is to compose skills rather than replicate them. We deliberately break that guidance here for two concrete reasons:
-1. **Auto-Clarity short-circuit.** Caveman's SKILL.md has an Auto-Clarity clause that disables compression on code / JSON output. The worker's return is a JSON object (`{"page":..., "new_text":...}`) so any in-worker `Skill(caveman, ...)` invocation saw structured output and declined to compress — silent no-op, verified empirically across dozens of epochs.
-2. **Hot-loop cold-start tax.** A dedicated compressor subagent per page (or even batched per level per wave) pays a per-spawn cost — tool schema load, skill search, system prompt, caveman skill read — that dominates the actual compression work in a loop firing waves every minute.
-
-The inlined ruleset is small (~6 preservation rules plus the lite / ultra intensity guides) and marked as borrowed in the worker template. Correctness is the worker's responsibility, not a downstream pass.
+Compression rules are inlined verbatim in the worker template (`.curator/prompts.md`, "Compression" block in the worker section). Each worker emits prose at the configured level in the same pass it writes content — no separate compression subagent, no post-processing pass, zero extra Agent spawns.
 
 Level selection comes from `.curator/config.json`:
 - `analyses/` pages → `write_analysis` (default `lite`) — no filler/hedging, articles and full sentences kept.
 - all other page types (`concepts/`, `entities/`, `sources/`, `evidence/`, `facts/`) → `write_other` (default `ultra`) — articles dropped, fragments OK, abbreviations, causal arrows, telegraphic register.
 
-**Read-time (composition path, kept).** The orchestrator may invoke the caveman skill directly via `Skill(skill: "caveman", args: "<level>")` when reading large vault passages into its own context before composing briefs. This is the standard compose-don't-replicate path — caveman runs in the orchestrator's plain-prose context, Auto-Clarity doesn't engage, and the invocation is one-shot (no hot-loop overhead). Compounding: pages already written at ultra are compressed on disk, so every future read is already cheap.
+Read-time compression is opportunistic: the orchestrator can choose to read pre-compressed pages directly (cheap because the ratchet keeps them at the configured density on disk) without invoking any separate compressor.
 
-**No-caveman fallback.** If the caveman skill isn't installed, the inlined rules in the worker prompt still apply — write-time compression is prompt-driven, not skill-driven. Only the optional read-time composition path becomes a no-op; the loop is otherwise unaffected.
+Historical note on the ruleset's origin and why it's no longer a separately-installed companion skill: see `docs/skill-rationale.md`.
 
 ## Writing rules
 
 - **Never modify vault files** (only add new ones + their `.extracted.md`).
-- **Concise prose.** Short sentences. No filler. Every sentence carries information. If caveman is installed, workers write at the configured level (ultra for most page types, lite for analyses). If not installed, write clean standard prose — the same rules apply, just not mechanically enforced.
+- **Concise prose.** Short sentences. No filler. Every sentence carries information. Workers write at the configured `compression` level (default ultra for most page types, lite for analyses).
 - **Cite every factual claim:** `(vault:papers/attention.extracted.md)`
 - **Link generously:** `[[entity-name]]` for every mention that has or deserves a page. Always hyphen-case.
 - **Filename + display-title:** workers and reviewers that create or rename pages MUST use `naming.py` (`citation_stem`, `source_display_title`, `TYPE_PREFIX`). No ad-hoc schemes.

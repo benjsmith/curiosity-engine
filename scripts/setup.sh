@@ -1152,7 +1152,7 @@ refresh_template_md "$TEMPLATE_DIR/prompts.md" ".curator/prompts.md"
 # config.json: copy if missing; otherwise merge any keys the template
 # has added since the user's config was last written. Additive only —
 # never overwrites a value the user has tuned, and descends into nested
-# dicts (e.g. the `caveman` block) so added sub-keys land too.
+# dicts (e.g. the `compression` block) so added sub-keys land too.
 #
 # Includes a one-shot migration: if the existing config still uses the
 # legacy top-level `worker_model` / `reviewer_model` shape (pre-preset
@@ -1189,6 +1189,16 @@ if "presets" not in existing and ("worker_model" in existing or "reviewer_model"
     if reviewer is not None: block["reviewer_model"] = reviewer
     existing["active_preset"] = name
     existing["presets"] = {name: block}
+    migrated = True
+
+# Rename legacy `caveman` block → `compression`. The ruleset's lineage is
+# in docs/skill-rationale.md; the companion skill is no longer used.
+if "caveman" in existing and "compression" not in existing:
+    existing["compression"] = existing.pop("caveman")
+    migrated = True
+elif "caveman" in existing:
+    # Both present (user has migrated already + a stray); drop the legacy.
+    existing.pop("caveman")
     migrated = True
 
 added = []
@@ -1446,39 +1456,10 @@ if [ ! -d wiki/.git ]; then
     echo "  Initialized wiki git repo"
 fi
 
-# Optional: install the caveman compression skill.
-# Caveman strips predictable grammar tokens (articles, filler adverbs, etc.)
-# so the curator burns less context. Used at read-time (ultra: ~30-40% fewer
-# input tokens) and write-time (ultra for most pages, lite for analyses).
-if _is_interactive; then
-    echo ""
-    printf "Install caveman skill to save tokens by using terse telegraphic language for reads and writes? [Y/i/n] "
-    read -r reply || reply="y"
-    case "$reply" in
-        ""|y|Y|yes|YES)
-            if command -v npx >/dev/null 2>&1; then
-                echo "  Installing JuliusBrussee/caveman via npx skills (global, symlinks) ..."
-                npx skills add -g -y JuliusBrussee/caveman || echo "  (install failed — re-run: npx skills add -g -y JuliusBrussee/caveman)"
-                echo "  Levels configured in .curator/config.json:"
-                echo "    read=ultra, write_analysis=lite, write_other=ultra"
-            else
-                echo "  npx not found. Install later: npx skills add -g -y JuliusBrussee/caveman"
-            fi
-            ;;
-        i|I)
-            if command -v npx >/dev/null 2>&1; then
-                echo "  Running interactive install: npx skills add JuliusBrussee/caveman"
-                echo "  (all CLI options will be shown to you)"
-                npx skills add JuliusBrussee/caveman </dev/tty || echo "  (install failed — re-run: npx skills add JuliusBrussee/caveman)"
-            else
-                echo "  npx not found. Install later: npx skills add JuliusBrussee/caveman"
-            fi
-            ;;
-        *)
-            echo "  Skipping caveman. Curator works without it (see SKILL.md)."
-            ;;
-    esac
-fi
+# Write-time compression rules live inlined in template/prompts.md and
+# don't require a separately-installed companion skill. The ruleset
+# originated from JuliusBrussee/caveman; see docs/skill-rationale.md
+# for why it's no longer a separate dependency.
 
 # Optional: semantic vault search (sentence-transformers + sqlite-vec).
 # Adds ~200MB of model weights and enables hybrid FTS5 + cosine search.

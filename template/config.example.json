@@ -45,6 +45,6 @@
     "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
     "notes_semantic_dedup_threshold": 0.92,
     "cluster_scope_threshold": 500,
-    "caveman": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
+    "compression": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
   }
 }

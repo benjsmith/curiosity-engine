@@ -1,14 +1,14 @@
 ---
-description: One-shot wave that rewrites every wiki page in a target style (prose / caveman-lite / caveman-ultra).
+description: One-shot wave that rewrites every wiki page in a target style (prose / lite / ultra).
 ---
 
-Restyle is bidirectional: hydrate a caveman-written wiki to readable prose, or compress a prose wiki to caveman if you prefer the denser register. Resumable + idempotent via a per-page `style:` frontmatter marker.
+Restyle is bidirectional: hydrate a compressed wiki to readable prose, or compress a prose wiki back to the denser register. Resumable + idempotent via a per-page `style:` frontmatter marker.
 
 **Target** (one required, in `$ARGUMENTS`):
 
 - `prose` (aliases: `prose-v1`, `hydrate`, `readable`) → `prose-v1`. Succinct readable English. The default schema rule.
-- `caveman-lite` (aliases: `lite`, `caveman-lite-v1`) → `caveman-lite-v1`. Terse, full sentences with articles.
-- `caveman-ultra` (aliases: `ultra`, `caveman`, `caveman-ultra-v1`) → `caveman-ultra-v1`. Telegraphic.
+- `lite` (aliases: `caveman-lite`, `caveman-lite-v1`) → `caveman-lite-v1`. Terse, full sentences with articles. (Style id retained historically.)
+- `ultra` (aliases: `caveman-ultra`, `caveman`, `caveman-ultra-v1`) → `caveman-ultra-v1`. Telegraphic. (Style id retained historically.)
 
 If `$ARGUMENTS` is empty or ambiguous, ask the user which target before doing anything else.
 
@@ -16,7 +16,7 @@ If `$ARGUMENTS` is empty or ambiguous, ask the user which target before doing an
 
 **Action.** Follow SKILL.md § RESTYLE step by step:
 
-1. **Check `caveman.enabled`** in `.curator/config.json`. If `true` AND the target is prose, warn the user and offer to flip the config first. Wait for confirmation.
+1. **Check `compression`** in `.curator/config.json`. If a `compression` block is present AND the target is prose, warn the user and offer to remove/relax the block first. Wait for confirmation.
 
 2. **Plan**:
    ```bash
