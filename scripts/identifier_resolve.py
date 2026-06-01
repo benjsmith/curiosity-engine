@@ -182,6 +182,65 @@ def _resolve_gene(symbol: str, endpoint: str) -> tuple:
         return "offline", {}
 
 
+# ---- Entity resolver registry (U1) ----
+#
+# Generalises the two concrete resolvers above into a registry keyed by
+# entity_class, so a domain-agnostic entity (a person, an org, a protein)
+# can opt into external-authority resolution without each call site
+# special-casing chemicals vs genes. Classes with no registered authority
+# resolve "local-only" — the IRI is still minted (workspace-stable), it
+# just carries no external same_as. The single audited egress site
+# (`_http_get_json`) is unchanged; this only routes to it.
+
+def _same_as_chemical(name: str, endpoint: str) -> tuple:
+    status, data = _resolve_chemical(name, endpoint)
+    same_as = {}
+    if status == "ok":
+        if data.get("cid") is not None:
+            same_as["pubchem"] = f"CID{data['cid']}"
+        if data.get("inchikey"):
+            same_as["inchikey"] = data["inchikey"]
+    return status, same_as
+
+
+def _same_as_gene(symbol: str, endpoint: str) -> tuple:
+    status, data = _resolve_gene(symbol, endpoint)
+    same_as = {}
+    if status == "ok":
+        if data.get("ensembl_id"):
+            same_as["ensembl"] = data["ensembl_id"]
+        if data.get("uniprot_id"):
+            same_as["uniprot"] = data["uniprot_id"]
+        if data.get("entrez_id") is not None:
+            same_as["entrez"] = str(data["entrez_id"])
+    return status, same_as
+
+
+# entity_class → (config endpoint key, builder(name, endpoint) -> (status, same_as))
+ENTITY_RESOLVERS = {
+    "chemical": ("chemicals_endpoint", _same_as_chemical),
+    "gene": ("genes_endpoint", _same_as_gene),
+}
+
+
+def resolve_entity_same_as(entity_class: str, name: str,
+                           cfg: Optional[dict] = None) -> tuple:
+    """Resolve an entity to external same_as ids via the registered
+    authority for its class. Returns (status, same_as_dict).
+
+    Classes with no registered resolver return ("local-only", {}) — no
+    network. Honours the same enabled/endpoint config as the chemical/gene
+    flow; refuses the network when resolution is disabled."""
+    cfg = cfg or _load_config()
+    entry = ENTITY_RESOLVERS.get((entity_class or "").lower())
+    if entry is None:
+        return "local-only", {}
+    if not cfg["enabled"]:
+        return "disabled", {}
+    endpoint_key, builder = entry
+    return builder(name, cfg[endpoint_key])
+
+
 # ---- Queue traversal ----
 
 def _aggregate_queue() -> dict:

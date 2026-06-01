@@ -344,6 +344,53 @@ def table_citation_risk(wiki_dir: Path) -> dict:
     return out
 
 
+def table_aggregates(wiki_dir: Path) -> dict:
+    """Lightweight structured-data aggregates for the planner (U2).
+
+    Per class table: row count and declared (non-reserved) column count,
+    plus a corpus total. Gives the orchestrator a real read of how much
+    structured data exists — and where it concentrates — instead of
+    inferring it from prose. Read-only; empty when there are no class
+    tables. Richer questions go through `query_router.py sql`.
+    """
+    db_path = wiki_dir.parent / ".curator" / "tables.db"
+    if not db_path.exists():
+        return {}
+    try:
+        import sqlite3 as _s3
+    except ImportError:
+        return {}
+    try:
+        # Plain connect + query_only, matching table_citation_risk above.
+        # `mode=ro` hangs on a WAL db whose -shm needs write access; this
+        # gives the same read-only guarantee without that footgun.
+        conn = _s3.connect(str(db_path), timeout=5)
+        conn.execute("PRAGMA query_only=ON")
+    except _s3.Error:
+        return {}
+    out = {}
+    total_rows = 0
+    try:
+        names = [r[0] for r in conn.execute(
+            "SELECT table_name FROM _schema_meta ORDER BY table_name")]
+        for name in names:
+            try:
+                rows = conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+                cols = [c[1] for c in conn.execute(f'PRAGMA table_info("{name}")')]
+            except _s3.Error:
+                continue
+            declared = [c for c in cols if not c.startswith("_")]
+            out[name] = {"rows": rows, "columns": len(declared)}
+            total_rows += rows
+    except _s3.Error:
+        conn.close()
+        return {}
+    conn.close()
+    if out:
+        out["_total_rows"] = total_rows
+    return out
+
+
 def _format_frontier(vf) -> dict:
     uncited, total, uncited_count = vf
     return {
@@ -407,6 +454,107 @@ def wave_scope(wiki_dir: Path, worst_pages: list, threshold: int) -> dict:
         return {"seed": seed, "pages": sorted(scope), "size": len(scope)}
     except Exception:
         return {"seed": seed, "pages": [seed], "size": 1}
+
+
+def _two_hop_neighborhood(conn, seed: str) -> set:
+    """2-hop wikilink neighborhood of `seed`, both directions. Mirrors
+    wave_scope's traversal; factored out so shard_export can reuse it for
+    an explicit seed without the threshold gate."""
+    r1 = conn.execute(
+        "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
+        "WHERE a.path = $p OR b.path = $p "
+        "RETURN DISTINCT a.path, b.path", {"p": seed})
+    hop1 = {seed}
+    while r1.has_next():
+        a, b = r1.get_next()
+        hop1.add(a)
+        hop1.add(b)
+    r2 = conn.execute(
+        "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
+        "WHERE a.path IN $ps OR b.path IN $ps "
+        "RETURN DISTINCT a.path, b.path", {"ps": list(hop1)})
+    scope = set(hop1)
+    while r2.has_next():
+        a, b = r2.get_next()
+        scope.add(a)
+        scope.add(b)
+    return scope
+
+
+def shard_export(wiki_dir: Path, seed: str) -> dict:
+    """Emit a bounded sub-wiki *shard* around `seed`, with its seam IRIs (U4).
+
+    Repurposes wave_scope's 2-hop neighborhood from "keep a wave coherent"
+    to "keep a shard bounded": the neighborhood is a candidate sub-wiki, and
+    the **seam entities** — entity pages inside the shard that carry an
+    `iri:` (U1) and are wikilinked from pages *outside* the shard — are the
+    federation join points that let the shard rejoin its parent. Those IRIs
+    are exactly what `curiosity-merge` reconciles on.
+
+    Unlike wave_scope this is an explicit operation (no page-count gate).
+    Returns a candidate shard, never auto-splits — sharding is a human call.
+    """
+    graph_path = wiki_dir.parent / ".curator" / "graph.kuzu"
+    if not graph_path.exists():
+        return {"error": "no graph.kuzu — run graph.py rebuild first"}
+    try:
+        import kuzu
+    except ImportError:
+        return {"error": "kuzu not installed"}
+    try:
+        conn = kuzu.Connection(kuzu.Database(str(graph_path), read_only=True))
+    except TypeError:
+        conn = kuzu.Connection(kuzu.Database(str(graph_path)))
+    except Exception as e:
+        return {"error": f"cannot open graph: {e}"}
+
+    scope = _two_hop_neighborhood(conn, seed)
+    if seed not in scope:
+        scope.add(seed)
+
+    seam_entities = []
+    iri_count = 0
+    for path in sorted(scope):
+        if "/entities/" not in path and not path.startswith("entities/"):
+            continue
+        page = wiki_dir / path
+        if not page.exists():
+            continue
+        try:
+            fm, _ = read_frontmatter(page.read_text())
+        except OSError:
+            continue
+        iri = fm.get("iri")
+        if not iri:
+            continue
+        iri_count += 1
+        # External linkers: pages OUTSIDE the shard that link to this entity.
+        try:
+            r = conn.execute(
+                "MATCH (o:WikiPage)-[:WikiLink]->(e:WikiPage) "
+                "WHERE e.path = $e AND NOT o.path IN $scope "
+                "RETURN DISTINCT o.path", {"e": path, "scope": list(scope)})
+        except Exception:
+            continue
+        external = []
+        while r.has_next():
+            external.append(r.get_next()[0])
+        if external:
+            seam_entities.append({"page": path, "iri": iri,
+                                   "external_linkers": sorted(external)})
+    return {
+        "seed": seed,
+        "shard_size": len(scope),
+        "pages": sorted(scope),
+        "iri_entities_in_shard": iri_count,
+        "seam_entities": seam_entities,
+        "note": ("Candidate sub-wiki shard. seam_entities carry the stable "
+                 "IRIs that federate this shard back to its parent — the join "
+                 "keys curiosity-merge reconciles on. Sharding is a human "
+                 "decision; this never auto-splits. Entities without an iri: "
+                 "are not yet federation-ready (mint via "
+                 "identifier_cache.py mint-entity)."),
+    }
 
 
 def connection_candidates(wiki_dir: Path, limit: int = 5,
@@ -602,9 +750,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wiki", nargs="?", default="wiki")
     ap.add_argument("--last-n", type=int, default=5)
+    ap.add_argument("--shard", default=None,
+                    help="seed page path → emit a federation shard export "
+                         "(U4) instead of the epoch summary")
     args = ap.parse_args()
 
     wiki_dir = Path(args.wiki).resolve()
+
+    # U4 — explicit shard export. Bypasses the full epoch summary; emits the
+    # bounded neighborhood + seam IRIs for the given seed page.
+    if args.shard:
+        print(json.dumps(shard_export(wiki_dir, args.shard), indent=2))
+        return
 
     # Single pass over wiki pages: read each file exactly once and share
     # the dict across cluster_analysis / vault_frontier / page_type_counts.
@@ -643,6 +800,7 @@ def main():
         "saturation": saturation_check(wiki_dir),
         "orphan_dominance": orphan_dominance(results),
         "table_citation_risk": table_citation_risk(wiki_dir),
+        "table_aggregates": table_aggregates(wiki_dir),
         "wave_scope": wave_scope(wiki_dir, non_source, scope_threshold),
         "recent_log": recent_log_entries(wiki_dir, args.last_n),
         "project_activity": project_activity(wiki_dir, pages_text, results),

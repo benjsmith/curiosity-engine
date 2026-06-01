@@ -2,6 +2,24 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-06-01 — v0.5.0 — U1–U5 empiricist-EDM upgrades
+
+Implements the five additive upgrades from [`docs/ce-as-edm.md`](docs/ce-as-edm.md), scoped to CE-as-research-wiki (no EDM platform, no maplib/RDF). Each deepens a capability CE already had half-built; all are backward-compatible and optional. Full design + verification log in [`docs/u1-u5-implementation-plan.md`](docs/u1-u5-implementation-plan.md). Verified against a real 382-page wiki and controlled fixtures.
+
+**U1 — Domain-agnostic identity layer.** Generalises the chemical/gene identifier cache into an entity IRI service. New `entities` table in `.curator/identifiers.db`; `identifier_cache.py mint-entity` / `lookup-entity` mint workspace-stable IRIs (`ce:<class>:<workspace>:<slug>`) deterministically — idempotent, stable hash suffix on collision, `same_as` merges across mints from one page. Resolver registry in `identifier_resolve.py` (chemical/gene wired; other classes local-only). New `iri` / `same_as` / `entity_class` frontmatter keys (`naming.py`). The IRI never keys on an external id, so upstream re-resolution can't orphan a citation.
+
+**U2 — Deterministic query substrate.** New `query_router.py` promotes `tables.db` (SQLite) and `graph.kuzu` (Cypher) from curator scratch to a first-class query verb: `sql` / `cypher` / `introspect` / `classify`. Both engines opened **read-only, doubly enforced** (SQLite `PRAGMA query_only`; kuzu `read_only=True`; plus a statement allowlist — SELECT/WITH only, no Cypher writes). Structured/structural questions hit the engine; only synthesis spends tokens. `epoch_summary.py` gains a `table_aggregates` planner hook. Note: `tables.db` is SQLite, not DuckDB — scoped accordingly.
+
+**U3 — Declared shapes (curate-time).** `table:` columns gain optional `units` / `constraint` / `source_required`. A `units` column is a measurement: every row must carry a value *and* a vault-tier source. New hash-guarded `shape_check.py`; enforced at insert time (`tables.py`) **and** at the citation ratchet (`verify_table_shapes` in `score_diff.py` rejects a page newly citing a shape-violating row). Constraints: `>x`, `>=x`, `<x`, `<=x`, `==x`, `!=x`, ranges `[lo,hi]`/`(lo,hi)`. Pages declaring no shape keys are unaffected.
+
+**U4 — Federation by identity.** `epoch_summary.py --shard <seed>` repurposes the 2-hop `wave_scope` neighborhood as a sharding boundary: emits a bounded candidate sub-wiki plus its **seam entities** (IRI-bearing pages inside the shard linked from outside it) — the join keys `curiosity-merge` reconciles on. Never auto-splits. Federation-by-identity contract documented in [`docs/multi-project.md`](docs/multi-project.md).
+
+**U5 — Incremental materialisation.** New hash-guarded `derived_cache.py` generalises the per-page score cache into a dependency-fingerprint cache for any derived fact (aggregates, closures). `table_fingerprint` / `graph_fingerprint` / `memoize`; O(changed) invalidation. Demonstrated consumer: `cached-aggregate` (memoised read-only aggregate, busts on row churn).
+
+**Incidental fixes.** Read-only SQLite opens use `PRAGMA query_only` instead of the `mode=ro` URI, which hangs on a live WAL-mode db whose `-shm` needs write access. `shape_check.py` and `derived_cache.py` added to the `evolve_guard.sh` hash manifest.
+
+**Cross-repo follow-up.** IRI-keyed reconciliation and shard ingestion land in the [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge) companion skill; this release ships the stable `entities`-table contract it consumes.
+
 ## 2026-05-16 — v0.4.0 — project-directory ingest + drop ci-mode Action template
 
 **Two threads in one release.**

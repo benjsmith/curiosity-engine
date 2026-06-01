@@ -126,6 +126,17 @@ ALLOWED_FM_KEYS = frozenset({
     # default-mode activity score can filter them out (current ingests
     # are unset / "current"). See docs/multi-project.md.
     "projects", "description", "ingest_kind",
+    # Entity identity (U1, on `wiki/entities/` pages). `iri` is the
+    # workspace-stable minted identifier (`ce:<class>:<workspace>:<slug>`)
+    # recorded by `identifier_cache.py mint-entity`; it is the join key
+    # `curiosity-merge` reconciles on, replacing slug matching. `same_as`
+    # is a bracket-list of `authority:id` pairs (e.g.
+    # `[pubchem:CID2244, wikidata:Q18253]`) holding external canonical
+    # ids — owl:sameAs-style links that never gate identity. `entity_class`
+    # names the resolution domain (chemical|gene|protein|person|org|
+    # concept|...) and selects which authority resolver, if any, applies.
+    # All three roundtrip through read_frontmatter's bracket-list parser.
+    "iri", "same_as", "entity_class",
 })
 
 TYPE_PREFIX = {

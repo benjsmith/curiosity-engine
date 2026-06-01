@@ -103,6 +103,9 @@ except ImportError:
     )
     sys.exit(2)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from shape_check import check_row, has_shape_constraints  # noqa: E402
+
 
 DB_PATH = Path(".curator/tables.db")
 
@@ -174,6 +177,14 @@ def _normalize_columns(schema: dict) -> List[dict]:
             # apply a RENAME COLUMN instead of drop+add. Preserving either
             # spelling — YAML authors sometimes avoid leading-underscore keys.
             "_alias": c.get("_alias") or c.get("alias"),
+            # U3 shape constraints (optional; absent = no shape gate).
+            # `units` marks a measurement column (value + vault source
+            # required per row); `constraint` is a per-row numeric bound;
+            # `source_required` gates provenance to vault-tier. Storage type
+            # is unaffected — these drive shape_check.py, not the DDL.
+            "units": c.get("units"),
+            "constraint": c.get("constraint"),
+            "source_required": bool(c.get("source_required", False)),
         })
     return out
 
@@ -566,6 +577,20 @@ def cmd_insert(name: str, payload_json: str) -> int:
         conn.close()
         print(json.dumps({"error": f"validation failed: {msg}"}))
         return 2
+
+    # U3 — declared shape constraints (units / constraint / source_required).
+    # Skip the scan for the common no-shapes case. `_provenance` was popped
+    # off the payload above, so re-attach it for the source-tier check.
+    if has_shape_constraints(columns):
+        shape_row = dict(payload, _provenance=provenance)
+        shape_violations = check_row(columns, shape_row)
+        if shape_violations:
+            conn.close()
+            print(json.dumps({
+                "error": "shape violation: " + "; ".join(shape_violations),
+                "shape_violations": shape_violations,
+            }))
+            return 2
 
     pk = _primary_key_col(columns)
     if pk and pk not in payload:

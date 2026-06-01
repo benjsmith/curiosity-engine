@@ -172,6 +172,54 @@ persisting and inlines resolutions in the synthesis. Cache lives
 at `.curator/identifiers.db`. Air-gapped: set
 `CURIOSITY_ENGINE_OFFLINE=1` for cache-only mode.
 
+Entity identity (optional, U1). An `entities/` page may carry a
+stable minted IRI so reconciliation keys on identity, not slug.
+`identifier_cache.py mint-entity --entity-class <class> --title <t>
+[--same-as '[auth:id, ...]'] [--page-path <p>]` mints
+`ce:<class>:<workspace>:<slug>` deterministically (idempotent;
+collisions get a stable hash suffix) into the `entities` table, and
+the page records it in frontmatter:
+
+```
+entity_class: chemical
+iri: ce:chemical:<workspace>:aspirin
+same_as: [pubchem:CID2244, wikidata:Q18216]
+```
+
+The IRI is workspace-stable and never keys on an external id —
+external canonical ids live in `same_as` (an owl:sameAs-style map)
+and never gate identity, so upstream re-resolution can't orphan a
+citation. Classes with a registered authority (chemical, gene)
+populate `same_as` from the gated resolver; other classes are
+local-only (IRI minted, no external link, no network). `same_as`
+merges across mints from the same `page_path`. `curiosity-merge`
+reconciles pages sharing an `iri:` (or an overlapping `same_as`
+pair) across workspaces regardless of slug.
+
+Declared shapes (optional, U3). A `table:` column may carry shape
+constraints that are enforced mechanically — at insert time and at
+the citation ratchet — in CE's own hash-guarded Python (`shape_check.py`),
+never a universal schema:
+
+```
+columns:
+  - name: ic50
+    type: real
+    units: nM                 # marks a MEASUREMENT column
+    constraint: ">0"          # per-row numeric bound
+    source_required: true     # value must trace to a vault source
+```
+
+`units` makes the column a measurement: every row must carry a value
+*and* a vault-tier `_provenance` (the "source page"). `constraint`
+bounds each value (`>x`, `>=x`, `<x`, `<=x`, `==x`, `!=x`, or ranges
+`[lo,hi]` / `(lo,hi)`). `source_required` gates provenance to vault
+tier when the column has a value. `tables.py insert` rejects violating
+rows; `score_diff.py` rejects a page that newly cites a shape-violating
+row; `shape_check.py check <entity-page>` audits a whole table. Columns
+that declare no shape keys are unaffected — validation is local and
+per-class, the emergent schema validated without becoming universal.
+
 ## Rules
 - Write at the configured `compression` level: ultra for most page
   types (dense, telegraphic), lite for `analyses/` (human-comfortable).

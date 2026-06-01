@@ -176,6 +176,61 @@ def verify_table_citations(old_text: str, new_text: str,
     return suspects
 
 
+def verify_table_shapes(old_text: str, new_text: str,
+                         tables_db: Path) -> list:
+    """For each newly-added table-row citation, verify the cited row passes
+    the U3 shape constraints declared on its table (units / constraint /
+    source_required). Parallels verify_table_citations: that checks the row
+    *exists*; this checks it's shape-valid. Tables with no shape keys are
+    skipped. Returns a list of suspects (empty = all OK)."""
+    if not tables_db.exists():
+        return []
+    added = [(t, k, v) for (t, k, v) in
+             (set(_table_citations(new_text)) - set(_table_citations(old_text)))
+             if k == "id"]
+    if not added:
+        return []
+    from shape_check import check_row, has_shape_constraints  # noqa: E402
+    import tables as _tables  # noqa: E402
+    try:
+        conn = sqlite3.connect(str(tables_db), timeout=5)
+        conn.execute("PRAGMA query_only=ON")
+    except sqlite3.Error:
+        return []
+    suspects = []
+    schema_cache: dict = {}
+    for (name, _kind, value) in added:
+        if name not in schema_cache:
+            row = conn.execute(
+                "SELECT schema_json FROM _schema_meta WHERE table_name = ?",
+                (name,)).fetchone()
+            try:
+                schema_cache[name] = _tables._normalize_columns(
+                    json.loads(row[0])) if row else []
+            except (json.JSONDecodeError, TypeError):
+                schema_cache[name] = []
+        cols = schema_cache[name]
+        if not cols or not has_shape_constraints(cols):
+            continue
+        pk = next((c["name"] for c in cols if c["pk"]), None)
+        if not pk:
+            continue
+        try:
+            cur = conn.execute(
+                f'SELECT * FROM "{name}" WHERE "{pk}" = ? LIMIT 1', (value,))
+            r = cur.fetchone()
+            if r is None:
+                continue  # existence is verify_table_citations' job
+            violations = check_row(cols, dict(zip([d[0] for d in cur.description], r)))
+            if violations:
+                suspects.append({"citation": f"table:{name}#id={value}",
+                                  "shape_violations": violations})
+        except sqlite3.Error:
+            continue
+    conn.close()
+    return suspects
+
+
 def _citations_set(text: str) -> set:
     """Extract the set of vault paths cited in text."""
     return set(CITATION_RE.findall(text))
@@ -490,6 +545,14 @@ def main():
                            + ", ".join(s["citation"] for s in table_suspects))
                 result.update({"accept": False, "reason": reason,
                                 "table_suspects": table_suspects})
+        if accept and args.tables_db:
+            shape_suspects = verify_table_shapes("", new_text, Path(args.tables_db))
+            if shape_suspects:
+                accept = False
+                reason = ("shape-violating table citations: "
+                           + ", ".join(s["citation"] for s in shape_suspects))
+                result.update({"accept": False, "reason": reason,
+                                "shape_suspects": shape_suspects})
         if accept and write:
             page.parent.mkdir(parents=True, exist_ok=True)
             page.write_text(new_text)
@@ -536,6 +599,15 @@ def main():
                        + ", ".join(s["citation"] for s in table_suspects))
             result.update({"accept": False, "reason": reason,
                             "table_suspects": table_suspects})
+
+    if accept and args.tables_db:
+        shape_suspects = verify_table_shapes(old_text, new_text, Path(args.tables_db))
+        if shape_suspects:
+            accept = False
+            reason = ("shape-violating table citations: "
+                       + ", ".join(s["citation"] for s in shape_suspects))
+            result.update({"accept": False, "reason": reason,
+                            "shape_suspects": shape_suspects})
 
     if accept:
         before_bad = set(_bad_wikilink_targets(old_text))

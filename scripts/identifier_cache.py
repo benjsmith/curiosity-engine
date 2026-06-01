@@ -102,6 +102,22 @@ def _connect() -> sqlite3.Connection:
             fetched_at TEXT NOT NULL
         )
     """)
+    # U1 — domain-agnostic entity identity. `chemicals`/`genes` above are
+    # per-authority resolution caches; `entities` is the generalised IRI
+    # registry that any entity page can mint into, regardless of whether
+    # an external authority exists. The IRI is workspace-stable and minted
+    # deterministically (see mint_iri); external canonical ids live in
+    # same_as_json as an owl:sameAs-style map and never gate identity.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS entities (
+            iri TEXT PRIMARY KEY,
+            entity_class TEXT NOT NULL,
+            page_path TEXT,
+            same_as_json TEXT,
+            status TEXT NOT NULL,
+            resolved_at TEXT NOT NULL
+        )
+    """)
     return conn
 
 
@@ -183,6 +199,141 @@ def write_gene(conn, symbol_norm: str, *,
          status, _now_iso()),
     )
     conn.commit()
+
+
+# ---- Entity identity (U1) ----
+
+import hashlib  # noqa: E402 — local to the identity section
+
+
+def _slug(text: str) -> str:
+    """Filename/IRI-safe slug: lowercase, non-alphanumeric runs → single
+    hyphen, stripped. Deterministic; no network, no randomness."""
+    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower())
+    return s.strip("-")
+
+
+def workspace_id(explicit: Optional[str] = None) -> str:
+    """The workspace token embedded in minted IRIs.
+
+    Resolution order: explicit arg → `workspace_id` in .curator/config.json
+    → basename of the current working directory. Workspace-stable (it does
+    not change as pages are added); documented as such. Renaming the
+    workspace directory changes it, which is why identity is keyed on the
+    minted IRI, not on the directory."""
+    if explicit:
+        return _slug(explicit)
+    cfg = Path(".curator/config.json")
+    if cfg.exists():
+        try:
+            ws = json.loads(cfg.read_text()).get("workspace_id")
+            if ws:
+                return _slug(str(ws))
+        except Exception:
+            pass
+    return _slug(Path.cwd().name) or "workspace"
+
+
+def read_entity(conn, iri: str) -> Optional[dict]:
+    cur = conn.execute(
+        "SELECT iri, entity_class, page_path, same_as_json, status, "
+        "resolved_at FROM entities WHERE iri = ?",
+        (iri,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    try:
+        same_as = json.loads(row[3]) if row[3] else {}
+    except (json.JSONDecodeError, TypeError):
+        same_as = {}
+    return {
+        "iri": row[0], "entity_class": row[1], "page_path": row[2],
+        "same_as": same_as, "status": row[4], "resolved_at": row[5],
+    }
+
+
+def write_entity(conn, iri: str, *, entity_class: str,
+                 page_path: Optional[str] = None,
+                 same_as: Optional[dict] = None,
+                 status: str = "ok") -> None:
+    """Upsert an entity IRI. same_as is a {authority: id} map serialised to
+    JSON. Merges into any existing same_as rather than clobbering it."""
+    existing = read_entity(conn, iri)
+    merged = dict(existing["same_as"]) if existing else {}
+    if same_as:
+        merged.update({k: v for k, v in same_as.items() if v is not None})
+    if page_path is None and existing:
+        page_path = existing["page_path"]
+    conn.execute(
+        "INSERT OR REPLACE INTO entities(iri, entity_class, page_path, "
+        "same_as_json, status, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (iri, entity_class, page_path,
+         json.dumps(merged, separators=(",", ":"), sort_keys=True),
+         status, _now_iso()),
+    )
+    conn.commit()
+
+
+def mint_iri(entity_class: str, title: str, *,
+             workspace: Optional[str] = None,
+             same_as: Optional[dict] = None,
+             page_path: Optional[str] = None) -> str:
+    """Deterministically mint a workspace-stable IRI for an entity.
+
+    Form: ``ce:<entity_class>:<workspace>:<slug>``. Identity never keys on
+    an external id — those live in same_as — so re-resolution upstream can
+    never orphan a citation that pinned the IRI.
+
+    Collision handling is deterministic (no UUID/random): if the base IRI is
+    already held by a *different* identity (different same_as or page_path),
+    a short stable hash of a disambiguator is appended. Same identity →
+    same IRI returned (idempotent)."""
+    ws = workspace_id(workspace)
+    cls = _slug(entity_class) or "entity"
+    base_slug = _slug(title) or "unnamed"
+    base = f"ce:{cls}:{ws}:{base_slug}"
+
+    conn = _connect()
+    try:
+        existing = read_entity(conn, base)
+        if existing is None:
+            return base
+        # Same identity? Reuse the base IRI. A page is one entity, so a
+        # matching page_path reconciles even when the two mints contribute
+        # disjoint authorities (pubchem resolved now, wikidata later).
+        # Failing that, any shared same_as pair means the same real-world
+        # entity under different page paths.
+        same_identity = False
+        if page_path and existing["page_path"]:
+            same_identity = page_path == existing["page_path"]
+        if not same_identity and same_as and existing["same_as"]:
+            shared = set(same_as.items()) & set(existing["same_as"].items())
+            same_identity = bool(shared)
+        if same_identity:
+            return base
+        # Genuine collision between distinct entities → deterministic suffix.
+        disambig = ""
+        if same_as:
+            disambig = next(iter(sorted(f"{k}:{v}" for k, v in same_as.items())), "")
+        disambig = disambig or page_path or title
+        suffix = hashlib.sha1(disambig.encode("utf-8")).hexdigest()[:6]
+        return f"{base}-{suffix}"
+    finally:
+        conn.close()
+
+
+def lookup_cached_entity(iri: str) -> dict:
+    """Read-only IRI lookup. Returns the stored row or {status: unminted}."""
+    conn = _connect()
+    try:
+        ent = read_entity(conn, iri)
+    finally:
+        conn.close()
+    if ent is None:
+        return {"iri": iri, "status": "unminted", "cached": False}
+    ent["cached"] = True
+    return ent
 
 
 # ---- Queue ----
@@ -413,9 +564,63 @@ def cmd_pending() -> int:
     return 0
 
 
+def _parse_same_as(raw: Optional[str]) -> dict:
+    """Accept same_as as a JSON object (`{"pubchem":"CID2244"}`) or a JSON
+    array of `authority:id` strings (`["pubchem:CID2244"]`) — the latter
+    matches the frontmatter bracket-list form. Returns {} for None/empty."""
+    if not raw:
+        return {}
+    val = json.loads(raw)
+    if isinstance(val, dict):
+        return {str(k): v for k, v in val.items()}
+    if isinstance(val, list):
+        out = {}
+        for item in val:
+            k, _, v = str(item).partition(":")
+            if k.strip() and v.strip():
+                out[k.strip()] = v.strip()
+        return out
+    raise ValueError("--same-as must be a JSON object or array of 'auth:id'")
+
+
+def cmd_mint_entity(entity_class: str, title: str, same_as_raw: Optional[str],
+                    page_path: Optional[str], workspace: Optional[str],
+                    write: bool) -> int:
+    try:
+        same_as = _parse_same_as(same_as_raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(json.dumps({"error": f"invalid --same-as: {e}"}))
+        return 1
+    iri = mint_iri(entity_class, title, workspace=workspace,
+                   same_as=same_as, page_path=page_path)
+    status = "ok" if same_as else "local-only"
+    if write:
+        conn = _connect()
+        try:
+            write_entity(conn, iri, entity_class=entity_class,
+                         page_path=page_path, same_as=same_as, status=status)
+        finally:
+            conn.close()
+    print(json.dumps({
+        "iri": iri,
+        "entity_class": entity_class,
+        "page_path": page_path,
+        "same_as": same_as,
+        "status": status,
+        "written": write,
+    }, indent=2))
+    return 0
+
+
+def cmd_lookup_entity(iri: str) -> int:
+    print(json.dumps(lookup_cached_entity(iri), indent=2))
+    return 0
+
+
 def cmd_cache_stats() -> int:
     if not DB_PATH.exists():
-        print(json.dumps({"chemicals": 0, "genes": 0, "note": "no cache yet"}))
+        print(json.dumps({"chemicals": 0, "genes": 0, "entities": 0,
+                          "note": "no cache yet"}))
         return 0
     conn = _connect()
     try:
@@ -425,14 +630,23 @@ def cmd_cache_stats() -> int:
         gene = conn.execute(
             "SELECT status, COUNT(*) FROM genes GROUP BY status"
         ).fetchall()
+        ent = conn.execute(
+            "SELECT status, COUNT(*) FROM entities GROUP BY status"
+        ).fetchall()
         chem_total = conn.execute("SELECT COUNT(*) FROM chemicals").fetchone()[0]
         gene_total = conn.execute("SELECT COUNT(*) FROM genes").fetchone()[0]
+        ent_total = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        ent_classes = conn.execute(
+            "SELECT entity_class, COUNT(*) FROM entities GROUP BY entity_class"
+        ).fetchall()
     finally:
         conn.close()
     queue_size = len(read_queue())
     print(json.dumps({
         "chemicals": {"total": chem_total, "by_status": dict(chem)},
         "genes":     {"total": gene_total, "by_status": dict(gene)},
+        "entities":  {"total": ent_total, "by_status": dict(ent),
+                      "by_class": dict(ent_classes)},
         "queue":     {"events_pending": queue_size},
     }, indent=2))
     return 0
@@ -464,6 +678,25 @@ def main() -> int:
     p_q.add_argument("--source-page",
                       help="optional wiki/-relative path of the page that triggered the request")
 
+    p_me = sub.add_parser("mint-entity",
+                           help="mint a workspace-stable IRI for an entity (U1)")
+    p_me.add_argument("--entity-class", required=True,
+                       help="chemical|gene|protein|person|org|concept|...")
+    p_me.add_argument("--title", required=True,
+                       help="entity display title (drives the IRI slug)")
+    p_me.add_argument("--same-as",
+                       help="JSON object {\"auth\":\"id\"} or array [\"auth:id\"]")
+    p_me.add_argument("--page-path",
+                       help="wiki/-relative path of the entity page")
+    p_me.add_argument("--workspace",
+                       help="override workspace token (default: config or cwd name)")
+    p_me.add_argument("--no-write", action="store_true",
+                       help="compute the IRI without persisting to the cache")
+
+    p_le = sub.add_parser("lookup-entity",
+                           help="read-only IRI lookup (U1)")
+    p_le.add_argument("iri")
+
     sub.add_parser("pending",
                     help="list queued requests waiting for the next resolve pass")
 
@@ -471,6 +704,11 @@ def main() -> int:
                     help="cache row counts + queue size")
 
     args = ap.parse_args()
+    if args.cmd == "mint-entity":
+        return cmd_mint_entity(args.entity_class, args.title, args.same_as,
+                               args.page_path, args.workspace, not args.no_write)
+    if args.cmd == "lookup-entity":
+        return cmd_lookup_entity(args.iri)
     if args.cmd == "lookup-chemical":
         return cmd_lookup_chemical(args.name)
     if args.cmd == "lookup-gene":

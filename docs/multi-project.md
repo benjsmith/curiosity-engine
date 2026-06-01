@@ -170,6 +170,16 @@ Mechanical, contained. No deleted-table writes (use `delete` if you want recover
 
 **Bridge discovery as a standalone op**: also useful within a single wiki — periodically run `discover-bridges` to find high-similarity page pairs that aren't yet wikilinked. The merge case is just bridge-discovery scoped to cross-origin pairs.
 
+## Federation by identity (U1 + U4)
+
+The merge steps above are **stem-keyed**: two origins describing the same entity under different slugs (`gpt-4.md` vs `gpt4.md`) only reconcile if a human catches them in the step-3 collision queue. U1's entity IRIs upgrade this to **identity-keyed** reconciliation, and U4 supplies the sharding boundary that makes federation a routine operation rather than a one-off merge.
+
+- **Identity reconciliation** (upgrades step 3). Entity pages carrying an `iri:` (or an overlapping `same_as` pair) from U1 reconcile by *identity*, not stem: the same real-world entity under two different slugs across two origins is one node, regardless of filename. `curiosity-merge` keys its entity reconciliation on the `entities` table in `.curator/identifiers.db` — pages sharing an IRI merge; pages whose `same_as` maps share an `authority:id` pair are merge candidates even without a shared IRI. Slug matching becomes a fallback for un-minted concepts, not the primary key.
+
+- **Sharding boundary** (the scaling answer). At scale you don't curate one 50M-fact wiki; you curate many bounded sub-wikis at CE's ~500–1000-page sweet spot, federated by IRI. `epoch_summary.py --shard <seed-page>` (U4) repurposes the 2-hop `wave_scope` neighborhood from "keep a wave coherent" to "keep a shard bounded": it emits the bounded neighborhood plus its **seam entities** — IRI-bearing entity pages inside the shard that are wikilinked from pages outside it. Those seam IRIs are exactly the join keys `curiosity-merge` reconciles on, so a shard exported today rejoins its parent (or a sibling shard) tomorrow without re-deciding identity. Sharding is always a human call — `--shard` surfaces a candidate, it never auto-splits.
+
+Entities without an `iri:` are not yet federation-ready; mint one with `identifier_cache.py mint-entity`. The dropped part of the medallion's promise (a universal ontology everyone agrees to upfront) stays dropped — only stable identity is borrowed.
+
 ## Bootstrap from existing project folders
 
 Selective bulk import via `import` (or `archive` for archival material):
