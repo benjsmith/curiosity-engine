@@ -2,6 +2,14 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-06-07 — v0.5.1 — finish dropping caveman from setup; non-interactive-safe setup
+
+Cleanup follow-up to the v0.5.0 line. The caveman companion-skill **install prompt** was already removed in v0.5.0 (`c09634a`); this release removes the last two remaining caveman references in `setup.sh` — the legacy `caveman`→`compression` config-key migration block and the lineage comment. `grep -i caveman scripts/setup.sh` is now empty.
+
+**Non-interactive-safe setup.** Confirmed every `read -r` prompt in `setup.sh` is guarded by `_is_interactive()` (`[ -t 0 ] && [ -t 1 ]`, plus the `CURIOSITY_ENGINE_NONINTERACTIVE` override), so an automated agent running the script with stdin not a terminal never hangs or fails on a prompt — each falls through to its default. Verified end-to-end: a full workspace bootstrap exits 0 both interactively (driven through a real pty) and under `bash setup.sh < /dev/null`.
+
+Anyone who still sees the caveman install prompt is on a pre-v0.5.0 install; re-install latest (`npx skills add -g -y benjsmith/curiosity-engine`).
+
 ## 2026-06-01 — v0.5.0 — U1–U5 empiricist-EDM upgrades
 
 Implements the five additive upgrades from [`docs/ce-as-edm.md`](docs/ce-as-edm.md), scoped to CE-as-research-wiki (no EDM platform, no maplib/RDF). Each deepens a capability CE already had half-built; all are backward-compatible and optional. Full design + verification log in [`docs/u1-u5-implementation-plan.md`](docs/u1-u5-implementation-plan.md). Verified against a real 382-page wiki and controlled fixtures.

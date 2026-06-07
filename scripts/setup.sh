@@ -1191,16 +1191,6 @@ if "presets" not in existing and ("worker_model" in existing or "reviewer_model"
     existing["presets"] = {name: block}
     migrated = True
 
-# Rename legacy `caveman` block → `compression`. The ruleset's lineage is
-# in docs/skill-rationale.md; the companion skill is no longer used.
-if "caveman" in existing and "compression" not in existing:
-    existing["compression"] = existing.pop("caveman")
-    migrated = True
-elif "caveman" in existing:
-    # Both present (user has migrated already + a stray); drop the legacy.
-    existing.pop("caveman")
-    migrated = True
-
 added = []
 def merge(tmpl, cur, prefix=""):
     for k, v in tmpl.items():
@@ -1455,11 +1445,6 @@ if [ ! -d wiki/.git ]; then
     (cd wiki && git init -q && git add -A && git commit -q -m "init: curiosity engine wiki")
     echo "  Initialized wiki git repo"
 fi
-
-# Write-time compression rules live inlined in template/prompts.md and
-# don't require a separately-installed companion skill. The ruleset
-# originated from JuliusBrussee/caveman; see docs/skill-rationale.md
-# for why it's no longer a separate dependency.
 
 # Optional: semantic vault search (sentence-transformers + sqlite-vec).
 # Adds ~200MB of model weights and enables hybrid FTS5 + cosine search.
