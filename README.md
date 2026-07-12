@@ -39,8 +39,14 @@ Everything the skill does, in one line each:
 ```bash
 # install the skill (pick one — all equivalent)
 claude skill install curiosity-engine
-npx skills add benjsmith/curiosity-engine
+npx skills@1.5.12 add benjsmith/curiosity-engine
 # or: git clone into ~/.claude/skills/curiosity-engine/
+#
+# NOTE: the skills CLI is version-pinned on purpose. skills >= 1.5.13 has a
+# root-layout regression that installs ONLY SKILL.md (no scripts/, no
+# template/) — a broken install. If a past add/update left you with a
+# SKILL.md-only skill folder, re-run the pinned add above; no workspace
+# data (wiki/vault) is ever affected by this.
 
 # set up a workspace
 mkdir my-research && cd my-research

@@ -20,12 +20,16 @@ git push -u origin main
 
 Ask the agent to "update the skill". It runs `scripts/update.sh`,
 which detects the install channel automatically — `git pull --ff-only`
-for git-clone installs, `npx skills update -g <slug>` for npx-skills
-installs — prints a preview (commit log for git, update plan for
-npx), and waits for you to confirm. Once confirmed, it auto-commits
-any in-progress wiki edits with a canned `wip: auto-commit before
-skill update` message, applies the update, and runs `setup.sh` to
-apply any migrations. The npx-skills slug is stored in
+for git-clone installs, a version-pinned `npx skills@<pinned> update
+-g <slug>` for npx-skills installs (pinned because skills ≥ 1.5.13
+has a root-layout regression that installs only SKILL.md; the pin is
+`SKILLS_CLI_VERSION` in update.sh) — prints a preview (commit log for
+git, update plan for npx), and waits for you to confirm. Once
+confirmed, it auto-commits any in-progress wiki edits with a canned
+`wip: auto-commit before skill update` message, snapshots the skill
+dir, applies the update, verifies the install is still complete
+(rolling back to the snapshot if the CLI left a partial tree), and
+runs `setup.sh` to apply any migrations. The npx-skills slug is stored in
 `.curator/config.json` as `update_source_slug` — fork users edit it
 there to point at their fork.
 

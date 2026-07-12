@@ -2,6 +2,17 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-13 — v0.6.1 — defend installs against the skills-CLI root-layout regression
+
+**Incident.** The `skills` CLI ([vercel-labs/skills](https://github.com/vercel-labs/skills)) regressed in **1.5.13** (2026-06-23, verified by bisect: 1.5.12 good → 1.5.13 broken, still broken in 1.5.16): for repos whose SKILL.md sits at the **repo root** — this one — `add` and `update` install **only SKILL.md**, deleting `scripts/`, `template/`, and `docs/` from the install directory. Fresh installs since 2026-06-23 arrived broken; updates were harmless no-ops until v0.6.0 shipped and gave the updater something to fetch, at which point `npx skills update` (including the path inside `update.sh`) replaced working installs with a single file. **No workspace data is affected in any scenario** — wikis (git-versioned, and auto-committed by update.sh before any update), vaults, and `.curator/` all live outside the skill install; the blast radius is the skill's own code. Repair a bricked install with `npx skills@1.5.12 add -g -y benjsmith/curiosity-engine` (or a git clone) — verified working.
+
+**Defences shipped in this release:**
+- **`update.sh`**: the npx channel is version-pinned (`SKILLS_CLI_VERSION=1.5.12`, the last known-good CLI), and the update is wrapped in snapshot → apply → integrity-check → rollback. Any update that leaves a partial tree (this bug, a timeout, any future regression) is rolled back automatically and the skill keeps working; the check runs on every post-update path including CLI failure and timeout.
+- **SKILL.md self-heal preamble** (§Install integrity check): SKILL.md is by construction the one file that survives a bricking, so the recovery procedure lives there — the agent verifies `scripts/setup.sh` exists before any operation, and on a partial install stops (no improvised curation without the hash-guarded ratchet), reassures the user their data is intact, and gives the pinned repair command.
+- **README / setup-advanced**: install and update instructions pin `skills@1.5.12` and document the regression.
+
+Not yet done (tracked): repo-restructure to the subdirectory skill layout (verified immune on CLI 1.5.16) — needs an update-path test from a `skillPath: "SKILL.md"` lock entry first; upstream bug report to vercel-labs/skills.
+
 ## 2026-07-12 — v0.6.0 — benchmark-validated graph retrieval, two-tier graph, fastembed/ONNX embedder
 
 Upstreams the retrieval wins from a controlled CE-vs-RAG benchmark (n=50/task across single-hop / multi-hop / global, 4-judge panel scored in both orderings, bootstrap-paired CIs) into the substrate. Headline findings the release encodes: vector-seeded **BFS graph retrieval reaches vector-RAG parity on factoids and wins multi-hop + global/sensemaking**; the optimal policy is **query routing** (graph-only for sensemaking — vault chunks dilute comprehensiveness there; graph+vault blend elsewhere); Personalized PageRank was tested and **rejected** at wiki scale (significantly worse on global, Δ −0.079, CI excludes 0 — its teleport mass concentrates on hub pages and loses the diversity sensemaking rewards). All features are backward-compatible; everything soft-falls-back when kuzu or embedding deps are absent.
@@ -28,7 +39,7 @@ Cleanup follow-up to the v0.5.0 line. The caveman companion-skill **install prom
 
 **Non-interactive-safe setup.** Confirmed every `read -r` prompt in `setup.sh` is guarded by `_is_interactive()` (`[ -t 0 ] && [ -t 1 ]`, plus the `CURIOSITY_ENGINE_NONINTERACTIVE` override), so an automated agent running the script with stdin not a terminal never hangs or fails on a prompt — each falls through to its default. Verified end-to-end: a full workspace bootstrap exits 0 both interactively (driven through a real pty) and under `bash setup.sh < /dev/null`.
 
-Anyone who still sees the caveman install prompt is on a pre-v0.5.0 install; re-install latest (`npx skills add -g -y benjsmith/curiosity-engine`).
+Anyone who still sees the caveman install prompt is on a pre-v0.5.0 install; re-install latest (`npx skills add -g -y benjsmith/curiosity-engine`). *(Correction 2026-07-13: pin the CLI — `npx skills@1.5.12 add -g -y benjsmith/curiosity-engine` — see v0.6.1: skills ≥ 1.5.13 installs only SKILL.md.)*
 
 ## 2026-06-01 — v0.5.0 — U1–U5 empiricist-EDM upgrades
 

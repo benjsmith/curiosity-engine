@@ -7,6 +7,22 @@ description: "Self-improving knowledge wiki with a vault of raw sources. Use whe
 
 A self-improving knowledge wiki. Add sources to a vault, build interlinked wiki pages, and let autonomous loops make the wiki better overnight.
 
+## Install integrity check (run before any operation)
+
+This skill is more than this file: it ships hash-guarded scripts (`scripts/`), a workspace template (`template/`), and docs. Some installers deliver only SKILL.md — notably the `skills` CLI ≥ 1.5.13, whose root-layout regression installs/updates this skill as a single file, silently deleting `scripts/` and `template/` from an existing install.
+
+**Before the first operation in a session, verify `<skill_path>/scripts/setup.sh` exists** (Glob or a single `ls`). If it does — proceed normally and skip the rest of this section. If it does NOT:
+
+1. **Stop.** Do not attempt INGEST / CURATE / SWEEP / LINK / QUERY workarounds by hand — every safety property of this skill (citation ratchet, hash guard, scrub check) lives in the missing scripts. Improvised curation without them can degrade a wiki the user spent real money building.
+2. **Reassure the user**: no workspace data is affected — wikis, vaults, and `.curator/` live outside the skill install; only the skill's own code is missing.
+3. **Tell them how to repair** (either command restores the full skill; workspaces then work unchanged):
+   ```
+   npx skills@1.5.12 add -g -y benjsmith/curiosity-engine    # pinned known-good CLI
+   # or
+   git clone https://github.com/benjsmith/curiosity-engine <skill-install-dir>
+   ```
+4. After repair, run `bash <skill_path>/scripts/setup.sh` in the workspace as usual.
+
 Inspired by Karpathy's LLM-Wiki (the wiki as compounding artifact), Autoresearch (keep-or-revert ratchet, fixed-wallclock epochs), and MemPalace (store everything verbatim). The acceptance criterion is a citation-preserving ratchet: no sourced claim is lost, no catastrophic bloat.
 
 ## Identity
@@ -131,7 +147,7 @@ bash <skill_path>/scripts/update.sh        # prints release notes, exits
 bash <skill_path>/scripts/update.sh --yes  # applies after user confirms
 ```
 
-Two-step flow by design. The first call inspects the install channel and prints a preview: for git-clone installs it `git fetch`es the skill repo and shows the local..upstream commit log; for npx-skills installs (`.git` absent from the skill dir) it shows the update plan and the slug that will be passed to `npx skills update -g`. Either way it exits without changes — `--yes` is always required to apply, with no TTY-based [y/N] fallback (a prompt would hang under coding-agent CLIs that allocate a PTY but can't forward keystrokes, e.g. GitHub Copilot Chat in VS Code). Relay the preview to the user, wait for confirmation, then re-invoke with `--yes`. Stage 2 auto-commits any dirty wiki with a canned `wip: auto-commit before skill update` message, applies the update (`git pull --ff-only` or `npx skills update -g <slug>`), and runs `setup.sh` (with `CURIOSITY_ENGINE_NONINTERACTIVE=1`) to reapply the migration pass.
+Two-step flow by design. The first call inspects the install channel and prints a preview: for git-clone installs it `git fetch`es the skill repo and shows the local..upstream commit log; for npx-skills installs (`.git` absent from the skill dir) it shows the update plan and the slug that will be passed to the version-pinned `npx skills@<pinned> update -g` (pinned because skills ≥ 1.5.13 bricks root-layout installs — see §Install integrity check; the pin lives in `update.sh` as `SKILLS_CLI_VERSION`). Either way it exits without changes — `--yes` is always required to apply, with no TTY-based [y/N] fallback (a prompt would hang under coding-agent CLIs that allocate a PTY but can't forward keystrokes, e.g. GitHub Copilot Chat in VS Code). Relay the preview to the user, wait for confirmation, then re-invoke with `--yes`. Stage 2 auto-commits any dirty wiki with a canned `wip: auto-commit before skill update` message, snapshots the skill dir, applies the update (`git pull --ff-only` or the pinned npx update), verifies the install is still complete (rolls back to the snapshot and aborts if the CLI left a partial tree), and runs `setup.sh` (with `CURIOSITY_ENGINE_NONINTERACTIVE=1`) to reapply the migration pass.
 
 The npx-skills slug is read from `.curator/config.json`'s `update_source_slug` key (seeded by setup.sh from the template default); fork users edit the key in their workspace config to repoint.
 

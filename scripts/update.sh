@@ -63,6 +63,44 @@ fi
 # defence-in-depth.
 UPSTREAM_SLUG_DEFAULT="benjsmith/curiosity-engine"
 
+# Pinned skills-CLI version. skills >=1.5.13 (2026-06-23) has a
+# root-layout regression: for repos whose SKILL.md sits at the repo
+# root (this one), add/update install ONLY SKILL.md and delete
+# scripts/ + template/ + docs/ from the install dir — a bricked skill.
+# 1.5.12 is the last version verified to install the full tree.
+# Bump only after verifying upstream fixed root-layout installs:
+#   cd $(mktemp -d) && npx skills@<ver> add benjsmith/curiosity-engine -y \
+#     && ls .agents/skills/curiosity-engine/scripts/setup.sh
+# The snapshot/rollback around the update below is the second line of
+# defence if this pin ever regresses again.
+SKILLS_CLI_VERSION="1.5.12"
+
+# Restore the pre-update snapshot when the install tree is partial —
+# a correct update leaves scripts/ in place; the >=1.5.13 root-layout
+# bug (and a timed-out/aborted CLI run) leaves SKILL.md-only or a
+# half-wiped dir. Called on every post-update path, success or error.
+# No-ops when the tree is intact or no snapshot was taken.
+_rollback_if_partial() {
+    [ -n "${_snapshot_dir:-}" ] && [ -d "${_snapshot_dir:-}" ] || return 0
+    if [ -f "$SKILL_ROOT/scripts/setup.sh" ] \
+            && [ -f "$SKILL_ROOT/scripts/graph.py" ] \
+            && [ -f "$SKILL_ROOT/SKILL.md" ]; then
+        rm -rf "$_snapshot_dir"
+        return 0
+    fi
+    echo ""
+    echo "ERROR: the update left a PARTIAL install at $SKILL_ROOT"
+    echo "       (scripts/ missing — the skills-CLI root-layout bug, or an"
+    echo "       interrupted update). Rolling back to the pre-update snapshot ..."
+    find "$SKILL_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    cp -a "$_snapshot_dir/." "$SKILL_ROOT/"
+    rm -rf "$_snapshot_dir"
+    echo "       Rolled back — the skill is unchanged and still works."
+    echo "       To upgrade manually with a known-good CLI:"
+    echo "         npx skills@$SKILLS_CLI_VERSION add -g -y $SLUG"
+    return 1
+}
+
 # Source resolution order:
 #   1. --source <slug> on the command line (explicit per-invocation override)
 #   2. UPSTREAM_SLUG_DEFAULT (the hardcoded upstream)
@@ -157,7 +195,9 @@ else
     if [ -n "$SLUG_BANNER" ]; then
         printf '%s' "$SLUG_BANNER"
     fi
-    echo "  Will run:   npx skills update -g $SKILL_NAME"
+    echo "  Will run:   npx skills@$SKILLS_CLI_VERSION update -g $SKILL_NAME"
+    echo "              (CLI version pinned: skills >=1.5.13 bricks root-layout"
+    echo "               installs; a snapshot/rollback also guards the update)"
     echo ""
     echo "  Detailed release notes aren't available for npx-skills installs —"
     echo "  inspect the upstream repo on GitHub if you want the full log before"
@@ -200,7 +240,16 @@ if [ "$UPDATE_METHOD" = "git" ]; then
     git -C "$SKILL_ROOT" pull --quiet --ff-only
 else
     echo ""
-    echo "Running npx skills update -g $SKILL_NAME ..."
+    echo "Running npx skills@$SKILLS_CLI_VERSION update -g $SKILL_NAME ..."
+
+    # ── Pre-update snapshot. The skills CLI wipes the install dir before
+    # rewriting it, and CLI >=1.5.13 then writes ONLY SKILL.md for repos
+    # with a root-level SKILL.md — deleting every script this workspace
+    # depends on. Snapshot first; the integrity check after the update
+    # rolls back if the CLI left a partial install. (The running script
+    # survives the wipe: the old inode stays open on bash's fd.)
+    _snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/ce-skill-snapshot.XXXXXX")"
+    cp -a "$SKILL_ROOT/." "$_snapshot_dir/"
 
     # Codex CLI sandboxes network/cache access by default; npx-skills
     # then blocks on a network call without surfacing useful stderr,
@@ -238,11 +287,12 @@ else
     # capture the output and check for its "No installed skills found"
     # signal explicitly to avoid a silent no-op.
     set +e
-    _npx_out="$($_timeout_cmd npx skills update -g "$SKILL_NAME" 2>&1)"
+    _npx_out="$($_timeout_cmd npx "skills@$SKILLS_CLI_VERSION" update -g "$SKILL_NAME" 2>&1)"
     _npx_status=$?
     set -e
     echo "$_npx_out"
     if [ "$_npx_status" -eq 124 ]; then
+        _rollback_if_partial || true
         echo ""
         echo "ERROR: npx skills update timed out after 180s."
         echo "       Most likely cause: sandboxed network/cache access."
@@ -252,17 +302,25 @@ else
         exit 1
     fi
     if [ "$_npx_status" -ne 0 ]; then
+        _rollback_if_partial || true
         echo ""
         echo "ERROR: npx skills update exited $_npx_status. See output above."
         exit 1
     fi
     if echo "$_npx_out" | grep -qi "No installed skills found matching"; then
+        rm -rf "$_snapshot_dir"
         echo ""
         echo "ERROR: npx-skills did not recognise '$SKILL_NAME'. Installed skills:"
-        npx skills list -g 2>&1 | grep -E '^[[:space:]]*[a-z]' | head -20
+        npx "skills@$SKILLS_CLI_VERSION" list -g 2>&1 | grep -E '^[[:space:]]*[a-z]' | head -20
         echo ""
         echo "Pass --source <owner>/<repo-name> on the next invocation, where"
         echo "<repo-name> matches one of the installed skill names above."
+        exit 1
+    fi
+
+    # A "successful" update can still be a partial install (the CLI exits
+    # 0 on the root-layout bug) — verify and roll back if so.
+    if ! _rollback_if_partial; then
         exit 1
     fi
 fi
