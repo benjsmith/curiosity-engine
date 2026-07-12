@@ -41,9 +41,19 @@ if [ ! -d "$WORKSPACE/wiki" ] || [ ! -d "$WORKSPACE/.curator" ]; then
     exit 1
 fi
 
-# Determine install channel. Git wins when the skill dir carries a
-# .git (direct clone); otherwise fall back to npx-skills if available.
-if [ -d "$SKILL_ROOT/.git" ]; then
+# Determine install channel. Git wins when the skill dir sits inside a
+# git work tree that IS this skill's repo — since v0.7.0 the skill
+# lives at skills/curiosity-engine/ inside the repo, so .git sits two
+# levels up and rev-parse finds it regardless of nesting. The extra
+# "is it really our repo" check matters: an npx install under a
+# git-managed $HOME (dotfiles repos) would otherwise false-positive
+# and `git pull` the user's dotfiles. Accepted shapes: new layout
+# (repo toplevel contains skills/curiosity-engine/SKILL.md) or the
+# pre-v0.7.0 layout (skill root IS the repo toplevel). Otherwise fall
+# back to npx-skills if available.
+_git_toplevel="$(git -C "$SKILL_ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$_git_toplevel" ] && { [ -f "$_git_toplevel/skills/curiosity-engine/SKILL.md" ] \
+        || [ "$_git_toplevel" = "$SKILL_ROOT" ]; }; then
     UPDATE_METHOD="git"
 elif command -v npx >/dev/null 2>&1; then
     UPDATE_METHOD="npx"

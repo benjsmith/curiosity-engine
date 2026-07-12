@@ -1,6 +1,6 @@
 # Curiosity Engine
 
-![An example knowledge graph displayed by the skill's built-in viewer.](docs/viewer-graph.png)
+![An example knowledge graph displayed by the skill's built-in viewer.](skills/curiosity-engine/docs/viewer-graph.png)
 *An example knowledge graph displayed by the skill's built-in viewer.*
 
 A self-improving knowledge wiki for coding-agent CLIs. Drop sources in, ask questions, and let autonomous "curate" loops draft improvements in parallel — each gated by a citation-preserving ratchet, judged by a fresh-context reviewer, and committed if it earns its place. The wiki is plain markdown, git-tracked, and yours to edit.
@@ -39,14 +39,16 @@ Everything the skill does, in one line each:
 ```bash
 # install the skill (pick one — all equivalent)
 claude skill install curiosity-engine
-npx skills@1.5.12 add benjsmith/curiosity-engine
-# or: git clone into ~/.claude/skills/curiosity-engine/
+npx skills add benjsmith/curiosity-engine
+# or via git (the skill lives in skills/curiosity-engine/ inside the repo):
+#   git clone https://github.com/benjsmith/curiosity-engine ~/curiosity-engine
+#   ln -s ~/curiosity-engine/skills/curiosity-engine ~/.claude/skills/curiosity-engine
 #
-# NOTE: the skills CLI is version-pinned on purpose. skills >= 1.5.13 has a
-# root-layout regression that installs ONLY SKILL.md (no scripts/, no
-# template/) — a broken install. If a past add/update left you with a
-# SKILL.md-only skill folder, re-run the pinned add above; no workspace
-# data (wiki/vault) is ever affected by this.
+# Since v0.7.0 the skill lives in a subdirectory, which every skills-CLI
+# version installs correctly. If an old add/update (skills 1.5.13–1.5.16
+# against the pre-v0.7.0 layout) left you with a SKILL.md-only skill
+# folder, just run the add command above again — it repairs the install.
+# No workspace data (wiki/vault) is ever affected by that CLI bug.
 
 # set up a workspace
 mkdir my-research && cd my-research
@@ -59,7 +61,7 @@ claude
 
 The first command runs `setup.sh`, which creates the folder layout, initialises the wiki git repo, drops in a Claude Code settings file that auto-allows safe operations, and (optionally) installs companion tooling.
 
-For non-Claude-Code CLIs (Codex, Gemini, Copilot Chat, Cursor, OpenClaude, Ollama, air-gapped, enterprise), see [docs/setup-advanced.md](docs/setup-advanced.md).
+For non-Claude-Code CLIs (Codex, Gemini, Copilot Chat, Cursor, OpenClaude, Ollama, air-gapped, enterprise), see [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md).
 
 ## Architecture
 
@@ -115,7 +117,7 @@ Inside the curator on each wave:
              └──────────────▶ Orchestrator
 ```
 
-Full design rationale — why not RAG, how the ratchet works, where the skill struggles — in [docs/architecture.md](docs/architecture.md).
+Full design rationale — why not RAG, how the ratchet works, where the skill struggles — in [docs/architecture.md](skills/curiosity-engine/docs/architecture.md).
 
 ## When it fits
 
@@ -130,19 +132,19 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 
 **Doesn't fit when:**
 - You want instant answers from a huge (>1000) doc store → use RAG (LlamaIndex, LangChain).
-- You're working on code → use your coding agent directly on the repo. (Codebase *knowledge* — decisions, gotchas, design notes — does fit; see [docs/code-knowledge.md](docs/code-knowledge.md).)
+- You're working on code → use your coding agent directly on the repo. (Codebase *knowledge* — decisions, gotchas, design notes — does fit; see [docs/code-knowledge.md](skills/curiosity-engine/docs/code-knowledge.md).)
 - You need multi-user collaboration → Obsidian sync, Notion, Confluence.
 - Your data is purely tabular with no source documents → use a database directly. (Entity-instance data tied to vault sources — deals, patients, contracts — *is* first-class.)
 
 ## Learn more
 
-- [docs/architecture.md](docs/architecture.md) — full design rationale
-- [docs/setup-advanced.md](docs/setup-advanced.md) — non-Claude-Code CLIs, model presets, Ollama, deployment notes, orphan-source wiring
-- [docs/viewers.md](docs/viewers.md) — graph viewer, Obsidian, VS Code + Foam, semantic search
-- [docs/multi-project.md](docs/multi-project.md) — multi-project model in detail
-- [docs/code-knowledge.md](docs/code-knowledge.md) — code-repo integration
-- [docs/skill-rationale.md](docs/skill-rationale.md) — selected design decisions, compression rules, lineage
-- [docs/citation.md](docs/citation.md) — acknowledgements & citation (BigMixSolDB)
+- [docs/architecture.md](skills/curiosity-engine/docs/architecture.md) — full design rationale
+- [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md) — non-Claude-Code CLIs, model presets, Ollama, deployment notes, orphan-source wiring
+- [docs/viewers.md](skills/curiosity-engine/docs/viewers.md) — graph viewer, Obsidian, VS Code + Foam, semantic search
+- [docs/multi-project.md](skills/curiosity-engine/docs/multi-project.md) — multi-project model in detail
+- [docs/code-knowledge.md](skills/curiosity-engine/docs/code-knowledge.md) — code-repo integration
+- [docs/skill-rationale.md](skills/curiosity-engine/docs/skill-rationale.md) — selected design decisions, compression rules, lineage
+- [docs/citation.md](skills/curiosity-engine/docs/citation.md) — acknowledgements & citation (BigMixSolDB)
 
 ## Dependencies
 
@@ -151,8 +153,8 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 - **[kuzu](https://kuzudb.com/)** — embedded property-graph database (auto-installed)
 - **[fastembed](https://github.com/qdrant/fastembed)** + **[sqlite-vec](https://github.com/asg017/sqlite-vec)** *(optional)* — semantic search on ONNX, no PyTorch (~115MB deps+model). [sentence-transformers](https://sbert.net/) works as a fallback backend for workspaces that already have it.
 - **git** — the wiki is a git repo
-- **A frontier coding-agent CLI** — Claude Code is primary; others work with adjustments (see [docs/setup-advanced.md](docs/setup-advanced.md))
+- **A frontier coding-agent CLI** — Claude Code is primary; others work with adjustments (see [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md))
 
 ## License
 
-MIT. If you use the scientific-extraction pipeline in published work, please credit the design principles per [docs/citation.md](docs/citation.md).
+MIT. If you use the scientific-extraction pipeline in published work, please credit the design principles per [docs/citation.md](skills/curiosity-engine/docs/citation.md).

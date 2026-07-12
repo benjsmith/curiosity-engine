@@ -2,6 +2,19 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-13 — v0.7.0 — repo restructure: skill moves to skills/curiosity-engine/
+
+Completes the response to the skills-CLI root-layout regression (see v0.6.1). The skill — SKILL.md, `scripts/`, `template/`, `docs/`, plus a LICENSE copy — now lives at **`skills/curiosity-engine/`** inside the repo; repo-level files (README, CHANGELOG, SECURITY, release checklist) stay at the root, alongside a **frontmatterless** root SKILL.md pointer stub (valid frontmatter there would re-trigger the CLI's single-file install path; discovery verifiably ignores the stub without it).
+
+Why: skills-CLI 1.5.13–1.5.16 installs a repo-root SKILL.md as a single-file skill, dropping every supporting file. The subdirectory layout is handled correctly by **all** CLI versions — and better, it is **retroactively self-healing**: an update run by any CLI version against a stale pre-v0.7.0 lock entry (`skillPath: "SKILL.md"`) re-discovers the moved skill, installs the full tree, and rewrites the lock. Users bricked by the old layout are repaired by a plain `npx skills update` / `npx skills add` — no pinned command needed anymore. Verified empirically on a live test branch across the full matrix: fresh add and stale-lock update, each with CLI 1.5.12 and 1.5.16, plus the root-stub variants.
+
+**Install-shape invariant:** the installed directory still contains SKILL.md, `scripts/`, `template/` at its top level (the CLI copies the *contents* of the skill folder), so `<skill_path>/scripts/...` references, workspace allowlists, and external callers (e.g. switchyard) need no changes.
+
+**Changes riding along:**
+- `update.sh` git-channel detection now walks up from the skill dir (`git rev-parse --show-toplevel`) and verifies the work tree is actually this repo — supporting the new clone+symlink git install, still supporting pre-v0.7.0 clones, and refusing to `git pull` an unrelated repo (e.g. an npx install under a git-managed `$HOME`). The npx-channel pin + snapshot/rollback from v0.6.1 stay as defence-in-depth.
+- Documented git install is now: clone anywhere, then `ln -s <clone>/skills/curiosity-engine ~/.claude/skills/curiosity-engine`.
+- README/docs links updated for the new layout; the unpinned `npx skills add` command is recommended again.
+
 ## 2026-07-13 — v0.6.1 — defend installs against the skills-CLI root-layout regression
 
 **Incident.** The `skills` CLI ([vercel-labs/skills](https://github.com/vercel-labs/skills)) regressed in **1.5.13** (2026-06-23, verified by bisect: 1.5.12 good → 1.5.13 broken, still broken in 1.5.16): for repos whose SKILL.md sits at the **repo root** — this one — `add` and `update` install **only SKILL.md**, deleting `scripts/`, `template/`, and `docs/` from the install directory. Fresh installs since 2026-06-23 arrived broken; updates were harmless no-ops until v0.6.0 shipped and gave the updater something to fetch, at which point `npx skills update` (including the path inside `update.sh`) replaced working installs with a single file. **No workspace data is affected in any scenario** — wikis (git-versioned, and auto-committed by update.sh before any update), vaults, and `.curator/` all live outside the skill install; the blast radius is the skill's own code. Repair a bricked install with `npx skills@1.5.12 add -g -y benjsmith/curiosity-engine` (or a git clone) — verified working.
