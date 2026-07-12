@@ -2,6 +2,14 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-13 — v0.8.0 — richer neighbors verb + embedder.py as a stable library surface
+
+Two additions that let downstream tools (switchyard first) delete their parallel implementations and consume CE directly:
+
+**`graph.py neighbors` grows `--direction out|in|both` and per-neighbor detail.** Output entries now carry `distance`, `title`, and `type`; `--direction both` gives the undirected wikilink neighbourhood that `retrieve`'s traversal uses (previously only reachable through switchyard's own text-derived `_wiki_neighbors`). Backward-compatible: default direction stays `out` and the old fields are unchanged — the verb is now BFS-in-Python over the kuzu edge list, since variable-length Cypher can't emit per-node distance or mix directions.
+
+**`embedder.py` is declared a stable library surface.** `load_embedder(config_dict)`, `predict_model_id`, and the `Embedder` API (`embed_passages` / `embed_query` / `model_id` / `dim`) are now covered by the versioning policy (breaking changes only on a major bump), so tools that vendor CE can import it instead of shipping their own fastembed/sentence-transformers stack — the config is a plain dict, nothing reads the filesystem. A small diagnostics CLI (`embedder.py probe | embed-query | embed-passages`) serves one-off and non-Python callers (per-call model load; import the module for hot loops).
+
 ## 2026-07-13 — v0.7.0 — repo restructure: skill moves to skills/curiosity-engine/
 
 Completes the response to the skills-CLI root-layout regression (see v0.6.1). The skill — SKILL.md, `scripts/`, `template/`, `docs/`, plus a LICENSE copy — now lives at **`skills/curiosity-engine/`** inside the repo; repo-level files (README, CHANGELOG, SECURITY, release checklist) stay at the root. This is the layout Anthropic's own [anthropics/skills](https://github.com/anthropics/skills) repo uses (`skills/<name>/SKILL.md`, no root SKILL.md).

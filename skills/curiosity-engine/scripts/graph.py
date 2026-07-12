@@ -39,8 +39,10 @@ Subcommands
     graph.py path <wiki_dir> <page_a> <page_b> [--max-hops N]
         Shortest wikilink path between two pages.
 
-    graph.py neighbors <wiki_dir> <page> [--hops N]
-        All pages within N hops (default 2).
+    graph.py neighbors <wiki_dir> <page> [--hops N] [--direction out|in|both]
+        All pages within N wikilink hops (default 2, outbound), each
+        with distance/title/type. --direction both gives the undirected
+        neighbourhood retrieval traverses.
 
     graph.py bridge-candidates <wiki_dir> [--limit N]
         Page pairs sharing vault sources but not linked. Replaces the
@@ -872,16 +874,52 @@ def cmd_path(wiki_dir: Path, page_a: str, page_b: str, max_hops: int):
         print(json.dumps({"result": "no path found", "max_hops": max_hops}))
 
 
-def cmd_neighbors(wiki_dir: Path, page: str, hops: int):
+def cmd_neighbors(wiki_dir: Path, page: str, hops: int, direction: str = "out"):
+    """Pages within N wikilink hops, each with distance/title/type.
+
+    --direction out (default, the pre-v0.8 semantics) follows outbound
+    [[wikilinks]]; `in` follows backlinks; `both` is the undirected view
+    retrieval uses. BFS in Python over the WikiLink edge list — kuzu's
+    variable-length MATCH can't emit per-node distance or mix directions.
+    """
     conn = _connect(wiki_dir, read_only=True)
     hops = max(1, min(int(hops), 10))
-    rows = _query_to_json(conn,
-        f"MATCH (a:WikiPage)-[:WikiLink*1..{hops}]->(b:WikiPage) "
-        "WHERE a.path = $p AND a.path <> b.path "
-        "RETURN DISTINCT b.path, b.type",
-        {"p": page}
-    )
-    print(json.dumps([{"path": r[0], "type": r[1]} for r in rows], indent=2))
+    meta = {r[0]: {"type": r[1], "title": r[2]} for r in _query_to_json(
+        conn, "MATCH (p:WikiPage) RETURN p.path, p.type, p.title")}
+    if page not in meta:
+        print(f"graph neighbors: no page {page!r} in graph", file=sys.stderr)
+        print("[]")
+        return
+    out_adj, in_adj = {}, {}
+    for a, b in _query_to_json(
+            conn, "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
+                  "RETURN a.path, b.path"):
+        out_adj.setdefault(a, set()).add(b)
+        in_adj.setdefault(b, set()).add(a)
+    from collections import deque
+    dist = {page: 0}
+    q = deque([page])
+    while q:
+        cur = q.popleft()
+        d = dist[cur]
+        if d >= hops:
+            continue
+        nbrs = set()
+        if direction in ("out", "both"):
+            nbrs |= out_adj.get(cur, set())
+        if direction in ("in", "both"):
+            nbrs |= in_adj.get(cur, set())
+        for nb in nbrs:
+            if nb not in dist:
+                dist[nb] = d + 1
+                q.append(nb)
+    items = sorted(((p, d) for p, d in dist.items() if p != page),
+                   key=lambda kv: (kv[1], kv[0]))
+    print(json.dumps([
+        {"path": p, "type": meta.get(p, {}).get("type", ""),
+         "title": meta.get(p, {}).get("title", ""), "distance": d}
+        for p, d in items
+    ], indent=2))
 
 
 def cmd_bridge_candidates(wiki_dir: Path, limit: int):
@@ -1247,6 +1285,10 @@ def main():
     nb.add_argument("wiki")
     nb.add_argument("page")
     nb.add_argument("--hops", type=int, default=2)
+    nb.add_argument("--direction", choices=["out", "in", "both"],
+                    default="out",
+                    help="follow outbound wikilinks (default), backlinks "
+                         "(in), or both (the undirected view retrieval uses)")
 
     bc = sub.add_parser("bridge-candidates")
     bc.add_argument("wiki", default="wiki", nargs="?")
@@ -1302,7 +1344,7 @@ def main():
     elif args.command == "path":
         cmd_path(wiki_dir, args.page_a, args.page_b, args.max_hops)
     elif args.command == "neighbors":
-        cmd_neighbors(wiki_dir, args.page, args.hops)
+        cmd_neighbors(wiki_dir, args.page, args.hops, args.direction)
     elif args.command == "bridge-candidates":
         cmd_bridge_candidates(wiki_dir, args.limit)
     elif args.command == "retrieve":

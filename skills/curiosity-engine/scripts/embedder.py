@@ -31,10 +31,36 @@ Backend selection (`embedding_backend` in .curator/config.json, default
 - "fastembed" / "sentence-transformers" — force one; no silent fallback.
 
 Local backends only, by design: embedding text never leaves the machine.
+
+STABLE LIBRARY SURFACE (v0.8+). External tools that vendor CE (e.g.
+switchyard) may import this module directly instead of shipping their
+own local-embedding stack; the following are covered by CE's versioning
+policy (breaking changes only on a major bump):
+
+    load_embedder(config: dict) -> (Embedder | None, reason: str)
+    predict_model_id(config: dict) -> str | None
+    Embedder.embed_passages(texts) / .embed_query(text)
+    Embedder.model_id / .model_name / .backend / .dim
+    DEFAULT_FASTEMBED_MODEL / DEFAULT_ST_MODEL
+
+`config` is any dict with the embedding_* keys — callers outside a CE
+workspace pass their own (e.g. {"embedding_enabled": True}); nothing
+here reads the filesystem.
+
+A small CLI exists for diagnostics and one-off/non-Python callers
+(per-call model load makes it unsuitable for hot loops — import the
+module for those):
+
+    embedder.py probe [--config PATH] [--model M] [--backend B]
+    embedder.py embed-query "text" [...]
+    embedder.py embed-passages [...]      # stdin: JSON array of strings
 """
 from __future__ import annotations
 
 import sys
+
+__all__ = ["Embedder", "load_embedder", "predict_model_id",
+           "DEFAULT_FASTEMBED_MODEL", "DEFAULT_ST_MODEL"]
 
 DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_ST_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -154,3 +180,68 @@ def load_embedder(config: dict):
                       "uv pip install fastembed sqlite-vec")
     except Exception as e:
         return None, f"embedding model load failed ({e})"
+
+
+def _cli() -> int:
+    import argparse
+    import json
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(
+        description="Diagnostics / one-off access to the shared embedder. "
+                    "Loads the model per call — import the module for hot loops.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name in ("probe", "embed-query", "embed-passages"):
+        p = sub.add_parser(name)
+        if name == "embed-query":
+            p.add_argument("text")
+        p.add_argument("--config", default=".curator/config.json",
+                       help="config JSON with embedding_* keys "
+                            "(default: .curator/config.json if present)")
+        p.add_argument("--model", default=None,
+                       help="override embedding_model")
+        p.add_argument("--backend", default=None,
+                       help="override embedding_backend (auto|fastembed|"
+                            "sentence-transformers)")
+    args = ap.parse_args()
+
+    cfg = {}
+    cfg_path = Path(args.config)
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            cfg = {}
+    # Invoking the CLI is itself the opt-in; a missing config or an
+    # embedding_enabled=false workspace shouldn't make `probe` useless.
+    cfg["embedding_enabled"] = True
+    if args.model:
+        cfg["embedding_model"] = args.model
+    if args.backend:
+        cfg["embedding_backend"] = args.backend
+
+    emb, err = load_embedder(cfg)
+    if emb is None:
+        print(json.dumps({"error": err}))
+        return 2
+    if args.cmd == "probe":
+        print(json.dumps({"backend": emb.backend, "model_id": emb.model_id,
+                          "dim": emb.dim}))
+    elif args.cmd == "embed-query":
+        print(json.dumps({"model_id": emb.model_id,
+                          "vector": emb.embed_query(args.text)}))
+    else:  # embed-passages
+        try:
+            texts = json.loads(sys.stdin.read())
+            assert isinstance(texts, list) \
+                and all(isinstance(t, str) for t in texts)
+        except Exception:
+            print(json.dumps({"error": "stdin must be a JSON array of strings"}))
+            return 2
+        print(json.dumps({"model_id": emb.model_id,
+                          "vectors": emb.embed_passages(texts)}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli())
