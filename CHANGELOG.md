@@ -4,7 +4,9 @@ Human-curated record of what shipped, grouped thematically. For the authoritativ
 
 ## 2026-07-13 — v0.7.0 — repo restructure: skill moves to skills/curiosity-engine/
 
-Completes the response to the skills-CLI root-layout regression (see v0.6.1). The skill — SKILL.md, `scripts/`, `template/`, `docs/`, plus a LICENSE copy — now lives at **`skills/curiosity-engine/`** inside the repo; repo-level files (README, CHANGELOG, SECURITY, release checklist) stay at the root, alongside a **frontmatterless** root SKILL.md pointer stub (valid frontmatter there would re-trigger the CLI's single-file install path; discovery verifiably ignores the stub without it).
+Completes the response to the skills-CLI root-layout regression (see v0.6.1). The skill — SKILL.md, `scripts/`, `template/`, `docs/`, plus a LICENSE copy — now lives at **`skills/curiosity-engine/`** inside the repo; repo-level files (README, CHANGELOG, SECURITY, release checklist) stay at the root. This is the layout Anthropic's own [anthropics/skills](https://github.com/anthropics/skills) repo uses (`skills/<name>/SKILL.md`, no root SKILL.md).
+
+*(Follow-up, same day: v0.7.0 initially also shipped a frontmatterless root SKILL.md pointer stub. It was unnecessary — discovery needs no root file — and a second SKILL.md confused humans more than it helped anyone, so it was removed. The README documents where the skill lives.)*
 
 Why: skills-CLI 1.5.13–1.5.16 installs a repo-root SKILL.md as a single-file skill, dropping every supporting file. The subdirectory layout is handled correctly by **all** CLI versions — and better, it is **retroactively self-healing**: an update run by any CLI version against a stale pre-v0.7.0 lock entry (`skillPath: "SKILL.md"`) re-discovers the moved skill, installs the full tree, and rewrites the lock. Users bricked by the old layout are repaired by a plain `npx skills update` / `npx skills add` — no pinned command needed anymore. Verified empirically on a live test branch across the full matrix: fresh add and stale-lock update, each with CLI 1.5.12 and 1.5.16, plus the root-stub variants.
 
