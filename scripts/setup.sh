@@ -1446,14 +1446,19 @@ if [ ! -d wiki/.git ]; then
     echo "  Initialized wiki git repo"
 fi
 
-# Optional: semantic vault search (sentence-transformers + sqlite-vec).
-# Adds ~200MB of model weights and enables hybrid FTS5 + cosine search.
-# Most small vaults (<500 sources) don't need this — FTS5 keyword
-# search covers the common case. Opt in when you start hitting
-# paraphrased queries that miss with keyword alone.
+# Optional: semantic search (fastembed + sqlite-vec). fastembed runs the
+# embedding model on ONNX — no PyTorch, ~50MB of deps + ~65MB of model
+# weights (BAAI/bge-small-en-v1.5) — and powers hybrid FTS5 + cosine
+# vault search, graph.py retrieve's semantic seeding, and the provisional
+# embedding-neighbor edge tier. Most small vaults (<500 sources) don't
+# need this — FTS5 keyword search covers the common case. Opt in when
+# you start hitting paraphrased queries that miss with keyword alone.
+# (Workspaces that already have sentence-transformers installed keep
+# working — embedder.py falls back to it, preserving their MiniLM
+# vector space.)
 if _is_interactive; then
     echo ""
-    printf "Install semantic vault search (sentence-transformers + sqlite-vec, ~200MB)? [y/N] "
+    printf "Install semantic search (fastembed + sqlite-vec, ~115MB)? [y/N] "
     read -r reply_embed || reply_embed="n"
     case "$reply_embed" in
         y|Y|yes|YES)
@@ -1479,17 +1484,19 @@ if _is_interactive; then
                 echo "        Proceeding anyway — the error below will be the compiler's."
                 echo ""
             fi
-            echo "  Installing sentence-transformers + sqlite-vec (+ pysqlite3) into .venv ..."
-            if uv pip install sentence-transformers sqlite-vec pysqlite3; then
+            echo "  Installing fastembed + sqlite-vec (+ pysqlite3) into .venv ..."
+            if uv pip install fastembed sqlite-vec pysqlite3; then
                 # Flip embedding_enabled to true in config.json so vault_index
-                # will compute embeddings on next ingest / --rebuild.
+                # will compute embeddings on next ingest / --rebuild. Only
+                # default the model when the key is absent — a workspace
+                # with an existing embedding_model keeps its vector space.
                 uv run --no-project python3 -c "
 import json
 from pathlib import Path
 p = Path('.curator/config.json')
 cfg = json.loads(p.read_text())
 cfg['embedding_enabled'] = True
-cfg.setdefault('embedding_model', 'sentence-transformers/all-MiniLM-L6-v2')
+cfg.setdefault('embedding_model', 'BAAI/bge-small-en-v1.5')
 p.write_text(json.dumps(cfg, indent=2))
 "
                 echo "  Enabled embedding_enabled=true in .curator/config.json"
@@ -1497,12 +1504,12 @@ p.write_text(json.dumps(cfg, indent=2))
                 echo "    uv run python3 $SCRIPT_DIR/vault_index.py --rebuild"
             else
                 echo "  Install failed. Enable later:"
-                echo "    uv pip install sentence-transformers sqlite-vec"
+                echo "    uv pip install fastembed sqlite-vec"
             fi
             ;;
         *)
             echo "  Skipping semantic search. Enable later:"
-            echo "    uv pip install sentence-transformers sqlite-vec"
+            echo "    uv pip install fastembed sqlite-vec"
             echo "    (then set embedding_enabled=true in .curator/config.json)"
             ;;
     esac

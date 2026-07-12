@@ -24,7 +24,8 @@
   "update_source_slug": "benjsmith/curiosity-engine",
   "spot_audit_interval": 20,
   "embedding_enabled": false,
-  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_backend": "auto",
+  "embedding_model": "BAAI/bge-small-en-v1.5",
   "notes_semantic_dedup_threshold": 0.92,
   "identifier_resolution": {
     "enabled": false,
@@ -35,6 +36,13 @@
   "project_classifier_confidence_threshold": 0.5,
   "project_classifier_home_min_words": 30,
   "cluster_scope_threshold": 500,
+  "provisional": {
+    "enabled": true,
+    "min_shared_sources": 2,
+    "embedding_min_cosine": 0.6,
+    "embedding_top_m": 5,
+    "max_edges": 2000
+  },
   "compression": {
     "read": "ultra",
     "write_analysis": "lite",

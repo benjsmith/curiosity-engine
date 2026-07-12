@@ -116,8 +116,9 @@ chosen models, then add an `ollama` preset to `.curator/config.json`
 (see `config.example.json`). Caveats: open-weight models will drop
 citations more often than frontier Sonnet/Opus — tune
 `parallel_workers` down inside the preset block and expect more
-`score_diff` rejections. Semantic search still works locally (MiniLM
-runs offline via sentence-transformers). The deterministic table-
+`score_diff` rejections. Semantic search still works locally (the
+embedding model runs offline via fastembed/ONNX, or
+sentence-transformers as fallback). The deterministic table-
 extraction tier (`local_ingest.py` + `sweep.py promote-extracted-
 tables`) runs purely on local Python libraries (pdfplumber / openpyxl
 / python-pptx) and is unaffected by model choice; if you later add a

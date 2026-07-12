@@ -271,7 +271,8 @@ def graph_surface(wiki_dir: Path) -> dict:
     graph.py's _init_schema) when kuzu can't introspect."""
     static = {
         "nodes": ["WikiPage", "VaultSource", "DataRow", "Note"],
-        "edges": ["WikiLink", "Cites", "DataRef", "Depicts", "AppearsIn"],
+        "edges": ["WikiLink", "Cites", "DataRef", "Depicts", "AppearsIn",
+                  "ProvisionalLink"],
     }
     if kuzu is None:
         return {**static, "source": "static (kuzu not installed)"}

@@ -20,7 +20,14 @@ file from the template.
 - `.curator/` — curator state, not git-tracked.
   - `schema.md`, `prompts.md`, `config.json` — human-edited.
   - `graph.kuzu` — kuzu property graph (WikiPage/VaultSource nodes,
-    WikiLink/Cites edges). Rebuilt via `graph.py rebuild wiki`.
+    WikiLink/Cites edges, plus mechanically derived ProvisionalLink
+    edges that are never written into wiki markdown). Rebuilt via
+    `graph.py rebuild wiki`. Query with `graph.py retrieve wiki
+    "<question>"` for ranked multi-hop retrieval.
+  - `wiki.db` — chunked wiki-page embedding index (sqlite-vec), present
+    when `embedding_enabled: true`. Maintained by `graph.py rebuild`.
+  - `link-rejects.json` — page pairs a LINK classifier voted invalid;
+    pruned from the provisional tier at every rebuild.
   - `tables.db` — SQLite class-entity tables (schema declared on entity
     pages). Populated by `tables.py`; rows cite vault/log provenance.
   - `log.md`, `index.md`, `.epoch_plan.md`, `.guard.snapshot` — auto.

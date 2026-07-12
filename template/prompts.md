@@ -356,13 +356,26 @@ clean context; does NOT see prior CURATE or LINK history.
 > <ORPHAN_SOURCES_JSON>
 > ```
 >
+> Bridge candidates (unlinked page pairs the graph already suspects are
+> related — co-citation of shared vault sources, or embedding-neighbor —
+> from `graph.py link-candidates`):
+> ```
+> <BRIDGE_CANDIDATES_JSON>
+> ```
+>
 > **At least 60% of your proposals must use a `priority_targets` entry as
 > the `target`.** These source stubs are the highest-orphan-rate pages in
 > the wiki and need wiring most. Each priority target carries up to 3
 > `candidate_targets` — concept/entity pages whose stems already appear in
 > the source's body — those are strong candidates for the proposal's
-> `source` page. Spend the remaining proposal budget on substantive
-> cross-subdirectory connections after the floor is met.
+> `source` page. Spend the remaining proposal budget on the bridge
+> candidates first — each is a pre-vetted structural signal (`origin:
+> co-citation` means the pair cites the same evidence; `origin: embedding`
+> means the prose is semantically close), so judge whether the connection
+> is substantive and, if so, pick which page's first_paragraph carries the
+> natural anchor — then on any other substantive cross-subdirectory
+> connections you spot. Bridge pairs that don't survive your judgement
+> should simply be omitted.
 >
 > Propose up to 150 wikilink insertions. Each proposal:
 > - **source**: path of the page that gets the new link (e.g. `concepts/transformer.md`).

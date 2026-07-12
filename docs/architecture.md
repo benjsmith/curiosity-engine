@@ -82,7 +82,7 @@ Cheap in aggregate, catches things the praise reviewer can't.
 Known failure modes, in rough order of when you'll hit them:
 
 - **Curator over-extracts on small corpora.** Below ~10 sources there isn't enough material for cross-source synthesis; CURATE waves produce weak analyses. Ingest more before running long sessions.
-- **Keyword retrieval misses paraphrases.** FTS5 is sharp for exact / stem matches, weak for paraphrased semantic queries. The optional MiniLM+sqlite-vec layer mitigates.
+- **Keyword retrieval misses paraphrases.** FTS5 is sharp for exact / stem matches, weak for paraphrased semantic queries. The optional embedding layer (fastembed/ONNX + sqlite-vec) mitigates.
 - **Cognitive overhead.** Learning the vocabulary (the six page types, three wave modes, four scoring dimensions) takes effort. Not a low-touch tool.
 - **Rate-limit bound.** `parallel_workers × reviewer × waves/hour` saturates API tiers. Tune via `parallel_workers` but you can't make it free.
 - **~500-page wiki ceiling.** Beyond that, plan latency grows. The incremental score cache helps; the tiered-vault design (bounded wiki + unbounded indexed vault) unlocks more; cluster-scoped CURATE (see below) keeps individual waves coherent past the threshold.

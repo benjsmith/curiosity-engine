@@ -1764,12 +1764,7 @@ def _init_notes_semantic_ctx(workspace: Path):
     if not cfg.get("embedding_enabled"):
         return None
     threshold = float(cfg.get("notes_semantic_dedup_threshold", 0.92))
-    model_name = cfg.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2")
 
-    try:
-        from sentence_transformers import SentenceTransformer  # type: ignore
-    except ImportError:
-        return None
     try:
         try:
             import pysqlite3 as _sqlite3  # type: ignore
@@ -1804,9 +1799,11 @@ def _init_notes_semantic_ctx(workspace: Path):
     except Exception:
         return None
 
-    try:
-        embedder = SentenceTransformer(model_name)
-    except Exception:
+    from embedder import load_embedder
+    embedder, _err = load_embedder(cfg)
+    if embedder is None or embedder.dim != 384:
+        # notes_vec is declared float[384]; a different-dim model would
+        # error on insert — fall back to content-hash-only dedup.
         return None
 
     return (embedder, conn, threshold)
@@ -1815,17 +1812,14 @@ def _init_notes_semantic_ctx(workspace: Path):
 def _encode_normalised(embedder, text: str):
     """Produce a unit-norm float32 embedding ready for sqlite-vec.
 
-    Normalising makes L2 distance correspond cleanly to cosine
-    similarity via `cos = 1 - L2²/2`, independent of whether the
-    underlying model returns unit vectors by default.
+    The shared embedder (embedder.py) already L2-normalises, so L2
+    distance corresponds cleanly to cosine similarity via
+    `cos = 1 - L2²/2`. Notes compare note-to-note (symmetric), so the
+    passage embedding is the right call on both sides.
     """
     import numpy as np
-    vec = embedder.encode([text])[0]
-    v = np.asarray(vec, dtype=np.float32)
-    n = float((v * v).sum()) ** 0.5
-    if n > 1e-12:
-        v = v / n
-    return v.tobytes()
+    return np.asarray(embedder.embed_passages([text])[0],
+                      dtype=np.float32).tobytes()
 
 
 def _semantic_find_dup(line: str, ctx) -> Optional[str]:
@@ -3842,15 +3836,14 @@ def _semantic_classify_step(
     if not cfg.get("embedding_enabled"):
         return {"skipped": "embedding_disabled"}
     try:
-        from sentence_transformers import SentenceTransformer  # type: ignore
         import numpy as np  # type: ignore
     except ImportError:
         return {"skipped": "deps_missing"}
 
-    try:
-        embedder = SentenceTransformer(cfg["embedding_model"])
-    except Exception as e:
-        return {"skipped": f"model_load_failed: {type(e).__name__}: {e}"}
+    from embedder import load_embedder
+    embedder, _err = load_embedder(cfg)
+    if embedder is None:
+        return {"skipped": f"model_load_failed: {_err}"}
 
     # Targets: pages with empty projects: set, excluding home pages
     # (which are seeded with their own project tag and frozen).
@@ -3867,7 +3860,7 @@ def _semantic_classify_step(
     home_names = [h[0] for h in substantive_homes]
     home_texts = [h[1][:8000] for h in substantive_homes]
     home_embs = np.asarray(
-        embedder.encode(home_texts, normalize_embeddings=True),
+        embedder.embed_passages(home_texts),
         dtype=np.float32,
     )
 
@@ -3879,7 +3872,7 @@ def _semantic_classify_step(
         title = str(fm.get("title", "") or "")
         target_texts.append((title + "\n\n" + (body or ""))[:8000])
     target_embs = np.asarray(
-        embedder.encode(target_texts, normalize_embeddings=True),
+        embedder.embed_passages(target_texts),
         dtype=np.float32,
     )
 

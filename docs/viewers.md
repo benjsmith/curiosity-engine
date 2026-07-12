@@ -53,11 +53,13 @@ setup.sh to convert them back.
 ## Semantic vault search (optional)
 
 For vaults above a few hundred sources where keyword search starts
-missing fuzzy matches, an optional MiniLM embedding index layered
-over sqlite-vec gives the curator a semantic fallback. Setup
-prompts to install `sentence-transformers` + `sqlite-vec` (~200MB
-model download); opt in only if you need it. Embeddings augment
-FTS5, never replace — keyword stays primary.
+missing fuzzy matches, an optional embedding index layered over
+sqlite-vec gives the curator a semantic fallback. Setup prompts to
+install `fastembed` + `sqlite-vec` (~115MB deps + model; ONNX
+runtime, no PyTorch — the default model is `BAAI/bge-small-en-v1.5`;
+workspaces with `sentence-transformers` already installed keep
+working via the fallback backend); opt in only if you need it.
+Embeddings augment FTS5, never replace — keyword stays primary.
 
 A C compiler must be on PATH at install time — `pysqlite3` (pulled
 in alongside sqlite-vec to give macOS system Python a sqlite build

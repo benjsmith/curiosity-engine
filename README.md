@@ -25,7 +25,9 @@ Everything the skill does, in one line each:
 - **Identifier resolution** for chemicals (PubChem) and gene symbols (MyGene.info). Cached locally; lazy lookup at synthesis time only.
 - **Class tables** — entity-instance data (deals, patients, contracts, matters) with schemas declared on entity pages, rows citing vault provenance. Queryable via `tables.py`; joinable with the kuzu graph.
 - **Three storage layers, one source-of-truth file per fact**: plain markdown for prose, SQLite for class-entity row data, embedded kuzu property graph for wikilink + relational-edge traversal. The two databases are derived state.
-- **Semantic vault search** (optional, opt-in) — MiniLM + sqlite-vec layered over FTS5 for fuzzy queries on large corpora. Keyword stays primary.
+- **Graph retrieval with query routing** — `graph.py retrieve` does semantic seed → multi-hop BFS over the knowledge graph → ranked pages with provenance, routing global/sensemaking queries graph-only and blending vault-vector recall into factoid/multi-hop queries. Policy validated by a controlled CE-vs-RAG benchmark (graph+curation reach parity with vector RAG on factoids and win multi-hop + sensemaking).
+- **Two-tier graph** — alongside curated typed edges, `rebuild` derives cheap provisional edges (co-citation + embedding-neighbor, no LLM, kuzu-only) that warm retrieval on day one and queue as candidates for the LINK pass, which promotes them to real `[[wikilinks]]` or prunes them.
+- **Semantic search** (optional, opt-in) — a shared local embedder (fastembed/ONNX + bge-small preferred — no PyTorch; sentence-transformers/MiniLM fallback) + sqlite-vec, layered over FTS5 for fuzzy queries on large corpora. Keyword stays primary. Text never leaves the machine.
 - **Multi-project model** — many projects in one wiki, derived from the citation graph (not declared by the user); recency-weighted curation, soft-delete, cross-wiki merge via the companion [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge) skill.
 - **Code-repo integration** — register a code repo against a CE workspace; capture decisions, gotchas, agent findings into the workspace's vault. Curate runs against the workspace, never inside the code repo. Per-(repo, branch) session brief gives a fresh agent yesterday's context for files in the current diff.
 - **Notes + todos** as first-class types. `/note`, `/day`, `/month`, `/year`, `/todo` slash commands in Claude Code; same flows via natural language on other CLIs. Ticking `[x]` propagates across mention-sites and appends to the yearly completion archive.
@@ -141,7 +143,7 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 - **Python 3** (stdlib for most scripts)
 - **[uv](https://github.com/astral-sh/uv)** — workspace venv + script runner (auto-installed by `setup.sh` if missing)
 - **[kuzu](https://kuzudb.com/)** — embedded property-graph database (auto-installed)
-- **[sentence-transformers](https://sbert.net/)** + **[sqlite-vec](https://github.com/asg017/sqlite-vec)** *(optional)* — semantic vault search (~200MB model)
+- **[fastembed](https://github.com/qdrant/fastembed)** + **[sqlite-vec](https://github.com/asg017/sqlite-vec)** *(optional)* — semantic search on ONNX, no PyTorch (~115MB deps+model). [sentence-transformers](https://sbert.net/) works as a fallback backend for workspaces that already have it.
 - **git** — the wiki is a git repo
 - **A frontier coding-agent CLI** — Claude Code is primary; others work with adjustments (see [docs/setup-advanced.md](docs/setup-advanced.md))
 

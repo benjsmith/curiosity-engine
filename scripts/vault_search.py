@@ -43,10 +43,11 @@ try:
 except ImportError:
     import sqlite3
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 DB = Path("vault/vault.db")
 GRAPH_DB = Path(".curator/graph.kuzu")
 CONFIG_PATH = Path(".curator/config.json")
-DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 _FTS5_RESERVED = {"AND", "OR", "NOT", "NEAR"}
 
@@ -74,26 +75,29 @@ def _load_config() -> dict:
 
 
 def _load_embedder_for_search():
-    """Return (model, sqlite_vec) if embeddings usable, else (None, None).
+    """Return (embedder, sqlite_vec) if embeddings usable, else (None, None).
 
     Unlike vault_index, we soft-fail on missing deps — a user might have
     disabled embeddings after indexing, or be searching a FTS5-only vault
-    with --mode hybrid. Falling back to FTS5 is always safe.
+    with --mode hybrid. Falling back to FTS5 is always safe. Backend
+    selection (fastembed/ONNX preferred, sentence-transformers fallback)
+    lives in embedder.py, shared with vault_index/graph/sweep.
     """
-    cfg = _load_config()
-    if not cfg.get("embedding_enabled"):
-        return None, None
     try:
-        from sentence_transformers import SentenceTransformer
         import sqlite_vec
     except ImportError:
         sys.stderr.write(
-            "vault_search: embedding_enabled=true but sentence-transformers "
-            "or sqlite-vec missing; falling back to FTS5.\n"
+            "vault_search: embedding_enabled=true but sqlite-vec missing; "
+            "falling back to FTS5.\n"
         )
         return None, None
-    model_name = cfg.get("embedding_model", DEFAULT_EMBED_MODEL)
-    return SentenceTransformer(model_name), sqlite_vec
+    from embedder import load_embedder
+    emb, err = load_embedder(_load_config())
+    if emb is None:
+        if "embedding_enabled=false" not in err:
+            sys.stderr.write(f"vault_search: {err}; falling back to FTS5.\n")
+        return None, None
+    return emb, sqlite_vec
 
 
 def _fts5_query(conn, fts_expr: str, limit: int, include_text: bool) -> list:
@@ -169,8 +173,20 @@ def _semantic_search(conn, model, sqlite_vec_mod, query: str,
         sqlite_vec_mod.load(conn)
     finally:
         conn.enable_load_extension(False)
-    qvec = model.encode(query, normalize_embeddings=True).tolist()
-    qbytes = sqlite_vec_mod.serialize_float32(qvec)
+    # Vectors were indexed under a specific backend/model; a mismatch
+    # means query and index live in different vector spaces and results
+    # silently degrade — warn loudly, still search (FTS half of hybrid
+    # keeps working regardless).
+    try:
+        row = conn.execute("SELECT model FROM embedding_meta LIMIT 1").fetchone()
+        if row and row[0] != model.model_id:
+            sys.stderr.write(
+                f"vault_search: index embedded with {row[0]} but active "
+                f"embedder is {model.model_id} — semantic ranking is "
+                "unreliable; run: vault_index.py --reembed\n")
+    except Exception:
+        pass
+    qbytes = sqlite_vec_mod.serialize_float32(model.embed_query(query))
     rows = conn.execute("""
         SELECT em.path, s.title, s.source_path, s.date, s.body, se.distance
         FROM source_embeddings se
@@ -294,11 +310,16 @@ def _graph_search(seed_paths: list, limit: int, sqlite_conn) -> list:
     return out
 
 
-def search(query: str, limit: int, include_text: bool, mode: str = "fts5",
-           graph_expand: bool = False):
+def search_results(query: str, limit: int = 10, include_text: bool = False,
+                   mode: str = "fts5", graph_expand: bool = False) -> list:
+    """Library entry point: same pipeline as the CLI, returns the result list.
+
+    Used by graph.py retrieve (blend route) to pull vault recall without a
+    subprocess. Paths (DB, GRAPH_DB, config) are cwd-relative, so callers
+    must run with cwd == workspace root — the same contract the CLI has.
+    """
     if not DB.exists():
-        print("[]")
-        return
+        return []
     conn = sqlite3.connect(str(DB))
     conn.execute("PRAGMA journal_mode=WAL")
 
@@ -333,7 +354,15 @@ def search(query: str, limit: int, include_text: bool, mode: str = "fts5",
         results = (fts or sem)[:limit]
 
     conn.close()
-    print(json.dumps(results, indent=2))
+    return results
+
+
+def search(query: str, limit: int, include_text: bool, mode: str = "fts5",
+           graph_expand: bool = False):
+    print(json.dumps(
+        search_results(query, limit, include_text, mode, graph_expand),
+        indent=2,
+    ))
 
 
 def count():

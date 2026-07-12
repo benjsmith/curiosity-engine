@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from embedder import load_embedder  # noqa: E402
+
 # macOS system Python's sqlite3 is often compiled without
 # --enable-loadable-sqlite-extensions, so conn.load_extension is missing —
 # which breaks sqlite-vec. pysqlite3-binary is a drop-in with extensions
@@ -38,7 +41,6 @@ except ImportError:
 
 DB = Path("vault/vault.db")
 CONFIG_PATH = Path(".curator/config.json")
-DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def _load_config() -> dict:
@@ -55,29 +57,30 @@ def _embedding_enabled() -> bool:
 
 
 def _load_embedder():
-    """Return (model, sqlite_vec, model_name, dim). Fails fast if deps missing.
+    """Return (embedder, sqlite_vec, model_id, dim). Fails fast if deps missing.
 
     Embeddings are opt-in (`embedding_enabled=true` in config), so a missing
     dep means the user opted in without running the install. Hard-fail with
     a clear message beats silent skip — the user won't notice missing
     vectors until their hybrid search mysteriously returns FTS5 only.
+    Backend selection (fastembed/ONNX preferred, sentence-transformers
+    fallback) lives in embedder.py, shared with vault_search/graph/sweep.
     """
     try:
-        from sentence_transformers import SentenceTransformer
         import sqlite_vec
     except ImportError as e:
         sys.stderr.write(
             "vault_index: embedding_enabled=true but "
-            f"sentence-transformers/sqlite-vec not installed ({e}).\n"
-            "  Install: uv pip install sentence-transformers sqlite-vec\n"
+            f"sqlite-vec not installed ({e}).\n"
+            "  Install: uv pip install fastembed sqlite-vec\n"
             "  Or set embedding_enabled=false in .curator/config.json\n"
         )
         sys.exit(2)
-    cfg = _load_config()
-    model_name = cfg.get("embedding_model", DEFAULT_EMBED_MODEL)
-    model = SentenceTransformer(model_name)
-    dim = model.get_embedding_dimension()
-    return model, sqlite_vec, model_name, dim
+    emb, err = load_embedder(_load_config())
+    if emb is None:
+        sys.stderr.write(f"vault_index: {err}\n")
+        sys.exit(2)
+    return emb, sqlite_vec, emb.model_id, emb.dim
 
 
 def _init_embed_tables(conn, sqlite_vec_mod, dim: int) -> None:
@@ -108,13 +111,14 @@ def _embed_and_upsert(conn, sqlite_vec_mod, model, model_name: str,
                        path_rel: str, text: str) -> None:
     """Embed `text` and insert/update the row keyed by `path_rel`.
 
-    MiniLM has 512-token context (~2000 chars). An 8k-char cap gives
-    headroom with graceful internal truncation and works for longer-
-    context alternatives (nomic-embed at 8192 tokens) without
-    re-architecting. Normalize to unit length so cosine == dot product
-    and sqlite-vec's built-in L2 distance is equivalent to cosine.
+    Small embedding models have ~512-token context (~2000 chars). An
+    8k-char cap gives headroom with graceful internal truncation and
+    works for longer-context alternatives (nomic-embed at 8192 tokens)
+    without re-architecting. Vectors arrive unit-normalised from the
+    shared embedder so cosine == dot product and sqlite-vec's built-in
+    L2 distance is equivalent to cosine.
     """
-    vec = model.encode(text[:8000], normalize_embeddings=True).tolist()
+    vec = model.embed_passages([text[:8000]])[0]
     vec_bytes = sqlite_vec_mod.serialize_float32(vec)
     existing = conn.execute(
         "SELECT vec_id FROM embedding_meta WHERE path=?", (path_rel,)
@@ -274,14 +278,10 @@ def rebuild():
             pending_paths.append(rel)
             pending_texts.append(text[:8000])
 
-    # Second pass: batched embedding. model.encode handles batches natively
-    # much faster than one-at-a-time.
+    # Second pass: batched embedding — much faster than one-at-a-time.
     if embedder is not None and pending_texts:
         model, vec_mod, model_name = embedder
-        vecs = model.encode(
-            pending_texts, normalize_embeddings=True,
-            batch_size=32, show_progress_bar=False
-        ).tolist()
+        vecs = model.embed_passages(pending_texts)
         now = datetime.now().isoformat()
         for rel, vec in zip(pending_paths, vecs):
             vec_bytes = vec_mod.serialize_float32(vec)
@@ -322,7 +322,16 @@ def reembed():
     model, vec_mod, model_name, dim = _load_embedder()
     c = sqlite3.connect(str(DB))
     c.execute("PRAGMA journal_mode=WAL")
-    vec_mod.load(c)
+    # _init_embed_tables loads the sqlite-vec extension behind the
+    # enable_load_extension gate; a bare vec_mod.load() here raises
+    # "not authorized" on gated sqlite builds. But the DROP below must
+    # run with the extension already loaded (vec0 is a virtual table),
+    # so load it first — gated.
+    c.enable_load_extension(True)
+    try:
+        vec_mod.load(c)
+    finally:
+        c.enable_load_extension(False)
     # Dimensions may differ; wipe and recreate both tables.
     c.execute("DROP TABLE IF EXISTS source_embeddings")
     c.execute("DELETE FROM embedding_meta")
@@ -331,9 +340,7 @@ def reembed():
     rows = c.execute("SELECT path, body FROM sources").fetchall()
     paths = [r[0] for r in rows]
     texts = [(r[1] or "")[:8000] for r in rows]
-    vecs = model.encode(
-        texts, normalize_embeddings=True, batch_size=32, show_progress_bar=False
-    ).tolist()
+    vecs = model.embed_passages(texts)
     now = datetime.now().isoformat()
     for rel, vec in zip(paths, vecs):
         vec_bytes = vec_mod.serialize_float32(vec)
