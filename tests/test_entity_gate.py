@@ -192,6 +192,36 @@ class EntityGateTest(unittest.TestCase):
         self.assertEqual(m["status"], "abstain")
         self.assertEqual(m["look_alike"]["page"], "entities/project-marlin.md")
 
+    # -- casing: chat-style lowercase must not reopen false-bridging --
+
+    def test_lowercase_lookalike_onyxx_abstains(self):
+        verdict = self.gate("what is project onyxx's launch fact?")
+        self.assertEqual(verdict["action"], "abstain", verdict)
+        m = self.single_mention(verdict)
+        self.assertEqual(m["status"], "abstain")
+        self.assertEqual(m["look_alike"]["page"], "entities/project-onyx.md")
+
+    def test_lowercase_canonical_resolves(self):
+        verdict = self.gate("what is project onyx's launch fact?")
+        self.assertEqual(verdict["action"], "proceed", verdict)
+        m = self.single_mention(verdict)
+        self.assertEqual(m["status"], "resolved")
+        self.assertEqual(m["page"], "entities/project-onyx.md")
+
+    def test_lowercase_alias_resolves(self):
+        verdict = self.gate("what do we know about the onyx initiative?")
+        self.assertEqual(verdict["action"], "proceed", verdict)
+        m = self.single_mention(verdict)
+        self.assertEqual(m["status"], "resolved")
+        self.assertEqual(m["page"], "entities/project-onyx.md")
+
+    def test_lowercase_retrieve_lookalike_returns_no_context(self):
+        raw, out = self.retrieve("what is project onyxx's launch fact?")
+        self.assertTrue(out.get("abstain"), out)
+        self.assertEqual(out["pages"], [])
+        self.assertEqual(out["vault"], [])
+        self.assertNotIn(ONYX_FACT, raw)
+
     # -- retrieve: enforcement at the context-fusion point ------------
 
     def test_retrieve_abstains_and_returns_no_context(self):

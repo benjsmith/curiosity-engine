@@ -31,6 +31,12 @@ whole-word containment match when it is unambiguous — "Onyx" resolving
 to the only page whose name contains the word "onyx"). Fuzzy proximity
 to a differently-named entity is NEVER a resolve.
 
+Mention extraction is capitalisation-first (quoted spans + capitalised
+runs), then an identity-aware n-gram pass over the case-folded query so
+all-lowercase questions ("what is project onyxx?") still surface both
+known names and high-similarity look-alikes. Without that pass the gate
+would silently no-op on chat-style casing and re-open false-bridging.
+
 Per-mention verdicts
 --------------------
     resolved    exact / known-alias match — answer normally, prefer the
@@ -188,6 +194,98 @@ def extract_mentions(query: str) -> list:
     return mentions[:_MAX_MENTIONS]
 
 
+_MAX_NGRAM = 6
+
+
+def _is_word_subphrase(inner: str, outer: str) -> bool:
+    """True when inner is a strict whole-word subphrase of outer (both
+    already normalised)."""
+    if not inner or not outer or inner == outer:
+        return False
+    return bool(re.search(
+        r"(?<![a-z0-9])" + re.escape(inner) + r"(?![a-z0-9])", outer))
+
+
+def _augment_mentions_from_identity(query: str, mentions: list,
+                                    index: dict) -> list:
+    """Second-pass mention finder for case-folded queries.
+
+    The capitalisation heuristic misses "what is project onyxx?" entirely.
+    Walk longest-first n-grams of the tokenised query; keep a window when
+    it exact-resolves against the identity index OR is a high-similarity
+    look-alike of a curated name (the false-bridge case). Longer matches
+    replace any shorter subphrase already accepted.
+    """
+    if not index:
+        return mentions
+
+    tokens: list = []
+    for raw in _TOKEN_RE.findall(query):
+        tok = raw.strip(".,;:!?’'-")
+        if tok:
+            # Possessive on a token is not part of the name.
+            tok = re.sub(r"[’']s$", "", tok, flags=re.IGNORECASE)
+            if tok:
+                tokens.append(tok)
+    if not tokens:
+        return mentions
+
+    accepted = list(mentions)
+    seen = {_norm(m) for m in accepted}
+    max_n = min(_MAX_NGRAM, len(tokens))
+
+    for n in range(max_n, 0, -1):
+        for i in range(0, len(tokens) - n + 1):
+            window = list(tokens[i:i + n])
+            while window and window[0].casefold() in _STOPWORDS:
+                window.pop(0)
+            while window and (window[-1].casefold() in _STOPWORDS
+                              or window[-1].casefold() in _CONNECTORS):
+                window.pop()
+            if not window:
+                continue
+            if all(t.casefold() in _STOPWORDS for t in window):
+                continue
+            if all(re.fullmatch(r"[0-9]+", t) for t in window):
+                continue
+            # Single-character tokens are never entity names; length-2
+            # only if it exact-resolves (e.g. a curated acronym).
+            if len(window) == 1 and len(window[0]) < 2:
+                continue
+
+            span = " ".join(window)
+            key = _norm(span)
+            if not key or key in seen:
+                continue
+            # Prefer the longer mention already kept.
+            if any(_is_word_subphrase(key, sk) for sk in seen):
+                continue
+
+            # Exact / mention-in-entity only — never "entity name sits
+            # inside this long window", which would swallow look-alikes
+            # next to a real name in coordinated questions.
+            hit = resolve_name(span, index,
+                               allow_query_contains_entity=False)
+            keep = bool(hit)
+            if not keep:
+                # Look-alike n-grams: require multi-token or ≥3 chars so
+                # short query noise can't fire the gate alone.
+                if len(window) == 1 and len(key) < 3:
+                    continue
+                look = _best_lookalike(key, index)
+                keep = bool(look)
+            if not keep:
+                continue
+
+            # Drop shorter mentions this one supersedes.
+            accepted = [m for m in accepted
+                        if not _is_word_subphrase(_norm(m), key)]
+            accepted.append(span)
+            seen = {_norm(m) for m in accepted}
+
+    return accepted[:_MAX_MENTIONS]
+
+
 # ---- Identity index (the curated resolution surface) ----
 
 def _iter_wiki_pages(wiki_dir: Path) -> list:
@@ -313,10 +411,17 @@ def _entities_rows(workspace: Path) -> list:
 
 # ---- Resolution ----
 
-def resolve_name(name: str, index: dict):
-    """Exact / known-alias match, else unambiguous whole-word containment
-    (both directions). Returns the index entry + matched key, or None.
-    Fuzzy similarity never resolves."""
+def resolve_name(name: str, index: dict, *,
+                 allow_query_contains_entity: bool = True):
+    """Exact / known-alias match, else unambiguous whole-word containment.
+
+    Default containment is bidirectional: "Onyx" resolves to the only page
+    whose name contains that word, and a long phrase that embeds a curated
+    name can also resolve. Callers scanning arbitrary query n-grams MUST
+    pass allow_query_contains_entity=False so a window like "project onyx
+    and project onyxx relate" does not collapse to Project Onyx and erase
+    the look-alike mention. Fuzzy similarity never resolves.
+    """
     key = _norm(name)
     if not key:
         return None
@@ -327,10 +432,16 @@ def resolve_name(name: str, index: dict):
     word_re = re.compile(r"(?<![a-z0-9])" + re.escape(key) + r"(?![a-z0-9])")
     contains: dict = {}
     for k in sorted(index):
-        if word_re.search(k) or (
-                len(key) > len(k)
-                and re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])",
-                              key)):
+        if word_re.search(k):
+            # mention is a whole word inside a curated name ("onyx" ⊆
+            # "project onyx") — safe for n-gram and free-text mentions.
+            entry = index[k]
+            contains.setdefault(entry["page"] or k, (k, entry))
+        elif (allow_query_contains_entity and len(key) > len(k)
+              and re.search(
+                  r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", key)):
+            # curated name is a whole word inside the mention span — only
+            # for explicit (usually capitalised) mentions, never n-grams.
             entry = index[k]
             contains.setdefault(entry["page"] or k, (k, entry))
     if len(contains) == 1:
@@ -400,11 +511,12 @@ def gate_query(wiki_dir: Path, query: str) -> dict:
     context), or "partial" (some mentions abstain — answer only the
     resolved/uncurated ones, abstain the rest by name).
     """
-    mentions = extract_mentions(query)
+    index, norm_bodies = build_identity_index(wiki_dir)
+    mentions = _augment_mentions_from_identity(
+        query, extract_mentions(query), index)
     if not mentions:
         return {"mentions": [], "action": "proceed"}
 
-    index, norm_bodies = build_identity_index(wiki_dir)
     workspace = wiki_dir.parent
     out: list = []
     abstained: list = []
