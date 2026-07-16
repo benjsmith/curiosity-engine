@@ -12,7 +12,8 @@ file from the template.
   - `vault/raw/` — drop folder. User drops files here; `local_ingest.py`
     extracts, moves originals to `vault/`, removes from drop folder.
 - `wiki/` — git-tracked markdown content. Subdirs: `sources/`, `entities/`,
-  `concepts/`, `analyses/`, `evidence/`, `facts/`, `tables/`, `figures/`.
+  `concepts/`, `analyses/`, `evidence/`, `facts/`, `tables/`, `figures/`,
+  `notes/`, `todos/`, `projects/`.
 - `assets/` — workspace-level binary assets, NOT git-tracked.
   - `assets/figures/` — PNGs referenced by `wiki/figures/*.md`. Rebuilt
     deterministically from vault PDFs by `figures.py regen wiki`. A fresh

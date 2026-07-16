@@ -5,9 +5,11 @@
 > and the deleted `compress.py` tokens-per-claim (tpc) ratchet. The tpc
 > figures below are not reproducible under the current skill: the gate
 > is now raw-token bloat + citation count, and the two loops are a
-> single CURATE pass. Keeping the numbers as a record of what the
-> predecessor design actually achieved; do not use them to calibrate
-> current behavior.
+> single CURATE pass. The `evolve_guard.sh` stdin-based `verify` mode
+> used in the table below has also since been replaced by the
+> `snapshot <file>` / `check <file>` pair. Keeping the numbers as a
+> record of what the predecessor design actually achieved; do not use
+> them to calibrate current behavior.
 
 Record of a one-shot test of the (now-retired) ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward. No tests are shipped in the skill.
 

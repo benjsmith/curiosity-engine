@@ -4,7 +4,7 @@ Run through this before tagging a new release. Items marked **(security)** must 
 
 ## Pre-release
 
-- [ ] **(security) Vendor bundle review.** Check that the in-tree vendor JS at `template/wiki-view/static/vendor/` matches the latest patched releases of D3 and Fuse.js. Rationale: the bundles are committed in-repo to keep the viewer build offline-capable and to close the CDN supply-chain risk; the tradeoff is that we own the upgrade cadence. The bundles ship to every workspace bundle that calls `viewer.sh build`.
+- [ ] **(security) Vendor bundle review.** Check that the in-tree vendor JS at `skills/curiosity-engine/template/wiki-view/static/vendor/` matches the latest patched releases of D3 and Fuse.js. Rationale: the bundles are committed in-repo to keep the viewer build offline-capable and to close the CDN supply-chain risk; the tradeoff is that we own the upgrade cadence. The bundles ship to every workspace bundle that calls `viewer.sh build`.
 
       Currently shipped (refresh this table on every bump):
 
@@ -19,8 +19,8 @@ Run through this before tagging a new release. Items marked **(security)** must 
       curl -fsSL -o /tmp/d3.min.js   https://cdn.jsdelivr.net/npm/d3@<v>/dist/d3.min.js
       curl -fsSL -o /tmp/fuse.min.js https://cdn.jsdelivr.net/npm/fuse.js@<v>/dist/fuse.min.js
       shasum -a 256 /tmp/d3.min.js /tmp/fuse.min.js
-      mv /tmp/d3.min.js   template/wiki-view/static/vendor/d3.min.js
-      mv /tmp/fuse.min.js template/wiki-view/static/vendor/fuse.min.js
+      mv /tmp/d3.min.js   skills/curiosity-engine/template/wiki-view/static/vendor/d3.min.js
+      mv /tmp/fuse.min.js skills/curiosity-engine/template/wiki-view/static/vendor/fuse.min.js
       # Update the table above with the new versions + hashes.
       # Run viewer.sh build in a test workspace; click around to confirm
       # the graph renders and search works (Fuse.js is the search lib).

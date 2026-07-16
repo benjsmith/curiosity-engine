@@ -410,10 +410,11 @@ def wave_scope(wiki_dir: Path, worst_pages: list, threshold: int) -> dict:
     orchestrator a locally coherent slice to work on per wave, keeping
     plan + execute cost bounded as the wiki grows.
 
-    Returns None below threshold so smaller wikis skip scoping entirely.
+    Returns None below threshold so smaller wikis skip scoping entirely,
+    and when threshold <= 0 (`cluster_scope_threshold: 0` disables scoping).
     Returns {"seed": path, "pages": [...], "size": N} when active.
     """
-    if len(worst_pages) < threshold or not worst_pages:
+    if threshold <= 0 or not worst_pages or len(worst_pages) < threshold:
         return None
     seed = worst_pages[0]["page"]
 

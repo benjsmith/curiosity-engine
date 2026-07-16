@@ -7,9 +7,12 @@ A self-improving knowledge wiki for coding-agent CLIs. Drop sources in, ask ques
 
 ## What it does
 
-Three stores, three verbs:
+Two content stores, two derived databases, one curator, three commands:
 
-- **Vault** (`vault/`, raw sources — PDFs, docs, spreadsheets, slides — append-only) → **Curator** (an autonomous agent) → **Wiki** (`wiki/`, eight markdown page types with `[[wikilinks]]` and `(vault:path)` citations, git-tracked).
+- **Vault** (`vault/`) — raw sources: PDFs, docs, spreadsheets, slides. Append-only.
+- **Wiki** (`wiki/`) — the knowledge itself: eleven markdown page types with `[[wikilinks]]` and `(vault:path)` citations, git-tracked. The markdown is the source of truth.
+- **Databases** (derived, rebuildable) — SQLite for search and class-entity rows (`vault.db` FTS5 + optional vectors, `tables.db`), plus an embedded kuzu property graph (`graph.kuzu`) for wikilink traversal and graph retrieval.
+- **Curator** — the autonomous agent this skill implements. Reads the vault, writes the wiki, keeps the databases in sync.
 - **`ingest`** — *"add this paper to the vault"*. Extracts text + tables + figures, indexes for keyword (and optional semantic) search.
 - **`query`** — *"what do I know about X?"*. Answers with citations, ends with a probing follow-up question.
 - **`curate`** — *"curate this wiki for an hour"*. Plan → execute → evaluate loop. Worker subagents draft improvements in parallel; a fresh-context reviewer grades each wave; hash-guarded scoring scripts the agent can't tamper with.
@@ -18,7 +21,7 @@ Three stores, three verbs:
 
 Everything the skill does, in one line each:
 
-- **Eight wiki page types** with per-type floors enforced mechanically: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures`.
+- **Eleven wiki page types** with per-type floors enforced mechanically: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures`, `notes`, `todos`, `projects`.
 - **Citation-preserving ratchet**: `score_diff.py` rejects any edit that drops a citation or adds one whose source doesn't FTS5-match the claim. The wiki never regresses.
 - **Built-in graph viewer** at `localhost:8090` — D3 force graph, type-grouped browser, fuzzy search, click-to-open modal with a hop-by-hop subgraph navigator. Or open `wiki/` as an Obsidian vault. Or use VS Code + Foam.
 - **Multimodal table & figure extraction** from PDFs. Per-table `tab-*.md` pages, with row data mirrored to a queryable SQLite store. Numeric literal-transcription mode for scientific work.
@@ -37,8 +40,7 @@ Everything the skill does, in one line each:
 ## Quick start
 
 ```bash
-# install the skill (pick one — all equivalent)
-claude skill install curiosity-engine
+# install the skill (pick one — both equivalent)
 npx skills add benjsmith/curiosity-engine
 # or via git (the skill lives in skills/curiosity-engine/ inside the repo):
 #   git clone https://github.com/benjsmith/curiosity-engine ~/curiosity-engine
@@ -65,7 +67,7 @@ For non-Claude-Code CLIs (Codex, Gemini, Copilot Chat, Cursor, OpenClaude, Ollam
 
 ## Architecture
 
-Three objects, three verbs, one autonomous loop.
+Two stores with a curator between them, three commands, one autonomous loop.
 
 ```
   your files
@@ -105,12 +107,12 @@ Inside the curator on each wave:
                 │
                 ▼ accept
       ┌─────────────────────────────────────────────┐
-      │             State — three stores            │
+      │         State — three storage layers        │
       ├──────────────┬──────────────┬───────────────┤
       │ Docs (git)   │ Relational   │ Graph         │
       │ vault/       │ vault.db     │ graph.kuzu    │
-      │ wiki/ 8 page │  FTS5 + vec  │  WikiLink     │
-      │   types     │ tables.db    │  Cites        │
+      │ wiki/ 11     │  FTS5 + vec  │  WikiLink     │
+      │  page types  │ tables.db    │  Cites        │
       │ .curator/log │  class rows  │  DataRef      │
       └──────┬───────┴──────────────┴───────────────┘
              │ feedback: epoch_summary · graph queries · FTS5
@@ -149,7 +151,7 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 ## Dependencies
 
 - **Python 3** (stdlib for most scripts)
-- **[uv](https://github.com/astral-sh/uv)** — workspace venv + script runner (auto-installed by `setup.sh` if missing)
+- **[uv](https://github.com/astral-sh/uv)** — workspace venv + script runner (if missing, `setup.sh` prints platform-specific install commands and exits — deliberately never auto-piped)
 - **[kuzu](https://kuzudb.com/)** — embedded property-graph database (auto-installed)
 - **[fastembed](https://github.com/qdrant/fastembed)** + **[sqlite-vec](https://github.com/asg017/sqlite-vec)** *(optional)* — semantic search on ONNX, no PyTorch (~115MB deps+model). [sentence-transformers](https://sbert.net/) works as a fallback backend for workspaces that already have it.
 - **git** — the wiki is a git repo

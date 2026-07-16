@@ -2,6 +2,20 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-16 — v0.8.1 — documentation accuracy pass
+
+A full docs-vs-code audit. Every user-facing doc was checked claim-by-claim against the scripts; no behavior changes except one bug fix that aligns code with its own documentation.
+
+- **README**: page-type count corrected — eleven, not eight (`notes`, `todos`, `projects` were missing everywhere the types were enumerated, including the architecture diagram). The "Three stores, three verbs" framing was misleading and is now the accurate inventory: two content stores (vault, wiki), two derived databases (SQLite, kuzu graph), one curator, three commands (`ingest`/`query`/`curate`). Dropped the nonexistent `claude skill install` channel (the two real channels: `npx skills add`, git clone + symlink). uv is *not* auto-installed by setup.sh — it prints install commands and exits.
+- **docs/architecture.md**: eleven subdirectories; the wave-mode table now lists all **seven** modes (`figure-extract`, `multimodal-table-extract`, `numeric-review` were missing) and the create-mode summary-tables 10% bucket; the new-page floor list covers all per-directory relaxations; the hash-guard list defers to the 21-entry `GUARDED` array instead of naming 8 scripts; stale "sweep copy" dropped from `.curator/` contents (same fix in `template/schema.md`); the single-user limitation now points at `curiosity-merge` for asynchronous extract-and-merge sharing.
+- **docs/code-knowledge.md**: aligned to the shipped implementation — `--init-workspace` takes no path (pair it with `--ce-workspace-path`); the session drainer has two modes (one-shot, per-session `/distill`); the session brief is built by filename-stem matching against `wiki/entities/` (not a `graph.kuzu` lookup) and its sample now shows the real section set; allowlist example shows per-script entries (no `scripts/*` wildcards); `(code:...)` citations are a prose convention (graph tracking is roadmap); citation qualifier resolves via `code_citation_root`; detached `/curate` spawns `claude -p` with the workspace as cwd (no `--workspace` flag); Codex falls back in-session; workspace detection uses the real markers (`.curator/config.json` / `wiki/.git`); re-running register rewrites the pointer/allowlist with defaults (not a diff-based no-op); `code_capture.py pr` takes the workspace root; illustrative vault filenames noted as such (`<base>-<sha12>.extracted.md`).
+- **docs/setup-advanced.md**: the update slug is hardcoded in `update.sh` and `update_source_slug` is intentionally not read (fork users pass `--source`); setup.sh never curl-pipes uv; the `CURIOSITY_ENGINE_OFFLINE` env flag never existed — identifier resolution detects offline per lookup (same fix in `template/schema.md`); OpenClaude is not in the host registry and takes the manual allowlist path.
+- **docs/viewers.md**: D3 + Fuse ship inside the skill payload and are copied at build time — nothing is downloaded into `~/.cache/.../wiki-view-vendor/`.
+- **docs/testing.md**: historical disclaimer now also covers the retired `evolve_guard.sh verify` stdin mode (replaced by `snapshot`/`check`).
+- **templates**: `template/CLAUDE.md` and `template/schema.md` now list all eleven wiki subdirs; `schema.md` documents `projects/`.
+- **RELEASE_CHECKLIST.md / SECURITY.md**: paths updated for the post-v0.7.0 `skills/curiosity-engine/` layout.
+- **Bug fix — `epoch_summary.py`**: `cluster_scope_threshold: 0` now disables cluster scoping, as SKILL.md and architecture.md have always documented; previously 0 made scoping unconditionally active on any wiki with a scored page.
+
 ## 2026-07-13 — v0.8.0 — richer neighbors verb + embedder.py as a stable library surface
 
 Two additions that let downstream tools (switchyard first) delete their parallel implementations and consume CE directly:

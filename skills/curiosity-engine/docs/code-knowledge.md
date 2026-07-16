@@ -42,7 +42,8 @@ This is exactly the shape curiosity-engine is built for: a *compounding
 artefact* with provenance, where the unit of value is something the code
 can't state for itself. The page-type taxonomy
 (`sources` / `entities` / `concepts` / `analyses` / `evidence` / `facts` /
-`tables` / `figures`) absorbs every input class we care about; the
+`tables` / `figures` / `notes` / `todos` / `projects`) absorbs every
+input class we care about; the
 citation ratchet keeps claims grounded; multi-project tagging gives us
 "many code repos, one wiki" almost for free.
 
@@ -115,7 +116,7 @@ paths into it, not multiple workspaces being merged.
 
 ### Mapping inputs to existing page types
 
-The eight CE page types are preserved unchanged. Inputs from a code-repo
+The eleven CE page types are preserved unchanged. Inputs from a code-repo
 context map cleanly:
 
 | Input | Vault entry | Wiki destinations |
@@ -128,6 +129,10 @@ context map cleanly:
 | Linear / Jira ticket on close | `sources/lin-<n>.md` | evidence (problem), analyses (resolution) |
 | CHANGELOG.md entry | `sources/changelog-<sha>.md` | facts, evidence |
 | Whiteboard photo / diagram | `sources/board-<date>.png` | figures + analyses |
+
+Vault filenames above are illustrative — captured entries actually land
+as `vault/sources/<base>-<sha12>.extracted.md`, with the sha12 suffix
+providing content-hash deduplication.
 
 Code modules and services map to **entities**. Architectural patterns,
 invariants, and conventions map to **concepts**. Cross-cutting
@@ -146,18 +151,20 @@ repos unambiguously:
 (code:myapp:src/auth/middleware.py:42-78)
 ```
 
-The qualifier (`myapp` here) resolves via the pointer file's `project`
-field. Code citations are **references**, not the source-of-truth role
+The qualifier (`myapp` here) resolves via the pointer file's
+`code_citation_root` field (which defaults to `project`). Code citations are **references**, not the source-of-truth role
 that `(vault:...)` plays — code changes daily, vault is append-only.
 Treat code citations as "as of recent ingest" pointers; the drift
 mechanism is described under [Capture surfaces](#capture-surfaces-in-v1)
 below.
 
 The existing `(vault:path)` DSL is unchanged, and `score_diff.py`'s
-mechanical citation gate continues to operate against `(vault:...)`
-exclusively. `(code:...)` citations are tracked by the graph builder for
-backlinks and drift but do not gate on the citation-preserving ratchet —
-they're more like wikilinks-with-anchors than evidentiary citations.
+mechanical citation gate operates only on `(vault:...)` and
+`(table:...)` citations. `(code:...)` citations are currently a prose
+convention: they don't gate on the citation-preserving ratchet, and
+graph-builder tracking for backlinks and drift is roadmap (see
+[Roadmap](#roadmap-v15)) — they're more like wikilinks-with-anchors
+than evidentiary citations.
 
 ## Setup
 
@@ -197,8 +204,11 @@ Use it for this code repo? [Y/n]
 - Default `Y` registers against the existing workspace.
 - `n` prompts for an alternative path.
 - A workspace at the proposed path that *isn't* a CE workspace prompts
-  separately ("Bootstrap one here? [y/N]" — default N to avoid name
-  collision with unrelated directories).
+  separately ("Bootstrap a CE workspace there? [y/N]" — default N to
+  avoid name collision with unrelated directories). Answering `y`
+  currently prints the two-step recipe (run plain `setup.sh` in the
+  target directory, then re-run `--register-code-repo` from the repo)
+  rather than bootstrapping inline.
 
 For non-interactive automation:
 
@@ -213,7 +223,7 @@ setup.sh --register-code-repo --ce-workspace-path ~/work/team-knowledge
 setup.sh --register-code-repo --ce-project myapp-backend
 
 # Bootstrap a workspace and register this repo against it in one call
-setup.sh --register-code-repo --init-workspace ~/Documents/curiosity-workspace
+setup.sh --register-code-repo --init-workspace --ce-workspace-path ~/Documents/curiosity-workspace
 
 # Solo / OSS: create the workspace inside this code repo (legacy behaviour)
 setup.sh --in-repo
@@ -234,7 +244,7 @@ repo unless `--in-repo` is passed explicitly.
 **Centralised capture via CI.** Teams that want PR-merge capture to
 run server-side (rather than via each engineer's local hook) can build
 their own GitHub Action / GitLab CI / Jenkins job that calls
-`scripts/code_capture.py pr --workspace <wiki-path> --pr-number N` and
+`scripts/code_capture.py pr --workspace <workspace-path> --pr-number N` and
 pushes the resulting `vault/` changes to the wiki repo. Earlier skill
 versions shipped a workflow template under `--ci-mode`; that template
 was retired in v0.4.0 to avoid maintaining a supply-chain-scanned
@@ -271,12 +281,13 @@ If the resolved workspace path doesn't exist on a given engineer's
 machine — common when they've cloned the code repo but not yet cloned
 the workspace — hooks no-op silently. They never break `git pull`.
 
-### Re-running setup is idempotent
+### Re-running setup
 
 Re-running `setup.sh --register-code-repo` on an already-registered repo
-diffs the config and produces no change unless something needs updating
-(e.g., the user passed a different workspace path). The allowlist file,
-hook, and pointer file are all overwrite-safe.
+rewrites the pointer file, allowlist, and hook with current defaults
+(the existing `.claude/settings.local.json` is backed up first). Note
+that hand-edits to the pointer's `[ingest]` / `[brief]` keys are reset
+to defaults — re-apply them after a re-run.
 
 For existing CE users with a research workspace at, say, `~/research/`:
 nothing changes. Setup invocations inside `~/research/` see the existing
@@ -294,19 +305,15 @@ each carries privacy and integration cost that doesn't fit a v1 surface.
 
 `scripts/session_drainer.py` reads the host CLI's session-store
 directory (for Claude Code: `~/.claude/projects/<flatpath>/*.jsonl`),
-identifies completed sessions, and writes one
-`vault/sources/session-<id>.md` entry per session, with the project tag
-inferred from the session's working directory.
+identifies completed sessions, and writes one vault source per session,
+with the project tag inferred from the session's working directory.
 
-It runs in one of three modes:
+It runs in one of two modes:
 
 1. **One-shot** — invoked manually or by `/distill`. Drains any complete
    sessions newer than the last drain marker.
-2. **Daemon** — installed as a launchd / systemd unit on opt-in via
-   `setup.sh --register-code-repo --install-drainer`. Watches the
-   session directory; drains as sessions complete.
-3. **Per-session via `/distill`** — agent invokes the drainer scoped to
-   the current session, then proposes wiki edits from it.
+2. **Per-session via `/distill`** — agent invokes the drainer scoped to
+   the current session (`--session`), then proposes wiki edits from it.
 
 A critical filter rule prevents recursion: sessions whose flatpath
 matches the workspace itself are skipped. Detached `/curate` sessions
@@ -336,12 +343,17 @@ default. Zero CI dependency, no deploy keys, no shared secrets.
 ```bash
 #!/usr/bin/env bash
 # .git/hooks/post-merge — installed by setup.sh --register-code-repo
-WORKSPACE="$(<skill_path>/scripts/code_repo.py resolve-workspace)"
-[ -d "$WORKSPACE" ] || exit 0   # workspace not on this machine; no-op
+WORKSPACE="$(python3 <skill_path>/scripts/code_repo.py resolve-workspace --from .)"
+[ -d "$WORKSPACE/vault" ] || exit 0   # workspace not on this machine; no-op
 uv run python3 <skill_path>/scripts/code_capture.py commits \
   --workspace "$WORKSPACE" \
   --since-marker
 ```
+
+(Sketch, not the literal file — the installed hook,
+`template/coderepo-hooks/post-merge`, additionally captures the PR
+thread and changelog changes in the merged range and optionally
+regenerates the session brief.)
 
 The hook is installed per-machine; an engineer who doesn't want capture
 can simply disable it, or set `[ingest] enabled = false` in the
@@ -409,16 +421,18 @@ per source.
 When the curiosity-engine skill loads in an agent session, it resolves
 the active workspace by:
 
-1. **Is cwd itself a workspace?** (cwd has `vault/` + `wiki/` +
-   `.curator/`) — yes: operate on cwd, today's behaviour, no change.
+1. **Is cwd itself a workspace?** (cwd carries a workspace marker —
+   `.curator/config.json` or `wiki/.git`) — yes: operate on cwd,
+   today's behaviour, no change.
 2. **Walk up bounded by git-root** looking for `.curiosity/config.toml`.
    If found, route to the named workspace; the cwd repo's `project`
    field becomes the auto-applied project tag for any captures or
    wiki writes in this session.
-3. **Otherwise prompt**, never resolve a workspace by directory
-   proximity. The prompt offers three choices: register against an
-   existing workspace, bootstrap a new workspace at a given path, or
-   `--in-repo` for the OSS / solo case.
+3. **Otherwise print guidance and stop**, never resolve a workspace by
+   directory proximity. The agent points at plain `setup.sh` (new
+   workspace) or `setup.sh --register-code-repo` (register this repo),
+   whose interactive path offers the register / bootstrap / in-repo
+   choices.
 
 Walk-up never crosses out of the git repo — it's "find the pointer file
 at this code repo's root from a subdirectory of it," which is safe
@@ -457,13 +471,18 @@ repo doesn't inherit allow-everything:
 {
   "permissions": {
     "allow": [
-      "Bash(uv run python3 <skill_path>/scripts/*:*)",
-      "Bash(bash <skill_path>/scripts/evolve_guard.sh:*)",
-      "Bash(git -C /Users/<user>/Documents/curiosity-workspace/wiki:*)"
+      "Bash(git -C /Users/<user>/Documents/curiosity-workspace/wiki add:*)",
+      "Bash(git -C /Users/<user>/Documents/curiosity-workspace/wiki commit:*)",
+      "Bash(uv run python3 <skill_path>/scripts/sweep.py:*)",
+      "Bash(uv run python3 <skill_path>/scripts/graph.py:*)",
+      "Bash(bash <skill_path>/scripts/evolve_guard.sh:*)"
     ]
   }
 }
 ```
+
+(Excerpt — setup writes one entry per skill script and per git
+subcommand; no wildcards over `scripts/*`.)
 
 `<skill_path>` is substituted by hosts that support it (Claude Code), or
 falls back to `$CURIOSITY_ENGINE_SCRIPTS_DIR` for hosts that don't
@@ -490,28 +509,22 @@ the current branch's diff. The brief surfaces exactly that, in under
 # Session brief — myapp / branch: feat/audit-log-postgres
 Generated 2026-05-08 15:42 UTC.
 
-## In flight (touched files vs main)
-- src/audit_log/{writer,reader}.py
+## In flight (2 files vs. base)
+- src/audit_log/writer.py
 - migrations/0042_audit_postgres.sql
 
-## Recent decisions affecting these
-- [[Audit log: Postgres over Mongo]] — analysis, 2026-04-21,
-  citing PR #847 + incident-2026-04-15
-- [[Mongo replica-lag invariant]] — concept, 2026-04-22
-
-## Known gotchas in touched files
+## Wiki pages for files in flight
 - [[Audit writer: idempotency on retry]] — evidence,
   citing (code:myapp:src/audit_log/writer.py:88-104)
 
-## Constraints
-- [[Audit columns: positional ordering]] — concept, flagged constraint;
-  reorder breaks downstream export pipeline
+## Recent analyses (2)
+- [[Audit log: Postgres over Mongo]] — 2026-04-21,
+  citing PR #847 + incident-2026-04-15
+- [[Mongo replica-lag invariant]] — 2026-04-22
 
-## Open questions for this project
-- notes/audit-postgres-cutover.md (unresolved)
-
-## Cross-project bridges
-- [[Auth Flow]] (project: auth-service) — referenced by audit-log writer
+## Recent activity (3 events, last 14d)
+- 2026-05-07 ingest: pr-myapp-847
+- 2026-05-06 note: audit-postgres-cutover
 ```
 
 The brief is a digest, not a doc. It surfaces wikilinks to the actual
@@ -521,8 +534,8 @@ pages; the agent navigates them on demand.
 
 - **On agent session start** in a code repo with a pointer file, if
   `[brief] auto = true` (default true). SKILL.md instructs the agent to
-  read the brief before starting work; if missing or stale (older than
-  the most recent commit on the current branch), regenerate first.
+  generate or refresh the brief at session start and read it before
+  starting work.
 - **On `/brief`** — manual refresh, regardless of auto setting.
 - **On `git pull`** if `[brief] regenerate_on_pull = true` (default
   false). The post-merge hook calls `session_brief.py` after capture.
@@ -537,12 +550,11 @@ The brief is generated by `scripts/session_brief.py` reading:
 
 - The pointer file (`project` tag, workspace path).
 - `git diff main...HEAD --name-only` for files in flight.
-- The workspace's graph (`graph.kuzu`) for entities corresponding to
-  those files plus 1-hop neighbourhood, filtered to project tag.
+- `wiki/entities/*.md` pages whose stems match in-flight filenames —
+  plain stem matching, no graph lookup, which keeps the brief cheap.
+- Recent project-tagged analyses and notes.
 - Recent activity in `<workspace>/.curator/activity.log` for this
   project (last 14 days by default).
-- Cross-project analyses where this project appears as a secondary tag
-  (the "you might also care about X" section).
 
 `session_brief.py` is hash-guarded.
 
@@ -565,13 +577,11 @@ Detaching solves all three.
 
 `/curate` from a code-repo cwd calls `scripts/curate_launch.py`, which
 spawns the active host CLI in headless mode with cwd set to the
-workspace. For Claude Code:
-
-```bash
-setsid claude -p "<curate-session-prompt>" \
-  --workspace "$WORKSPACE" \
-  > "$WORKSPACE/.curator/sessions/$ID.log" 2>&1 &
-```
+workspace. For Claude Code it spawns `claude -p "<curate-session-prompt>"`
+with the workspace as the process cwd (that's what targets the
+workspace — there is no CLI flag for it), in a new session so it
+survives the parent exiting, with output redirected to
+`$WORKSPACE/.curator/sessions/$ID.log`.
 
 The launcher writes a status file at
 `<workspace>/.curator/sessions/<id>.status.json` and returns to the
@@ -593,7 +603,7 @@ today — same prompts, same gates, same hash-guard, same review process.
 | Host | Detach support | v1 behaviour |
 |---|---|---|
 | Claude Code | `claude -p` headless | Detached |
-| Codex CLI | headless equivalent | Detached |
+| Codex CLI | headless equivalent exists | In-session with banner warning (detach not yet implemented) |
 | Gemini CLI | no clean headless | In-session with banner warning |
 | Copilot Chat | no headless | In-session with banner warning |
 
@@ -619,9 +629,9 @@ engineering work.
 Existing curiosity-engine users see no change in their day-to-day flow.
 The contract:
 
-- Any directory with `vault/` + `wiki/` + `.curator/` continues to
-  behave exactly as today. `setup.sh` re-runs are no-ops on existing
-  workspaces, as today.
+- Any directory carrying the workspace markers (`.curator/config.json`
+  or `wiki/.git`) continues to behave exactly as today. `setup.sh`
+  re-runs are no-ops on existing workspaces, as today.
 - Slash commands, when cwd is itself a workspace, behave identically.
 - No schema migrations to `vault.db`, `tables.db`, `graph.kuzu`, or
   `.curator/log.md`. New state lives in new files.
@@ -657,8 +667,8 @@ the prompt). The CHANGELOG entry documents this and the escape hatch.
 The biggest failure mode is **empty workspace**: capture surfaces are
 on, but `/distill` is never run and PR descriptions are one-liners. The
 wiki stays sparse, queries return little, the brief is empty. The
-mitigation is leaning hard on passive surfaces (PR threads via the
-Action, commit messages, agent transcripts via the daemon) and making
+mitigation is leaning hard on passive surfaces (PR threads and commit
+messages via the post-merge hook or team CI) and making
 `/distill` a near-zero-cost prompt at session end. Discipline is a v2
 problem if v1 capture isn't working; pretend it isn't and ship the
 passive surfaces first.
@@ -688,7 +698,8 @@ Deferred to keep v1 a clean ship:
   `table_citation_risk` pattern to `(code:project:path:line)` ranges,
   flagging wiki claims whose backing code has churned.
 
-The session brief, the pointer file, the local hook, the optional
-Action, and the detached `/curate` are the irreducible v1 surface.
+The session brief, the pointer file, the local hook, optional
+team-built CI capture, and the detached `/curate` are the irreducible
+v1 surface.
 Everything else is layered on top once the loop is demonstrated to be
 worth the integration cost.

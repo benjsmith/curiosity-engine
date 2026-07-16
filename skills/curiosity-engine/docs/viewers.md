@@ -15,8 +15,9 @@ settings panel. Notes and todos pages are inline-editable from the
 modal (padlock toggle), and a `+` button next to the search bar
 uploads files straight into `vault/raw/` for the next ingest run.
 No Node.js dependency — pure Python build + vanilla JS frontend
-with vendored D3 + Fuse downloaded once into
-`~/.cache/curiosity-engine/wiki-view-vendor/`. Each workspace's
+with vendored D3 + Fuse shipped inside the skill
+(`template/wiki-view/static/vendor/`) and copied into the bundle
+at build time; no network fetch. Each workspace's
 bundle goes into `~/.cache/curiosity-engine/wiki-view/<workspace>/`;
 the server rebuilds it after every inline edit, so refresh and the
 change is visible.

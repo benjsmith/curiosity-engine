@@ -27,7 +27,7 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
   Drop folder: `vault/raw/` — user drops files here for bulk ingest.
 - **Wiki** (`wiki/`): git-tracked markdown content. Pages only.
   Subdirs: `sources/`, `entities/`, `concepts/`, `analyses/`, `evidence/`,
-  `facts/`, `tables/`, `figures/`, `notes/`, `todos/`.
+  `facts/`, `tables/`, `figures/`, `notes/`, `todos/`, `projects/`.
 
   `notes/` is the user-input surface (append-only for the curator).
   User dumps via `/note` land in `notes/new.md`; the curator drains
@@ -39,6 +39,10 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
   completion archive (`YYYY.md`). The canonical todos class-table
   lives in `.curator/tables.db`; pages are mention sites. Status
   ticks propagate across mentions via `sweep.py sync-todos`.
+
+  `projects/` holds one home page per project (`projects/<name>.md`),
+  managed by `projects.py`. Projects are derived from the citation
+  graph, not declared by the user.
 - **Graph** (`.curator/graph.kuzu`): kuzu property graph tracking WikiPage
   and VaultSource nodes, WikiLink and Cites edges. Rebuild after any
   structural wiki change via `uv run python3 <skill_path>/scripts/graph.py rebuild wiki`.
@@ -50,7 +54,7 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
   pages. Workspace-level, NOT git-tracked. Rebuilt from vault PDFs by
   `figures.py regen wiki`.
 - **Curator state** (`.curator/`): not git-tracked. Operating protocol,
-  prompts, config, log, auto-generated index, sweep copy, guard snapshot,
+  prompts, config, log, auto-generated index, guard snapshot,
   epoch plan, graph.
 
 ## Page format
@@ -169,8 +173,9 @@ or extend the page flag for one citation only (Path B — escape
 hatch); that override does NOT write back to the page. The
 orchestrator runs `identifier_cache.py bulk-lookup` before
 persisting and inlines resolutions in the synthesis. Cache lives
-at `.curator/identifiers.db`. Air-gapped: set
-`CURIOSITY_ENGINE_OFFLINE=1` for cache-only mode.
+at `.curator/identifiers.db`. Air-gapped: offline is detected per
+lookup — cache hits are served, failed network calls return
+`status: offline` markers and re-try on later lookups.
 
 Entity identity (optional, U1). An `entities/` page may carry a
 stable minted IRI so reconciliation keys on identity, not slug.

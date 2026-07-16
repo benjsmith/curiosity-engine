@@ -1,6 +1,6 @@
 # Security model
 
-This document declares the threat model and trust boundaries for `curiosity-engine`. It exists so reviewers (humans and automated scanners) can quickly understand what's intentional, what's mitigated, and where the residual surfaces are.
+This document declares the threat model and trust boundaries for `curiosity-engine`. It exists so reviewers (humans and automated scanners) can quickly understand what's intentional, what's mitigated, and where the residual surfaces are. File paths in this document are relative to the skill root, `skills/curiosity-engine/` (where the skill has lived since v0.7.0).
 
 The skill operates on a personal vault of source documents and a curated wiki, both stored locally. It is invoked from a coding-agent CLI (Claude Code, Codex CLI, Gemini CLI, GitHub Copilot Chat) with the user as operator. There is no server component, no inbound network, no remote authorization layer.
 

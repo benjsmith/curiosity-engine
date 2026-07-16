@@ -35,9 +35,11 @@ edits with a canned `wip: auto-commit before skill update` message,
 snapshots the skill dir, applies the update, verifies the install is
 still complete (rolling back to the snapshot if the CLI left a
 partial tree), and runs `setup.sh` to apply any migrations. The
-npx-skills slug is stored in
-`.curator/config.json` as `update_source_slug` — fork users edit it
-there to point at their fork.
+upstream npx-skills slug is hardcoded in `update.sh`; fork users
+pass `--source <owner>/<repo>` on each update. (The
+`update_source_slug` key in `.curator/config.json` is intentionally
+not consulted — keeping update sources out of editable config
+closes the slug-flip vector.)
 
 ## Running in other coding-agent CLIs
 
@@ -57,7 +59,8 @@ orchestrator falls back to printing the patterns and asking you to
 paste them in manually rather than guessing.
 
 - **OpenClaude** — drop the skill into `~/.openclaude/skills/`;
-  skill-path substitution works.
+  skill-path substitution works. Not in the host registry, so the
+  allowlist install takes the manual-paste fallback above.
 - **Codex CLI** — clone into a known scripts directory and export
   `CURIOSITY_ENGINE_SCRIPTS_DIR=<path>/scripts` so prompts without
   `<skill_path>` substitution still resolve. The auto-install writes
@@ -171,11 +174,11 @@ via `HF_HOME`).
   `.curator/config.json` and re-run setup.sh to convert embeds to
   standard `![](path)` syntax for VS Code / Foam / GitHub renderers
   — the underlying PNGs are unchanged.
-- **No-network / air-gapped install.** `setup.sh` uses
-  `curl … | sh` to install `uv` when missing. For environments
-  where that's blocked, pre-install uv via `pip install uv` first
-  and re-run `setup.sh` — it'll detect the existing uv and skip
-  the curl step. Same applies to pypdfium2 / Pillow / kuzu / pyyaml
+- **No-network / air-gapped install.** `setup.sh` never pipes
+  installer scripts; if `uv` is missing it prints platform-specific
+  install commands and exits. Pre-install uv (brew, `pip install
+  --user uv`, or an inspected copy of the official install script)
+  and re-run `setup.sh`. For pypdfium2 / Pillow / kuzu / pyyaml
   — pre-populate a PyPI mirror and `pip install` them; setup.sh
   uses `uv pip install` which respects `UV_INDEX_URL` /
   `PIP_INDEX_URL` for internal mirrors.
@@ -185,10 +188,11 @@ via `HF_HOME`).
   on demand via `identifier_cache.py`. PubChem PUG-REST handles
   chemicals; MyGene.info handles genes. Both are free and require
   no API keys. Resolutions cache to `.curator/identifiers.db`
-  (SQLite, WAL) so repeated lookups don't re-hit the network. For
-  air-gapped use set `CURIOSITY_ENGINE_OFFLINE=1` in env — lookups
-  return cached entries when present and `status: offline` markers
-  otherwise (re-tried automatically when the env flag is cleared).
+  (SQLite, WAL) so repeated lookups don't re-hit the network.
+  Air-gapped use needs no flag — offline is detected per lookup:
+  cached entries are served when present, failed network calls
+  return `status: offline` markers and are re-tried on later
+  lookups.
   Lazy: never invoked at ingest, only at synthesis time when a
   worker cites a row.
 
