@@ -2,6 +2,11 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-16 — v0.8.2 — first-run todos.md fix + setup-guide corrections
+
+- **Bug fix — `sweep.py purge-template-todo-artefacts`**: the migration op stripped everything after a literal `(todo:T<id>)` placeholder on *any* line, which truncated the seeded `wiki/todos.md` overview prose ("get a minted `(todo:T<id>)` suffix.") during the very first `setup.sh` run and left a fresh wiki dirty. The strip now applies only to checkbox lines — the only place the pre-fix sync-todos pollution it undoes ever landed. Verified: a fresh workspace now comes up with a clean wiki; simulated pollution on a checkbox placeholder line is still stripped.
+- **docs/setup-advanced.md**: removed the OpenClaude section (and the README's mention of it). The GitHub Copilot Chat (VS Code) instructions now describe the recommended install path: open your repo in VS Code and install from the integrated terminal with `npx skills add benjsmith/curiosity-engine` (`-g` for global, or as-is for the open project folder), keeping the GitHub Copilot target ticked in the CLI's agent picker (it is by default) — instead of pasting SKILL.md into workspace instructions.
+
 ## 2026-07-16 — v0.8.1 — documentation accuracy pass
 
 A full docs-vs-code audit. Every user-facing doc was checked claim-by-claim against the scripts; no behavior changes except one bug fix that aligns code with its own documentation.

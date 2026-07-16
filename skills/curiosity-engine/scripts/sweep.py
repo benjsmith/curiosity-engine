@@ -1216,8 +1216,12 @@ def cmd_purge_template_todo_artefacts(wiki_dir: Path):
 
       * In completion archives (`todos/YYYY.md`): drop the whole line
         (fabricated `## completed` entries from template `[x]` examples).
-      * Elsewhere (hub pages): strip everything appended after the
-        template marker, restoring the original placeholder line.
+      * Elsewhere (hub pages): on checkbox lines, strip everything
+        appended after the template marker, restoring the original
+        placeholder line. Prose lines that merely mention the
+        placeholder (e.g. the seeded overview's "get a minted
+        `(todo:T<id>)` suffix.") are left alone — the pre-fix
+        pollution only ever landed on checkbox lines.
 
     Also purges the orphan sqlite rows in `.curator/tables.db` whose
     IDs no longer appear on any wiki page after the wiki cleanup. Safe
@@ -1248,7 +1252,7 @@ def cmd_purge_template_todo_artefacts(wiki_dir: Path):
                 continue
             tmatch = TEMPLATE_MARKER.search(line)
             trailing = line[tmatch.end():]
-            if trailing.strip():
+            if trailing.strip() and _CHECKBOX_RE.match(line):
                 new_lines.append(line[:tmatch.end()])
                 modified = True
             else:

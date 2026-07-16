@@ -58,21 +58,21 @@ If the host isn't recognised or its allowlist schema has moved, the
 orchestrator falls back to printing the patterns and asking you to
 paste them in manually rather than guessing.
 
-- **OpenClaude** — drop the skill into `~/.openclaude/skills/`;
-  skill-path substitution works. Not in the host registry, so the
-  allowlist install takes the manual-paste fallback above.
 - **Codex CLI** — clone into a known scripts directory and export
   `CURIOSITY_ENGINE_SCRIPTS_DIR=<path>/scripts` so prompts without
   `<skill_path>` substitution still resolve. The auto-install writes
   to `~/.codex/config.toml`.
-- **GitHub Copilot Chat (VS Code)** — clone anywhere, open the
-  workspace folder in VS Code, and paste the contents of `SKILL.md`
-  into the chat's workspace instructions. The single-chat-window
+- **GitHub Copilot Chat (VS Code)** — open your repo of choice in
+  VS Code and install the skill from the integrated terminal the
+  usual way: `npx skills add benjsmith/curiosity-engine` (add `-g`
+  for a global install, or run it as-is to install into the open
+  project folder). Make sure the GitHub Copilot target is ticked in
+  the CLI's agent picker — it is by default. The single-chat-window
   flow works: Copilot runs as the orchestrator, dispatches subagents
   where supported, and falls back to sequential in-session workers
   with explicit role-reset prompts where not (see
-  `SKILL.md#single-session-fallback`). The auto-install writes to
-  your VS Code user `settings.json` (or workspace
+  `SKILL.md#single-session-fallback`). The allowlist auto-install
+  writes to your VS Code user `settings.json` (or workspace
   `.vscode/settings.json` if you prefer per-project scope — pick at
   the prompt).
 - **Gemini CLI** — clone anywhere, export

@@ -63,7 +63,7 @@ claude
 
 The first command runs `setup.sh`, which creates the folder layout, initialises the wiki git repo, drops in a Claude Code settings file that auto-allows safe operations, and (optionally) installs companion tooling.
 
-For non-Claude-Code CLIs (Codex, Gemini, Copilot Chat, Cursor, OpenClaude, Ollama, air-gapped, enterprise), see [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md).
+For non-Claude-Code CLIs (Codex, Gemini, Copilot Chat, Cursor, Ollama, air-gapped, enterprise), see [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md).
 
 ## Architecture
 
