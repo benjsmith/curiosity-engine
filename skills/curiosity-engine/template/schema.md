@@ -12,6 +12,10 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
 ## Modes
 - **query** — answer from wiki + vault, end with one follow-up question.
   For structural questions, query the kuzu graph first (`graph.py`).
+  Honour the `entity_gate` block in `graph.py retrieve` / `query_router.py
+  classify` output: an entity name that doesn't resolve against the curated
+  identity layer gets an honest "no entity named X here" — never an answer
+  borrowed from a similarly-named entity.
 - **ingest** — processing source material. No teacher follow-up.
 - **collaborate** — propose connections, invite pushback, record human input.
 - **sweep** — mechanical hygiene (dead links, duplicate slugs, index drift).
@@ -189,7 +193,16 @@ the page records it in frontmatter:
 entity_class: chemical
 iri: ce:chemical:<workspace>:aspirin
 same_as: [pubchem:CID2244, wikidata:Q18216]
+aliases: [acetylsalicylic acid, ASA]
 ```
+
+`aliases` is a bracket-list of curated synonyms/codenames for the
+page's subject. The entity-resolution gate (`entity_gate.py`, run
+inside `graph.py retrieve` and `query_router.py classify`) resolves
+query mentions through page titles, stems, `aliases`, `same_as` ids,
+IRIs, and wikilink pipe-aliases; a query naming an entity that
+resolves nowhere is answered with an abstention, never with a
+similarly-named entity's facts.
 
 The IRI is workspace-stable and never keys on an external id —
 external canonical ids live in `same_as` (an owl:sameAs-style map)
@@ -253,8 +266,8 @@ not by the mechanical gate.
   human-edited. CURATE must not edit them during a run.
 - ALL skill scripts are hash-guarded by evolve_guard.sh: `lint_scores.py`,
   `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`,
-  `graph.py`, `sweep.py`, `tables.py`, `figures.py`, `evolve_guard.sh`
-  itself. The curator has NO agent-editable code path. Improvement ideas
+  `graph.py`, `entity_gate.py`, `sweep.py`, `tables.py`, `figures.py`,
+  `evolve_guard.sh` itself. The curator has NO agent-editable code path. Improvement ideas
   land as prose notes under `## improvement-suggestions` in
   `.curator/log.md` for the human maintainer to evaluate and apply via
   the skill source.

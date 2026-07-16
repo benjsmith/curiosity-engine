@@ -59,6 +59,8 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 # Match tables.py: macOS system sqlite3 is often built without loadable
 # extensions; pysqlite3 is a drop-in. Either works for read-only SELECTs.
 try:
@@ -346,6 +348,22 @@ def cmd_classify(query: str, wiki_dir: Path) -> int:
     else:
         out["next"] = ("No structured/structural signal — answer via "
                        "vault_search + synthesis (the existing LLM path).")
+        # Entity-resolution abstention gate (v0.8.3): a synthesis question
+        # naming an entity that resolves against neither the curated
+        # identity layer nor the raw corpus must abstain — never answer
+        # from a similarly-named entity's context (false-bridging).
+        # Deterministic; no LLM call, no network.
+        import entity_gate
+        gate = entity_gate.gate_query(wiki_dir, query)
+        if gate["mentions"]:
+            out["entity_gate"] = gate
+            if gate["action"] == "abstain":
+                out["next"] = ("ABSTAIN — " + gate["directive"]
+                               + " (Per-mention verdicts in entity_gate.)")
+            elif gate["action"] == "partial":
+                out["next"] += (" Entity gate: abstain for "
+                                + ", ".join(gate["abstained_mentions"])
+                                + " — see entity_gate.")
     print(json.dumps(out, indent=2, default=str))
     return 0
 

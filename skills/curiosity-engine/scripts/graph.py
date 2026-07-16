@@ -1121,6 +1121,26 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
     else:
         decided, cue = route, "forced"
 
+    # Entity-resolution abstention gate (v0.8.3). Runs BEFORE any seeding:
+    # a query naming an entity that resolves against neither the curated
+    # identity layer nor the raw corpus gets no retrieval context at all —
+    # lexical/embedding proximity would otherwise seed a similarly-named
+    # entity's pages, and the model then answers with the wrong entity's
+    # facts (false-bridging). Deterministic; no LLM call, no network.
+    import entity_gate
+    gate = entity_gate.gate_query(wiki_dir, query)
+    if gate["action"] == "abstain":
+        out = {"query": query, "route": decided, "route_cue": cue,
+               "entity_gate": gate, "abstain": True,
+               "seeds": [], "pages": [], "vault": [],
+               "note": "entity gate abstained — no retrieval context "
+                       "returned; answer that the entity is not in this "
+                       "workspace (see entity_gate.directive)"}
+        if stale:
+            out["graph_stale"] = True
+        print(json.dumps(out, indent=2))
+        return
+
     # One embedder load serves both the seeds and blend's breadth extras.
     sem = _semantic_seed_pages(wiki_dir, query, seeds_n + 4)
     if sem is not None:
@@ -1129,8 +1149,19 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
         seeds = _lexical_seed_pages(wiki_dir, query, seeds_n)
         sem_extras, seed_mode = [], "lexical"
 
+    # A resolved mention's own page is the strongest possible seed —
+    # guarantee it leads the seed list (curated context preferred for the
+    # resolved entity; proximity seeds only augment).
+    resolved = [m["page"] for m in gate["mentions"]
+                if m.get("status") == "resolved" and m.get("page")]
+    for rel in reversed(resolved):
+        if rel not in seeds and (wiki_dir / rel).is_file():
+            seeds.insert(0, rel)
+
     out = {"query": query, "route": decided, "route_cue": cue,
            "seed_mode": seed_mode, "seeds": seeds}
+    if gate["mentions"]:
+        out["entity_gate"] = gate
     if stale:
         out["graph_stale"] = True
         print(f"graph retrieve: wiki newer than kuzu — results may lag; "

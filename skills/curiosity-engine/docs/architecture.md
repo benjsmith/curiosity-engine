@@ -29,7 +29,7 @@ The ratchet is deliberately mechanical. It doesn't judge prose quality — that'
 
 The curator cannot edit any skill script at runtime. Every script that scores, gates, evaluates, parses structure, or performs sweep operations is SHA-256 hashed at the start of each wave (`evolve_guard.sh snapshot`) and re-checked at the end (`evolve_guard.sh check`). Any drift aborts the wave and reverts.
 
-Hash-guarded: all 21 scripts in the curator's execution path — the scoring/gating scripts (`lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`), structure and sweep tooling (`naming.py`, `graph.py`, `sweep.py`, `tables.py`, `figures.py`, and friends), and `evolve_guard.sh` itself. The `GUARDED` array in `evolve_guard.sh` is the authoritative list.
+Hash-guarded: all 22 scripts in the curator's execution path — the scoring/gating scripts (`lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `entity_gate.py`), structure and sweep tooling (`naming.py`, `graph.py`, `sweep.py`, `tables.py`, `figures.py`, and friends), and `evolve_guard.sh` itself. The `GUARDED` array in `evolve_guard.sh` is the authoritative list.
 
 Earlier versions allowed the curator to edit `.curator/sweep.py` (a workspace copy of the hygiene pass) as a narrow "optimization surface", reverting on degraded rate. That capability has been removed. The threat model is simple: a self-improving loop that can edit code in its own execution path is one prompt-injection or one reward-hack away from gaming itself. Suggestions now land as prose in `.curator/log.md` under `## improvement-suggestions`; a human maintainer evaluates and applies the change via the skill source.
 

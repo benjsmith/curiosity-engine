@@ -73,10 +73,10 @@ bash commands allowed:
 2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare
    `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the
    workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve.
-   Covers sweep.py, graph.py, lint_scores.py, score_diff.py,
+   Covers sweep.py, graph.py, entity_gate.py, lint_scores.py, score_diff.py,
    epoch_summary.py, scrub_check.py, naming.py, tables.py, figures.py,
-   vault_index.py, vault_search.py, local_ingest.py — all hash-guarded
-   skill scripts.
+   vault_index.py, vault_search.py, local_ingest.py, query_router.py —
+   all hash-guarded skill scripts.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `date ...`
 

@@ -2,6 +2,20 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-16 — v0.8.3 — entity-resolution abstention gate
+
+**Entity-resolution abstention gate on the synthesis path** — queries for non-existent / look-alike entities no longer answer from a proximity match to a similarly-named entity; known aliases still resolve.
+
+Downstream benchmarking (switchyard alias-resolution harness) found a false-bridging bug: when a query names a look-alike that does not exist ("Project Onyxx" when only "Project Onyx" is curated), retrieval surfaces the real entity by lexical/embedding proximity and the model reports that entity's fact. The wrong-entity fact was present in every retrieval arm's context (curated wiki and raw vault) — so this is not a fusion problem. Abstention was left to the LLM noticing a name mismatch, and it degraded as corroborating wrong-entity evidence accumulated (~12% false-bridge rate on look-alike queries).
+
+- **`entity_gate.py`** (new, hash-guarded): deterministic gate — extract entity mentions from the query, resolve each against the curated identity layer (page titles/stems, frontmatter `aliases` / `same_as` / `iri`, IRI registry, wikilink pipe-aliases). Exact and known-alias matches resolve; fuzzy proximity to a differently-named entity never resolves. Unresolved names with no verbatim occurrence anywhere in the workspace **abstain**.
+- **`graph.py retrieve`**: runs the gate before seeding; full abstain returns empty `pages`/`vault` (no wrong-entity context to dilute the signal); resolved mentions pin their curated page as the lead seed.
+- **`query_router.py classify`**: embeds the same verdict on synthesis routes so the answering agent sees an explicit `ABSTAIN` directive.
+- **`aliases` frontmatter** documented and allowlisted in `naming.py` / `template/schema.md` as the curated-synonym surface the gate resolves through.
+- **Regression suite** at `tests/test_entity_gate.py` (fixture workspace, no network): canonical name and known aliases answer; "Project Onyxx" / "Project Marlon" abstain and never surface the real entity's fact.
+
+Measured target on the same corpus: look-alike false-bridge 0.12 → 0.00 at zero accuracy cost on real entities and known aliases.
+
 ## 2026-07-16 — v0.8.2 — first-run todos.md fix + setup-guide corrections
 
 - **Bug fix — `sweep.py purge-template-todo-artefacts`**: the migration op stripped everything after a literal `(todo:T<id>)` placeholder on *any* line, which truncated the seeded `wiki/todos.md` overview prose ("get a minted `(todo:T<id>)` suffix.") during the very first `setup.sh` run and left a fresh wiki dirty. The strip now applies only to checkbox lines — the only place the pre-fix sync-todos pollution it undoes ever landed. Verified: a fresh workspace now comes up with a clean wiki; simulated pollution on a checkbox placeholder line is still stripped.

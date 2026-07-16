@@ -11,7 +11,9 @@
 > record of what the predecessor design actually achieved; do not use
 > them to calibrate current behavior.
 
-Record of a one-shot test of the (now-retired) ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward. No tests are shipped in the skill.
+Record of a one-shot test of the (now-retired) ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward.
+
+**Current regression suite** (repo root, not inside the skill install): `python3 -m unittest discover tests` — ships `tests/test_entity_gate.py` for the v0.8.3 entity-resolution abstention gate (fixture workspace, no network).
 
 ## Setup
 

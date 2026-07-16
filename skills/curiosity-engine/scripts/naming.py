@@ -135,8 +135,12 @@ ALLOWED_FM_KEYS = frozenset({
     # ids — owl:sameAs-style links that never gate identity. `entity_class`
     # names the resolution domain (chemical|gene|protein|person|org|
     # concept|...) and selects which authority resolver, if any, applies.
-    # All three roundtrip through read_frontmatter's bracket-list parser.
-    "iri", "same_as", "entity_class",
+    # `aliases` is a bracket-list of curated synonyms/codenames for the
+    # page's subject; the entity-resolution gate (entity_gate.py) resolves
+    # query mentions through it, so a name listed here answers as the page's
+    # entity while unlisted look-alikes abstain. All four roundtrip through
+    # read_frontmatter's bracket-list parser.
+    "iri", "same_as", "entity_class", "aliases",
 })
 
 TYPE_PREFIX = {

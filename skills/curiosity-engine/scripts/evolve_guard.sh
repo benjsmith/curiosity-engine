@@ -30,6 +30,7 @@ GUARDED=(
     "$SCRIPT_DIR/scrub_check.py"
     "$SCRIPT_DIR/naming.py"
     "$SCRIPT_DIR/graph.py"
+    "$SCRIPT_DIR/entity_gate.py"
     "$SCRIPT_DIR/embedder.py"
     "$SCRIPT_DIR/sweep.py"
     "$SCRIPT_DIR/tables.py"
