@@ -275,6 +275,26 @@ class EntityGateTest(unittest.TestCase):
         self.assertEqual(m["status"], "uncurated")
         self.assertGreaterEqual(m["vault_mentions"], 1)
 
+    def test_uncurated_retrieve_excludes_proximity_wiki(self):
+        """Option C: vault-only Falconet must not seed Project Onyx."""
+        raw, out = self.retrieve("What is Project Falconet?")
+        self.assertEqual(out["entity_gate"]["action"], "proceed")
+        self.assertTrue(out.get("verbatim_filter"), out)
+        pages = [p["page"] for p in out.get("pages", [])]
+        self.assertNotIn("entities/project-onyx.md", pages)
+        self.assertNotIn(ONYX_FACT, raw)
+        # Verbatim vault evidence for Falconet is preserved.
+        vault_paths = " ".join(
+            str(v.get("path", "")) for v in out.get("vault", []))
+        self.assertIn("falconet", vault_paths.lower())
+
+    def test_uncurated_does_not_break_resolved_recall(self):
+        raw, out = self.retrieve("What is Project Onyx's launch fact?")
+        self.assertNotIn("verbatim_filter", out)
+        self.assertIn(ONYX_FACT, raw)
+        pages = [p["page"] for p in out.get("pages", [])]
+        self.assertIn("entities/project-onyx.md", pages)
+
     def test_question_without_mentions_passes(self):
         verdict = self.gate("what are the main themes across everything here?")
         self.assertEqual(verdict["mentions"], [])

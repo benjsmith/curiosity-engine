@@ -1141,6 +1141,15 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
         print(json.dumps(out, indent=2))
         return
 
+    # Pure-uncurated (Option C): every mention is vault/wiki-body-only.
+    # Hard-filter context to material that names the mention verbatim so
+    # lexical proximity cannot seed a similarly-named curated entity.
+    # Force blend so vault-only names keep their only evidence channel.
+    pure_unc = entity_gate.pure_uncurated(gate)
+    unc_phrases = entity_gate.mention_phrases(gate) if pure_unc else []
+    if pure_unc and decided == "graph":
+        decided, cue = "blend", f"{cue}+uncurated-verbatim"
+
     # One embedder load serves both the seeds and blend's breadth extras.
     sem = _semantic_seed_pages(wiki_dir, query, seeds_n + 4)
     if sem is not None:
@@ -1155,8 +1164,17 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
     resolved = [m["page"] for m in gate["mentions"]
                 if m.get("status") == "resolved" and m.get("page")]
     for rel in reversed(resolved):
-        if rel not in seeds and (wiki_dir / rel).is_file():
+        if rel in seeds:
+            seeds = [rel] + [s for s in seeds if s != rel]
+        elif (wiki_dir / rel).is_file():
             seeds.insert(0, rel)
+
+    if pure_unc and unc_phrases:
+        seeds = [s for s in seeds
+                 if entity_gate.wiki_page_has_mention(wiki_dir, s, unc_phrases)]
+        sem_extras = [s for s in sem_extras
+                      if entity_gate.wiki_page_has_mention(
+                          wiki_dir, s, unc_phrases)]
 
     out = {"query": query, "route": decided, "route_cue": cue,
            "seed_mode": seed_mode, "seeds": seeds}
@@ -1168,6 +1186,19 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
               f"run: graph.py rebuild {wiki_dir.name}", file=sys.stderr)
     if not seeds:
         out["pages"] = []
+        if pure_unc and unc_phrases:
+            # Vault-only uncurated name: no wiki seed is expected. Still
+            # surface verbatim vault hits so the agent can answer from
+            # raw material without a proximity wiki page.
+            workspace = _workspace(wiki_dir)
+            out["vault"] = entity_gate.vault_hits_for_mentions(
+                workspace, unc_phrases, limit=vault_k)
+            out["verbatim_filter"] = True
+            out["note"] = ("entity gate: pure-uncurated — no wiki page names "
+                           "the mention verbatim; vault hits restricted to "
+                           "sources that do")
+            print(json.dumps(out, indent=2))
+            return
         out["note"] = "no seed pages matched — is the wiki empty?"
         print(json.dumps(out, indent=2))
         return
@@ -1248,6 +1279,31 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
         else:
             out["vault_note"] = "no vault/vault.db — graph-only result"
         out["vault"] = vault
+
+    if pure_unc and unc_phrases:
+        # Drop any residual non-verbatim wiki/vault hits (graph neighbours
+        # of a seed that itself passed, hybrid vault proximity, etc.).
+        workspace = _workspace(wiki_dir)
+        out["pages"] = [
+            p for p in out["pages"]
+            if entity_gate.wiki_page_has_mention(
+                wiki_dir, p["page"], unc_phrases)]
+        out["seeds"] = [
+            s for s in out.get("seeds") or []
+            if entity_gate.wiki_page_has_mention(wiki_dir, s, unc_phrases)]
+        vault = [
+            v for v in (out.get("vault") or [])
+            if entity_gate.vault_record_has_mention(
+                workspace, v, unc_phrases)]
+        if not vault:
+            vault = entity_gate.vault_hits_for_mentions(
+                workspace, unc_phrases, limit=vault_k)
+        out["vault"] = vault
+        out["verbatim_filter"] = True
+        out["note"] = (
+            "entity gate: pure-uncurated — context restricted to material "
+            "that names the mention(s) verbatim; do not answer from a "
+            "similarly-named curated entity")
 
     print(json.dumps(out, indent=2))
 

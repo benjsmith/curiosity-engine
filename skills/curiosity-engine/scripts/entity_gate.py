@@ -501,6 +501,140 @@ def _wiki_mentions(norm_bodies: list, name_norm: str) -> int:
     return sum(1 for _rel, body in norm_bodies if word_re.search(body))
 
 
+def _mention_in_text(text: str, mention: str) -> bool:
+    """True when normalised `mention` occurs as a whole-word phrase in text."""
+    nm = _norm(mention)
+    if not nm:
+        return False
+    return bool(re.search(
+        r"(?<![a-z0-9])" + re.escape(nm) + r"(?![a-z0-9])",
+        _norm(text or "")))
+
+
+def text_has_any_mention(text: str, mentions) -> bool:
+    """Whether text verbatim-names any mention (str or gate mention dict)."""
+    for m in mentions or []:
+        name = m if isinstance(m, str) else m.get("mention", "")
+        if name and _mention_in_text(text, name):
+            return True
+    return False
+
+
+def pure_uncurated(gate: dict) -> bool:
+    """True when every extracted mention is vault/wiki-body-only (no resolve,
+    no abstain). Option-C retrieve filter applies only in this case."""
+    ms = gate.get("mentions") or []
+    return bool(ms) and all(m.get("status") == "uncurated" for m in ms)
+
+
+def mention_phrases(gate: dict) -> list:
+    return [m["mention"] for m in (gate.get("mentions") or [])
+            if m.get("mention")]
+
+
+def wiki_page_has_mention(wiki_dir: Path, rel: str, phrases: list) -> bool:
+    fp = wiki_dir / rel
+    if not fp.is_file():
+        return False
+    try:
+        text = fp.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return text_has_any_mention(text, phrases)
+
+
+def vault_hits_for_mentions(workspace: Path, phrases: list,
+                            limit: int = 10) -> list:
+    """Vault sources that name any phrase verbatim. Used when pure-uncurated
+    retrieve must not rely on proximity seeds for its only evidence."""
+    db = workspace / "vault" / "vault.db"
+    if not db.exists() or not phrases:
+        return []
+    seen_paths: set = set()
+    out: list = []
+    try:
+        conn = sqlite3.connect(str(db), timeout=5)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA query_only=ON")
+            for phrase in phrases:
+                nm = _norm(phrase)
+                tokens = nm.split()
+                if not tokens:
+                    continue
+                fts = '"' + " ".join(tokens) + '"'
+                try:
+                    rows = conn.execute(
+                        "SELECT path, title, source_path, date, body "
+                        "FROM sources WHERE sources MATCH ? LIMIT 50",
+                        (fts,)).fetchall()
+                except sqlite3.Error:
+                    continue
+                word_re = re.compile(
+                    r"(?<![a-z0-9])" + re.escape(nm) + r"(?![a-z0-9])")
+                for path, title, source_path, date, body in rows:
+                    if path in seen_paths:
+                        continue
+                    if not word_re.search(_norm(body or "")):
+                        continue
+                    seen_paths.add(path)
+                    out.append({
+                        "path": path,
+                        "title": title or "",
+                        "source_path": source_path or "",
+                        "date": date or "",
+                        "snippet": (body or "")[:240],
+                        "rank": 0.0,
+                        "verbatim_mention": phrase,
+                    })
+                    if len(out) >= limit:
+                        return out
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return out
+    return out
+
+
+def vault_record_has_mention(workspace: Path, record: dict,
+                             phrases: list) -> bool:
+    """True if a vault_search hit names any phrase (body, else on-disk file)."""
+    if not record or not phrases:
+        return False
+    for key in ("text", "snippet", "body", "title"):
+        if record.get(key) and text_has_any_mention(str(record[key]), phrases):
+            return True
+    path = record.get("path") or ""
+    if not path:
+        return False
+    # Prefer indexed body (complete) over snippet (truncated, may miss).
+    db = workspace / "vault" / "vault.db"
+    if db.exists():
+        try:
+            conn = sqlite3.connect(str(db), timeout=5)
+            try:
+                conn.execute("PRAGMA query_only=ON")
+                row = conn.execute(
+                    "SELECT body FROM sources WHERE path = ? LIMIT 1",
+                    (path,)).fetchone()
+            finally:
+                conn.close()
+            if row and text_has_any_mention(row[0] or "", phrases):
+                return True
+        except sqlite3.Error:
+            pass
+    for candidate in (workspace / "vault" / path,
+                      workspace / path):
+        if candidate.is_file():
+            try:
+                return text_has_any_mention(
+                    candidate.read_text(encoding="utf-8", errors="replace"),
+                    phrases)
+            except OSError:
+                return False
+    return False
+
+
 # ---- The gate ----
 
 def gate_query(wiki_dir: Path, query: str) -> dict:
