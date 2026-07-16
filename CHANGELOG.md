@@ -12,6 +12,7 @@ Downstream benchmarking (switchyard alias-resolution harness) found a false-brid
 - **`graph.py retrieve`**: runs the gate before seeding; full abstain returns empty `pages`/`vault` (no wrong-entity context to dilute the signal); resolved mentions pin their curated page as the lead seed. Pure-uncurated queries (name in vault/wiki body only) get a **verbatim context filter** so proximity cannot inject a similarly-named curated page; vault phrase hits are preserved.
 - **`query_router.py classify`**: embeds the same verdict on synthesis routes so the answering agent sees an explicit `ABSTAIN` directive.
 - **`aliases` frontmatter** documented and allowlisted in `naming.py` / `template/schema.md` as the curated-synonym surface the gate resolves through.
+- **Docs:** QUERY / schema clarify that raw `vault_search` is ungated (prefer `graph.py retrieve` for named entities); partial abstain keeps context; word-match resolve and `GUARDED` as authoritative hash list.
 - **Regression suite** at `tests/test_entity_gate.py` (fixture workspace, no network): canonical name and known aliases answer; "Project Onyxx" / "Project Marlon" abstain and never surface the real entity's fact.
 
 Measured target on the same corpus: look-alike false-bridge 0.12 → 0.00 at zero accuracy cost on real entities and known aliases.

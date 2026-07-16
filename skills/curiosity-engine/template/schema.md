@@ -15,7 +15,9 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
   Honour the `entity_gate` block in `graph.py retrieve` / `query_router.py
   classify` output: an entity name that doesn't resolve against the curated
   identity layer gets an honest "no entity named X here" — never an answer
-  borrowed from a similarly-named entity.
+  borrowed from a similarly-named entity. Prefer `graph.py retrieve` over raw
+  `vault_search` for named-entity questions (vault_search is ungated).
+  `action: partial` keeps context; abstain only the unresolved mention(s).
 - **ingest** — processing source material. No teacher follow-up.
 - **collaborate** — propose connections, invite pushback, record human input.
 - **sweep** — mechanical hygiene (dead links, duplicate slugs, index drift).
@@ -200,9 +202,11 @@ aliases: [acetylsalicylic acid, ASA]
 page's subject. The entity-resolution gate (`entity_gate.py`, run
 inside `graph.py retrieve` and `query_router.py classify`) resolves
 query mentions through page titles, stems, `aliases`, `same_as` ids,
-IRIs, and wikilink pipe-aliases; a query naming an entity that
-resolves nowhere is answered with an abstention, never with a
-similarly-named entity's facts.
+IRIs, and wikilink pipe-aliases (plus unambiguous whole-word containment,
+e.g. `"Onyx"` → the only page whose name contains that word). A query
+naming an entity that resolves nowhere is answered with an abstention,
+never with a similarly-named entity's facts. Pure-uncurated names (in
+vault/wiki body only) get verbatim-filtered retrieve context.
 
 The IRI is workspace-stable and never keys on an external id —
 external canonical ids live in `same_as` (an owl:sameAs-style map)
@@ -264,10 +268,10 @@ not by the mechanical gate.
 ## CURATE meta-rules
 - `.curator/schema.md`, `.curator/prompts.md`, `.curator/config.json` are
   human-edited. CURATE must not edit them during a run.
-- ALL skill scripts are hash-guarded by evolve_guard.sh: `lint_scores.py`,
-  `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`,
-  `graph.py`, `entity_gate.py`, `sweep.py`, `tables.py`, `figures.py`,
-  `evolve_guard.sh` itself. The curator has NO agent-editable code path. Improvement ideas
+- Skill scripts on the curator path are hash-guarded by evolve_guard.sh
+  (`GUARDED` array is authoritative — includes `entity_gate.py`, graph,
+  scoring, sweep, tables, figures, and related helpers). The curator has
+  NO agent-editable code path. Improvement ideas
   land as prose notes under `## improvement-suggestions` in
   `.curator/log.md` for the human maintainer to evaluate and apply via
   the skill source.
