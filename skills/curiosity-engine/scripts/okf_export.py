@@ -85,6 +85,33 @@ def _output_root() -> Path:
     return Path.home() / ".cache" / "curiosity-engine" / "okf-export"
 
 
+def _unsafe_output_reason(wiki_dir: Path, output_dir: Path) -> str | None:
+    """Refuse to rmtree paths that would destroy the wiki or workspace.
+
+    `cmd_build` wipes `output_dir` before writing so re-exports are clean.
+    That is only safe when the target is a dedicated export location — never
+    the wiki itself, anything inside it, an ancestor that contains it, or the
+    workspace root (parent of `wiki/`).
+    """
+    wiki = wiki_dir.resolve()
+    out = output_dir.resolve()
+    if out == wiki:
+        return "output-dir is the wiki itself"
+    if out == wiki.parent:
+        return "output-dir is the workspace root (parent of wiki/)"
+    try:
+        out.relative_to(wiki)
+        return "output-dir is inside the wiki"
+    except ValueError:
+        pass
+    try:
+        wiki.relative_to(out)
+        return "output-dir is an ancestor of the wiki"
+    except ValueError:
+        pass
+    return None
+
+
 def _wiki_pages(wiki_dir: Path) -> list[Path]:
     return [p for p in sorted(wiki_dir.rglob("*.md"))
             if p.name not in SKIP_FILES and "_suspect" not in p.parts]
@@ -421,6 +448,12 @@ def cmd_build(
 
     if no_sources:
         rels = [r for r in rels if subdir_of[r] != "sources"]
+
+    unsafe = _unsafe_output_reason(wiki_dir, output_dir)
+    if unsafe:
+        print(json.dumps({"error": f"refusing to write output-dir: {unsafe}",
+                          "output": str(output_dir)}))
+        sys.exit(2)
 
     if output_dir.exists():
         shutil.rmtree(output_dir)

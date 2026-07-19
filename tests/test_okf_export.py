@@ -242,6 +242,30 @@ class OkfExportTest(unittest.TestCase):
         for rel in ("entities/aspirin.md", "index.md", "concepts/index.md"):
             self.assertEqual((a / rel).read_bytes(), (b / rel).read_bytes(), rel)
 
+    def test_refuses_output_dir_inside_wiki(self):
+        # cmd_build rmtree's the output dir; pointing it at the wiki would
+        # destroy the source of truth. Exit 2 + leave wiki pages intact.
+        wiki = self.ws / "wiki"
+        target = wiki / "entities"
+        before = (wiki / "entities" / "aspirin.md").read_text()
+        proc = subprocess.run(
+            [sys.executable, str(EXPORT), "build", str(wiki),
+             "--output-dir", str(target), "--date", "2026-07-19"],
+            capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        err = json.loads(proc.stdout)
+        self.assertIn("inside the wiki", err["error"])
+        self.assertEqual((wiki / "entities" / "aspirin.md").read_text(), before)
+
+    def test_refuses_output_dir_is_wiki(self):
+        wiki = self.ws / "wiki"
+        proc = subprocess.run(
+            [sys.executable, str(EXPORT), "build", str(wiki),
+             "--output-dir", str(wiki), "--date", "2026-07-19"],
+            capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("wiki itself", json.loads(proc.stdout)["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
