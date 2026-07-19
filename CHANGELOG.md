@@ -2,7 +2,7 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
-## 2026-07-19 — Open Knowledge Format export + interop analysis
+## 2026-07-19 — v0.9.0 — Open Knowledge Format export + interop analysis
 
 **OKF interop** — the wiki now projects to a Google Cloud **Open Knowledge Format** bundle (OKF v0.1 Draft, Apache-2.0: markdown Concepts + YAML frontmatter), for cross-tool / cross-organisation exchange.
 
