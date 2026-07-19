@@ -2,6 +2,15 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-19 — Open Knowledge Format export + interop analysis
+
+**OKF interop** — the wiki now projects to a Google Cloud **Open Knowledge Format** bundle (OKF v0.1 Draft, Apache-2.0: markdown Concepts + YAML frontmatter), for cross-tool / cross-organisation exchange.
+
+- **`okf_export.py`** (new, read-only projection — deliberately *not* hash-guarded, precedent `wiki_render.py`): `okf_export.py build wiki --output-dir <dir>` emits one OKF concept per wiki page, per-directory + root `index.md` (root carries `okf_version`), and `log.md`. Reuses the `wiki_render.py` page-walk and `naming.read_frontmatter`. Mapping: `type`→`type`; `[xx]` title prefix stripped; `same_as`/`source_url`→`resource` (the workspace-scoped IRI is never a `resource`); `updated`/`created`→`timestamp`; `[[wikilinks]]`→bundle-absolute markdown links (unresolved → plain text, counted, never fabricated); `(vault:...)`→a `# Citations` section linking exported source stubs via their `sources:` frontmatter. CE-only structure (IRI, `same_as`, class-table shapes, raw citations) round-trips through `x_ce_*` extension keys OKF consumers must preserve. Flags: `--copy-assets`, `--no-sources`, `--date`.
+- **`docs/okf-interop.md`**: the CE↔OKF comparison and where CE improves on OKF (provenance, identity, typed relations, shapes, query substrate — exactly OKF v0.1's stated omissions), plus the ratchet-preserving import model (OKF bundles land in the vault as verbatim, untrusted, citable sources, not wiki pages). Vindicates the `ce-as-edm.md` "external open format at the federation boundary" thesis — but markdown-native, so it fits CE's grain far better than the RDF/maplib that note assumed.
+- **`docs/okf-provenance-ext.md`**: a concrete, OKF-compliant extension (**OKF-P**) proposing `okfp.provenance` / `confidence` / `identity` / `shape` frontmatter drawn from CE's model — the "propose an extension" contribution back to the open format, spec-legal via OKF's unknown-key-preservation rule.
+- **Wiring**: SKILL.md OKF Operations block + `okf_export.py` added to the `uv run` utility-script list; `template/schema.md` OKF-interop note; `tests/test_okf_export.py` (21 cases, fixture wiki, no network).
+
 ## 2026-07-16 — v0.8.3 — entity-resolution abstention gate
 
 **Entity-resolution abstention gate on the synthesis path** — queries for non-existent / look-alike entities no longer answer from a proximity match to a similarly-named entity; known aliases still resolve.

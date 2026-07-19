@@ -242,6 +242,18 @@ row; `shape_check.py check <entity-page>` audits a whole table. Columns
 that declare no shape keys are unaffected — validation is local and
 per-class, the emergent schema validated without becoming universal.
 
+OKF interop (optional). The wiki projects to an **Open Knowledge
+Format** bundle (Google Cloud, v0.1 — markdown Concepts + YAML
+frontmatter) via `okf_export.py build wiki --output-dir <dir>`. It is a
+read-only projection: `type`→`type`, `[xx]` title prefix stripped,
+`same_as`/`source_url`→`resource`, `[[wikilinks]]`→bundle-absolute
+markdown links, `(vault:...)`→a `# Citations` section. CE-only
+structure (IRI, `same_as`, class-table shapes, raw citations) rides in
+`x_ce_*` extension keys OKF consumers must preserve. Imported OKF
+bundles land in the vault as verbatim, untrusted, citable sources — not
+wiki pages — so the citation ratchet still governs promotion. See
+`docs/okf-interop.md` and `docs/okf-provenance-ext.md`.
+
 ## Rules
 - Write at the configured `compression` level: ultra for most page
   types (dense, telegraphic), lite for `analyses/` (human-comfortable).
