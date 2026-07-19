@@ -74,7 +74,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `entity_gate.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, `restyle.py`, `scan.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`, `query_router.py`, `identifier_cache.py`, `shape_check.py`, `derived_cache.py`.
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `entity_gate.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, `restyle.py`, `scan.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`, `query_router.py`, `identifier_cache.py`, `shape_check.py`, `derived_cache.py`, `okf_export.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
 5. `printenv CURATOR_PRESET` — read the per-session preset override (see §Curator config). Run once at the start of any operation that dispatches workers/reviewers; the value is stable for the session.
@@ -591,6 +591,15 @@ Graph-first static viewer purpose-built for the curiosity-engine schema. Walks `
 3. **Rebuild only.** `bash <skill_path>/scripts/viewer.sh build` — re-emits the bundle without serving. Run after wiki edits; the page must be reloaded to pick them up.
 
 Vendor libraries (D3 + Fuse) download once into `~/.cache/curiosity-engine/wiki-view-vendor/` and copy into each workspace bundle so the rendered site is self-contained. The viewer picks up curator writes only on the next build; for live-updating previews use Obsidian.
+
+### OKF — "export to OKF", "share a knowledge bundle"
+
+Project the wiki into an **Open Knowledge Format** bundle (Google Cloud, v0.1 — markdown Concepts + YAML frontmatter, vendor-neutral, Apache-2.0) for cross-tool / cross-organisation exchange. Read-only projection, same posture as VIEWER: markdown is the source of truth, the bundle is a derived view.
+
+1. **Export.** `uv run python3 <skill_path>/scripts/okf_export.py build wiki --output-dir <dir>`. Emits one OKF concept per wiki page under `<dir>/<subdir>/<stem>.md`, per-directory + root `index.md` (root carries `okf_version`), and a `log.md`. CE `type`→OKF `type`; `[xx]` title prefix stripped; `same_as`/`source_url`→`resource`; `[[wikilinks]]`→bundle-absolute markdown links (unresolved → plain text, counted, never fabricated); `(vault:...)` citations→a `# Citations` section. CE-only structure (IRI, `same_as`, class-table shapes, raw citation list) round-trips through `x_ce_*` extension keys OKF consumers must preserve. Flags: `--copy-assets` (emit real figure images; needs `figures.py render-all` first), `--no-sources` (omit source stubs), `--date` (reproducible `log.md`).
+2. **Import** lands OKF bundles in the vault as citable sources (not wiki pages) so the citation ratchet still governs promotion — a scoped follow-up; see `docs/okf-interop.md`.
+
+See `docs/okf-interop.md` (the CE↔OKF comparison and where CE improves on OKF) and `docs/okf-provenance-ext.md` (a proposed provenance/identity extension CE contributes back). `okf_export.py` is a read-only projection, deliberately not hash-guarded (precedent: `wiki_render.py`).
 
 ### NOTES — "/note X", "add a note", free-form user input
 
