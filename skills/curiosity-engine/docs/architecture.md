@@ -12,6 +12,8 @@ Three objects hold the state of any curiosity-engine workspace.
 
 **Curator state** (`.curator/`). Not git-tracked. Per-workspace state: logs, schema, prompt templates, graph database, guard snapshot. This is the curator's operational memory — what it's tried, what's in flight, which scripts to use.
 
+**Derived projections** (not a fourth store). Markdown is the source of truth. Two read-only projections ship today: the static graph viewer (`viewer.sh`) and **Open Knowledge Format export** (`okf_export.py build wiki --output-dir <dir>`) for cross-tool exchange. Neither mutates the wiki; CE-only structure rides in OKF `x_ce_*` extension keys. Details: [`okf-interop.md`](okf-interop.md).
+
 ## The citation-preserving ratchet
 
 This is the skill's single most important property. The things the curator may NOT do in a CURATE loop:
@@ -91,7 +93,7 @@ Known failure modes, in rough order of when you'll hit them:
 - **Cognitive overhead.** Learning the vocabulary (the eleven page types, seven wave modes, four scoring dimensions) takes effort. Not a low-touch tool.
 - **Rate-limit bound.** `parallel_workers × reviewer × waves/hour` saturates API tiers. Tune via `parallel_workers` but you can't make it free.
 - **~500-page wiki ceiling.** Beyond that, plan latency grows. The incremental score cache helps; the tiered-vault design (bounded wiki + unbounded indexed vault) unlocks more; cluster-scoped CURATE (see below) keeps individual waves coherent past the threshold.
-- **Single user.** No protocol for multiple humans editing the same wiki live. Asynchronous sharing is partially covered by the companion [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge) skill — subgraph export and merge for sharing whole or sub-wikis — but that's extract-and-merge, not concurrent editing.
+- **Single user.** No protocol for multiple humans editing the same wiki live. Two asynchronous export paths cover different audiences: **OKF** (`okf_export.py build wiki --output-dir <dir>`) projects the wiki to a vendor-neutral [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle for cross-tool / cross-org exchange (read-only; CE structure rides in `x_ce_*` keys — see [`okf-interop.md`](okf-interop.md)); **curiosity-merge** subgraph-export/merge shares whole or sub-wikis with other CE workspaces. Neither is concurrent multi-user editing.
 
 ## Cluster scoping at scale
 

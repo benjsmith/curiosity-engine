@@ -144,6 +144,7 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 - [docs/architecture.md](skills/curiosity-engine/docs/architecture.md) — full design rationale
 - [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md) — non-Claude-Code CLIs, model presets, Ollama, deployment notes, orphan-source wiring
 - [docs/viewers.md](skills/curiosity-engine/docs/viewers.md) — graph viewer, Obsidian, VS Code + Foam, semantic search
+- [docs/okf-interop.md](skills/curiosity-engine/docs/okf-interop.md) — Open Knowledge Format export (cross-tool exchange); provenance extension proposal in [okf-provenance-ext.md](skills/curiosity-engine/docs/okf-provenance-ext.md)
 - [docs/multi-project.md](skills/curiosity-engine/docs/multi-project.md) — multi-project model in detail
 - [docs/code-knowledge.md](skills/curiosity-engine/docs/code-knowledge.md) — code-repo integration
 - [docs/skill-rationale.md](skills/curiosity-engine/docs/skill-rationale.md) — selected design decisions, compression rules, lineage

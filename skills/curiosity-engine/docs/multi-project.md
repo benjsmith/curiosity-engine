@@ -153,6 +153,8 @@ Mechanical, contained. No deleted-table writes (use `delete` if you want recover
 
 **Ships as a separate skill: [`curiosity-merge`](https://github.com/benjsmith/curiosity-merge).** The merge / subgraph-export / discover-bridges verbs operate on external data (someone else's wiki) and have a different trust model than daily curation, a smaller audience, and an independent release cadence. Installable from curiosity-engine's `setup.sh` optional-install menu alongside semantic-search. Public sub-wikis use the GitHub topic tag [`curiosity-wiki`](https://github.com/topics/curiosity-wiki) for discovery.
 
+**Not the same as OKF export.** CE→CE sharing (this section) keeps full wiki structure, git history, and the citation ratchet across curiosity-engine workspaces. For a **vendor-neutral** handoff to other tools or organisations, use the in-skill projection `okf_export.py build wiki --output-dir <dir>` — Open Knowledge Format v0.1 markdown + YAML; CE-only fields round-trip in `x_ce_*` keys. Import of foreign OKF bundles (vault-as-source, not direct wiki write) is the planned reverse path. See [`okf-interop.md`](okf-interop.md).
+
 `curiosity-merge merge ../wiki-b --as-origin <name>`:
 
 1. **Vault reconciliation**: walk `wiki-b/vault/`, sha256 each file, compare to `wiki-a/vault/` index. Identical content (different filename) → dedupe to one canonical name; rewrite citation stems via `naming.py resync-stems`. Different content (same filename) → rename one with discriminator.

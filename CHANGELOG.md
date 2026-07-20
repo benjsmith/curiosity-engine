@@ -2,6 +2,17 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-20 — v0.9.1 — OKF export discoverability in docs
+
+**Docs-only.** v0.9.0 shipped OKF export (`okf_export.py`, SKILL.md operation, design notes) but left secondary docs under-linked, so readers following architecture / multi-project / Learn more could miss the feature.
+
+- **README** — Learn more gains links to `okf-interop.md` and `okf-provenance-ext.md` (Features bullet already listed export; no new README headline).
+- **`docs/architecture.md`** — "Derived projections" paragraph (viewer + OKF as read-only projections of markdown SoT); single-user limitation names both OKF (cross-tool) and curiosity-merge (CE↔CE).
+- **`docs/multi-project.md`** — distinguishes OKF vendor-neutral export from CE-to-CE subgraph-export/merge.
+- **`docs/ce-as-edm.md`** — OKF called out as the shipped markdown-native federation-boundary answer; maplib remains for mandated RDF/DCAT.
+
+No code, config, or schema changes.
+
 ## 2026-07-20 — v0.9.0 — Open Knowledge Format export + interop analysis
 
 **OKF interop** — the wiki now projects to a Google Cloud **Open Knowledge Format** bundle (OKF v0.1 Draft, Apache-2.0: markdown Concepts + YAML frontmatter), for cross-tool / cross-organisation exchange.

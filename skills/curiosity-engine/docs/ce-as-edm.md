@@ -403,6 +403,15 @@ SELECT/CONSTRUCT/INSERT + serialisation are open; SHACL and Datalog are not
 In short: **borrow the four concepts natively; reach for maplib itself only as
 the export/compliance adapter at the edge.**
 
+**Shipped answer for the markdown-native boundary:** when the external party
+speaks files rather than RDF, CE already projects to Google Cloud's [Open
+Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+via `okf_export.py` — same posture as the maplib sketch (read-only projection at
+the edge; CE structure preserved in extension keys), but markdown-native so it
+fits CE's grain. See [`okf-interop.md`](okf-interop.md) and the
+[`okf-provenance-ext.md`](okf-provenance-ext.md) proposal for what CE contributes
+back. maplib remains the right tool when the *mandated* wire format is RDF/DCAT.
+
 ## When this fits and when it doesn't
 
 **Fits well when:**
