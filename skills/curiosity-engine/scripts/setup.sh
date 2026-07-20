@@ -1287,6 +1287,8 @@ else
                                               # orchestrator
         "scripts/scan.py"                    # v0.4.0 — project-dir
                                               # scanner
+        "scripts/okf_export.py"              # v0.9.0 — Open Knowledge
+                                              # Format export
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do

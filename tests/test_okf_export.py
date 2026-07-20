@@ -215,6 +215,9 @@ class OkfExportTest(unittest.TestCase):
         body = self.read("entities/aspirin.md")
         self.assertIn("# Citations", body)
         self.assertIn("x_ce_citations", self.front("entities/aspirin.md"))
+        # OKF §8 numbered form (not bullets)
+        self.assertIsNotNone(re.search(r"^\[1\] ", body, re.MULTILINE))
+        self.assertIsNone(re.search(r"^-\s+\[", body, re.MULTILINE))
         # inline (vault:...) marker stripped from prose
         prose = body.split("# Citations")[0]
         self.assertNotIn("(vault:merck-index.extracted.md)", prose)
@@ -222,7 +225,7 @@ class OkfExportTest(unittest.TestCase):
     def test_citation_links_exported_source(self):
         # merck-index source stub is exported, so the citation should link it
         body = self.read("entities/aspirin.md")
-        self.assertIn("(/sources/merck-index.md)", body)
+        self.assertIn("[1] [Merck Index](/sources/merck-index.md)", body)
 
     # -- options / determinism ---------------------------------------
 
@@ -230,9 +233,10 @@ class OkfExportTest(unittest.TestCase):
         alt = self.ws / "bundle-nosrc"
         self._build(alt, "--no-sources")
         self.assertFalse((alt / "sources" / "merck-index.md").exists())
-        # citation degrades to a raw vault ref when the source isn't exported
+        # citation degrades to a numbered raw vault ref when the source
+        # isn't exported
         body = (alt / "entities" / "aspirin.md").read_text()
-        self.assertIn("(vault:merck-index.extracted.md)", body)
+        self.assertIn("[1] (vault:merck-index.extracted.md)", body)
 
     def test_deterministic(self):
         a = self.ws / "det-a"

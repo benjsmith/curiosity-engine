@@ -360,16 +360,17 @@ def _build_concept(
         parts.append("")
         parts.append("# Citations")
         parts.append("")
-        for c in citations:
+        # OKF §8 conventional form: numbered refs, not bullets.
+        for i, c in enumerate(citations, start=1):
             # If the cited vault source has an exported stub page, link it;
             # else keep the raw vault marker (spec-legal plain text). The
             # citation names a vault `.extracted.md` file, which maps to a
             # `sources/` stub via that stub's `sources:` frontmatter.
             src_rel = vault_to_stub.get(c)
             if src_rel and not no_sources:
-                parts.append(f"- [{page_titles.get(src_rel, c)}](/{src_rel})")
+                parts.append(f"[{i}] [{page_titles.get(src_rel, c)}](/{src_rel})")
             else:
-                parts.append(f"- (vault:{c})")
+                parts.append(f"[{i}] (vault:{c})")
     return "\n".join(parts).rstrip() + "\n"
 
 
