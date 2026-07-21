@@ -13,7 +13,7 @@
 
 Record of a one-shot test of the (now-retired) ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward.
 
-**Current regression suite** (repo root, not inside the skill install): `python3 -m unittest discover tests` — ships `tests/test_entity_gate.py` for the v0.8.3 entity-resolution abstention gate (fixture workspace, no network), `tests/test_okf_export.py` for the OKF exporter (`okf_export.py`; fixture wiki projected to an Open Knowledge Format bundle, assertions on the emitted files + JSON manifest, no network), and `tests/test_bootstrap.py` for bootstrap densify (caption routing, floors, vault-path normalize, catalog link filter, pack partition; no network / no LLM).
+**Current regression suite** (repo root, not inside the skill install): `python3 -m unittest discover tests` — ships `tests/test_entity_gate.py` for the v0.8.3 entity-resolution abstention gate (fixture workspace, no network), `tests/test_okf_export.py` for the OKF exporter (`okf_export.py`; fixture wiki projected to an Open Knowledge Format bundle, assertions on the emitted files + JSON manifest, no network), `tests/test_bootstrap.py` for bootstrap densify (caption routing, floors, vault-path normalize, catalog link filter, pack partition; no network / no LLM), and `tests/test_retrieve_type_priority.py` for type-aware retrieve demotion helpers (needle heuristic + rank order; no kuzu / no network).
 
 ## Setup
 

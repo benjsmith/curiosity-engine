@@ -2,6 +2,14 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-21 — v0.9.3 — type-aware retrieve demotion (not T2)
+
+**Study-sim pilot feedback (n=12, post-bootstrap wiki):** type-aware wiki ranking (demote analyses) matched raw RAG (~0.81 vs 0.79). Vault-first two-stage (T2) lost badly (~0.56) — vault filled the budget and exam tasks were not treated as needles, so facts/figures lost to wholes + analyses. Bootstrap content (v0.9.2) was the right densify ship; ranking must prefer atoms when present.
+
+- **`graph.py retrieve` type-aware demotion** (default **on**): after seed→BFS→overlap ranking, reorder pages so `sources` / `facts` / `figures` / `tables` outrank long `analyses` before `--limit`. Response fields: `needle`, `type_priority`, per-page `type_bucket` / `type_rank`. Opt out: `--no-type-priority` or config `retrieve.type_priority: false`.
+- **Not shipped:** vault-first two-stage (T2) — explicitly deferred; do not reintroduce without new evidence.
+- **Tests:** `tests/test_retrieve_type_priority.py` (pure ranking helpers, no network).
+
 ## 2026-07-21 — v0.9.2 — bootstrap densify (high-volume captions + fact packs)
 
 **Bootstrap mode** — standalone high-volume densify for large cold vaults (prototype validated in Switch Bay on a 45-lecture corpus). Complements long CURATE; does **not** replace propose→review.

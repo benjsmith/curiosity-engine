@@ -35,8 +35,9 @@ Self-improving knowledge wiki skill: vault (append-only sources) + wiki (git-tra
 |-------|--------|
 | v0.9.0 OKF export | ✅ shipped |
 | v0.9.1 OKF docs discoverability | ✅ shipped |
-| v0.9.2 bootstrap densify | ✅ implemented (tag when ready) |
-| T2 type-aware / two-stage retrieve | ⏳ pending study-sim feedback |
+| v0.9.2 bootstrap densify | ✅ shipped |
+| v0.9.3 type-aware retrieve demotion | ✅ implemented (tag when ready) |
+| T2 vault-first two-stage | ❌ rejected by pilot (do not ship without new evidence) |
 | Study-sim product gate | ⏳ Switch Bay (not CE package) |
 
 ## Gotchas

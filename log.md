@@ -60,3 +60,23 @@ From Switch Bay densify/study-sim insights (`switchyard/docs/ce-v0.9.2-curator-n
 ### Gotchas
 - Short caption fact twins need framing clause to clear 15-word floor.
 - Link density still needs existing catalog nodes (concepts/entities) — cold wikis stay sparse until CURATE creates them.
+
+---
+
+## Session 3 work log — 2026-07-21
+
+**Type-aware retrieve demotion (v0.9.3); T2 rejected by pilot.**
+
+### Evidence (Switch Bay study-sim pilot, n=12, post-bootstrap wiki)
+- Type-aware wiki retrieve (demote analyses) ≈ raw RAG (**0.81 vs 0.79**).
+- T2 vault-first two-stage **0.56** — vault fills budget; exam tasks not needles; facts/figures lose to wholes + analyses.
+- Bootstrap content (570 facts, 110 figures) was the right densify ship when ranking is correct.
+
+### Decided
+- **Ship type-aware demotion** in `graph.py retrieve` (default on).
+- **Do not promote T2** into CE without new evidence.
+- Exam-style queries may fail `query_is_needle`; synth ranking still ranks facts (1) before analyses (4).
+
+### Changed
+- `graph.py`: `query_is_needle`, `demote_by_type`, config `retrieve.type_priority`, `--no-type-priority`.
+- Tests, SKILL, README, CHANGELOG v0.9.3, plan-assist.

@@ -15,13 +15,16 @@ Subcommands
 
     graph.py retrieve <wiki_dir> "<query>" [--seeds N] [--limit K]
                       [--hops H] [--route auto|graph|blend]
-                      [--vault-k N] [--no-provisional]
+                      [--vault-k N] [--no-provisional] [--no-type-priority]
         First-class graph retrieval: semantic (or lexical-fallback) seed
         -> multi-hop BFS over the graph -> pages ranked by (distance asc,
-        query-term overlap desc), with provenance. `--route auto`
-        (default) sends global/sensemaking queries graph-only and blends
-        vault-vector recall into everything else — the routing policy the
-        CE-vs-RAG benchmark showed dominates fixed strategies.
+        query-term overlap desc), then optional **type-aware demotion**
+        (prefer sources/facts/figures/tables over analyses so long
+        synthesis pages do not crowd exam/caption needles — study-sim
+        pilot v0.9.2). `--route auto` (default) sends global/sensemaking
+        queries graph-only and blends vault-vector recall into everything
+        else. Do **not** enable vault-first two-stage (T2) here — pilot
+        showed it loses badly when vault fills the budget.
 
     graph.py embed <wiki_dir> [--force]
         Build/refresh the wiki-page embedding index at .curator/wiki.db
@@ -257,6 +260,116 @@ def _prov_config(wiki_dir: Path) -> dict:
     if isinstance(cfg, dict):
         out.update({k: cfg[k] for k in _PROV_DEFAULTS if k in cfg})
     return out
+
+
+# ── type-aware retrieve ranking (BpT / demote-analyses; not T2) ───────
+# Prefer atomic/primary evidence pages over long analyses so embedding
+# proximity to multi-lecture essays cannot monopolise the context window.
+# Study-sim pilot (n=12, post-bootstrap): type-aware ≈ raw RAG; vault-first
+# two-stage (T2) lost badly — do not reintroduce T2 without new evidence.
+
+_TYPE_PRIORITY = {
+    "sources": 0,
+    "source": 0,
+    "facts": 1,
+    "fact": 1,
+    "figures": 1,
+    "figure": 1,
+    "tables": 1,
+    "table": 1,
+    "summary-table": 1,
+    "extracted-table": 1,
+    "evidence": 2,
+    "entities": 3,
+    "entity": 3,
+    "concepts": 4,
+    "concept": 4,
+    "notes": 5,
+    "note": 5,
+    "projects": 6,
+    "project": 6,
+    "todos": 8,
+    "todo-list": 8,
+    "analyses": 9,
+    "analysis": 9,
+}
+
+_QUOTEISH = re.compile(
+    r"""(?ix)
+    (?:passage|caption|figure\s*\d|fig\.?\s*\d|table\s*\d|
+       \"[^\"]{12,}\"|“[^”]{12,}”|
+       head-section|middle-section|verbatim|exact\s+text|
+       what\s+key\s+claim|the\s+following\s+passage)
+    """
+)
+
+
+def query_is_needle(query: str) -> bool:
+    """Heuristic: quote / caption / extractive factoid (not free synthesis)."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    if _QUOTEISH.search(q):
+        return True
+    if q.count('"') >= 2 or q.count("\u201c") >= 1:
+        return True
+    return False
+
+
+def page_type_bucket(rel: str, fm_type: str = "") -> str:
+    """Map a wiki-relative path and/or frontmatter type to a rank bucket."""
+    p = (rel or "").replace("\\", "/").lstrip("./")
+    if p.startswith("wiki/"):
+        p = p[5:]
+    top = p.split("/", 1)[0] if "/" in p else ""
+    if top.endswith(".md"):
+        top = ""
+    if top:
+        return top
+    ft = (fm_type or "").strip().lower()
+    return ft or "unknown"
+
+
+def type_rank(bucket: str, *, needle: bool = True) -> int:
+    """Lower = preferred in context assembly. Analyses demoted hardest on needles."""
+    b = (bucket or "unknown").lower()
+    if needle:
+        return _TYPE_PRIORITY.get(b, 5)
+    # Synthesis: still prefer atoms over analyses, but analyses can surface
+    # after entities/concepts (multi-lecture themes).
+    if b in ("analyses", "analysis"):
+        return 4
+    if b in ("concepts", "concept"):
+        return 3
+    return _TYPE_PRIORITY.get(b, 5)
+
+
+def demote_by_type(pages: list, types: dict, *, needle: bool = True) -> list:
+    """Stable reorder: sources/facts/figures before analyses.
+
+    ``types`` maps page relpath -> type bucket (or frontmatter type string).
+    When ``needle`` is True, analyses sort last. When False (synthesis),
+    analyses stay mid-pack after entities/concepts.
+    """
+    if not pages:
+        return []
+    return sorted(
+        pages,
+        key=lambda p: (
+            type_rank(types.get(p) or page_type_bucket(p), needle=needle),
+            pages.index(p),
+        ),
+    )
+
+
+def _retrieve_type_priority_enabled(wiki_dir: Path) -> bool:
+    """Default on. Config: retrieve.type_priority (bool)."""
+    block = _load_config(wiki_dir).get("retrieve")
+    if not isinstance(block, dict):
+        return True
+    if "type_priority" not in block:
+        return True
+    return bool(block["type_priority"])
 
 
 def _iter_wiki_pages(wiki_dir: Path) -> list:
@@ -1114,12 +1227,16 @@ def _traverse(adj: dict, seeds: list, budget: int):
 
 def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
                  hops: int, route: str, include_provisional: bool,
-                 vault_k: int, stale: bool = False):
+                 vault_k: int, stale: bool = False,
+                 type_priority=None):
     hops = max(1, min(int(hops), 6))
     if route == "auto":
         decided, cue = classify_route(query)
     else:
         decided, cue = route, "forced"
+    if type_priority is None:
+        type_priority = _retrieve_type_priority_enabled(wiki_dir)
+    needle = query_is_needle(query)
 
     # Entity-resolution abstention gate (v0.8.3). Runs BEFORE any seeding:
     # a query naming an entity that resolves against neither the curated
@@ -1177,7 +1294,8 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
                           wiki_dir, s, unc_phrases)]
 
     out = {"query": query, "route": decided, "route_cue": cue,
-           "seed_mode": seed_mode, "seeds": seeds}
+           "seed_mode": seed_mode, "seeds": seeds,
+           "needle": needle, "type_priority": bool(type_priority)}
     if gate["mentions"]:
         out["entity_gate"] = gate
     if stale:
@@ -1232,6 +1350,17 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
         # around the seeds is sparse — which is when they're needed.
         pages += [p for p in sem_extras if p not in pages]
 
+    # Type-aware demotion (default on): reorder before limit so long
+    # analyses cannot crowd facts/figures out of the returned window.
+    # Not T2 — vault stream is unchanged (blend still appends vault_k).
+    type_map = {}
+    for rel in pages:
+        m = meta.get(rel) or {}
+        ptype = str(m.get("type") or "")
+        type_map[rel] = page_type_bucket(rel, ptype)
+    if type_priority:
+        pages = demote_by_type(pages, type_map, needle=needle)
+
     def _page_entry(rel):
         m = meta.get(rel)
         if m is None:
@@ -1244,8 +1373,12 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
                 ptype = str(fm.get("type", ""))
             m = {"title": title, "type": ptype}
         d = dist.get(rel)
+        bucket = type_map.get(rel) or page_type_bucket(
+            rel, str(m.get("type") or ""))
         return {
             "page": rel, "title": m.get("title", ""), "type": m.get("type", ""),
+            "type_bucket": bucket,
+            "type_rank": type_rank(bucket, needle=needle),
             "distance": d,
             "overlap": sum(1 for t in qterms
                            if t in ((m.get("title") or "") + " " + rel).casefold()),
@@ -1399,6 +1532,9 @@ def main():
                     help="vault hits in blend mode (default 3)")
     rt.add_argument("--no-provisional", action="store_true",
                     help="traverse curated edges only")
+    rt.add_argument("--no-type-priority", action="store_true",
+                    help="disable type-aware demotion (prefer legacy "
+                         "distance-only ranking before limit)")
 
     em = sub.add_parser("embed")
     em.add_argument("wiki", default="wiki", nargs="?")
@@ -1437,7 +1573,8 @@ def main():
     elif args.command == "retrieve":
         cmd_retrieve(wiki_dir, args.query, args.seeds, args.limit, args.hops,
                      args.route, not args.no_provisional, args.vault_k,
-                     stale=stale)
+                     stale=stale,
+                     type_priority=(False if args.no_type_priority else None))
     elif args.command == "embed":
         print(json.dumps(embed_wiki(wiki_dir, force=args.force)))
     elif args.command == "link-candidates":

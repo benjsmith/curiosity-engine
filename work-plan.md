@@ -9,22 +9,19 @@ When a phase lands, summarise into `log.md` and prune here.
 
 ---
 
-## ⏸ SESSION HANDOFF — 2026-07-21
+## ⏸ SESSION HANDOFF — 2026-07-21 (type-aware demotion)
 
 **Done + verified:**
-- Locked bootstrap design (table→tables/, figure primary + fact optional, mechanical gate, agent-memory resume, standalone script not CURATE mode).
-- Implemented **v0.9.2 bootstrap densify**:
-  - `skills/curiosity-engine/scripts/bootstrap.py`
-  - floors / FM keys / figures caption-text
-  - SKILL.md BOOTSTRAP, setup allowlist canary, schema note, tests
-  - CHANGELOG + README feature line
-- Unit tests: `python3 -m unittest tests.test_bootstrap` green.
+- v0.9.2 bootstrap densify shipped (tag).
+- Study-sim pilot: type-aware ≈ RAG; **T2 rejected** (0.56).
+- **v0.9.3 type-aware demotion** in `graph.py retrieve` (default on; `--no-type-priority` opt-out).
+- Tests: `tests.test_retrieve_type_priority`.
 
-**Left to do (in order):**
-1. Commit + push + tag **v0.9.2** on main when this session ships (or next).
-2. Global skill update after tag.
-3. Optional: type-aware / two-stage retrieve (T2) after study-sim feedback.
-4. Optional: densify re-run / study-sim gate in Switch Bay using CE bootstrap API.
+**Left to do:**
+1. Commit + push + tag **v0.9.3**.
+2. Global skill update.
+3. SB study-sim re-run against CE retrieve with type_priority (not T2).
+4. Do **not** implement T2 unless new evidence.
 
 **How to run bootstrap:**
 ```bash
