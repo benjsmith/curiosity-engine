@@ -252,7 +252,7 @@ structure (IRI, `same_as`, class-table shapes, raw citations) rides in
 `x_ce_*` extension keys OKF consumers must preserve. Imported OKF
 bundles land in the vault as verbatim, untrusted, citable sources — not
 wiki pages — so the citation ratchet still governs promotion. See
-`docs/okf-interop.md` and `docs/okf-provenance-ext.md`.
+`docs/okf-interop.md`.
 
 Bootstrap densify (optional, large cold vaults). Standalone
 `bootstrap.py` (not a CURATE wave): deterministic Fig./Table captions

@@ -642,7 +642,7 @@ Project the wiki into an **Open Knowledge Format** bundle (Google Cloud, v0.1 �
 1. **Export.** `uv run python3 <skill_path>/scripts/okf_export.py build wiki --output-dir <dir>`. Emits one OKF concept per wiki page under `<dir>/<subdir>/<stem>.md`, per-directory + root `index.md` (root carries `okf_version`), and a `log.md`. CE `type`→OKF `type`; `[xx]` title prefix stripped; `same_as`/`source_url`→`resource`; `[[wikilinks]]`→bundle-absolute markdown links (unresolved → plain text, counted, never fabricated); `(vault:...)` citations→a `# Citations` section. CE-only structure (IRI, `same_as`, class-table shapes, raw citation list) round-trips through `x_ce_*` extension keys OKF consumers must preserve. Flags: `--copy-assets` (emit real figure images; needs `figures.py render-all` first), `--no-sources` (omit source stubs), `--date` (reproducible `log.md`).
 2. **Import** lands OKF bundles in the vault as citable sources (not wiki pages) so the citation ratchet still governs promotion — a scoped follow-up; see `docs/okf-interop.md`.
 
-See `docs/okf-interop.md` (the CE↔OKF comparison and where CE improves on OKF) and `docs/okf-provenance-ext.md` (a proposed provenance/identity extension CE contributes back). `okf_export.py` is a read-only projection, deliberately not hash-guarded (precedent: `wiki_render.py`).
+See `docs/okf-interop.md` (the CE↔OKF comparison and where CE improves on OKF). `okf_export.py` is a read-only projection, deliberately not hash-guarded (precedent: `wiki_render.py`).
 
 ### NOTES — "/note X", "add a note", free-form user input
 

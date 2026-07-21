@@ -80,3 +80,24 @@ From Switch Bay densify/study-sim insights (`switchyard/docs/ce-v0.9.2-curator-n
 ### Changed
 - `graph.py`: `query_is_needle`, `demote_by_type`, config `retrieve.type_priority`, `--no-type-priority`.
 - Tests, SKILL, README, CHANGELOG v0.9.3, plan-assist.
+
+---
+
+## Session 4 work log — 2026-07-21
+
+**Docs hygiene: planning cruft out; design essays → private gists.**
+
+### Deleted from `skills/curiosity-engine/docs/`
+- `u1-u5-implementation-plan.md`, `v0.9.2-implementation-plan.md`, `translation-design.md` (pure planning; covered by CHANGELOG + plan-assist).
+- `ce-as-edm.md`, `okf-provenance-ext.md` (rewritten CE-agnostic → gists).
+
+### Private gists (secret; flip public later if wanted)
+- Empiricist EDM: https://gist.github.com/benjsmith/d1f0fa276132382178457e3eb1d5015d
+- OKF-P extension: https://gist.github.com/benjsmith/b91b81a98557b1c99c39678506ecd8ce
+
+### Kept
+- `okf-interop.md` (CE-specific) — links to gists in footer; U1–U5 marked shipped where relevant.
+- Operational docs: architecture, multi-project, code-knowledge, setup-advanced, viewers, etc.
+
+### Status
+- Live skill docs no longer carry implementation-plan files or CE-steelman essays.

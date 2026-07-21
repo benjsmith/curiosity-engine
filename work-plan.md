@@ -17,11 +17,15 @@ When a phase lands, summarise into `log.md` and prune here.
 - **v0.9.3 type-aware demotion** in `graph.py retrieve` (default on; `--no-type-priority` opt-out).
 - Tests: `tests.test_retrieve_type_priority`.
 
+**Also done (docs hygiene):**
+- Removed planning-only docs; CE-agnostic essays → private gists (see log Session 4).
+
 **Left to do:**
-1. Commit + push + tag **v0.9.3**.
-2. Global skill update.
+1. Commit + push docs hygiene (no version bump required unless desired).
+2. Global skill update when convenient.
 3. SB study-sim re-run against CE retrieve with type_priority (not T2).
 4. Do **not** implement T2 unless new evidence.
+5. Optionally flip gists public after personal edit pass.
 
 **How to run bootstrap:**
 ```bash

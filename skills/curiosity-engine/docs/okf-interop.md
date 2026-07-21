@@ -8,9 +8,8 @@ It is a design note plus the rationale for the shipped `okf_export.py`. Nothing
 here changes the three-object model (vault / wiki / curator); OKF export is a
 **read-only projection** of the wiki, additive and optional — one more derived
 view alongside `data.json` and the kuzu graph. For the foundation see
-[`architecture.md`](architecture.md); for the interop boundary this refines see
-[`ce-as-edm.md`](ce-as-edm.md); for the extension spec see
-[`okf-provenance-ext.md`](okf-provenance-ext.md).
+[`architecture.md`](architecture.md). Broader design essays (empiricist data
+posture; OKF-P provenance extension) live as private gists — see footer.
 
 ## The thesis
 
@@ -77,8 +76,7 @@ unprovenanced external claims bypass the citation ratchet.
 
 ## Where CE improves on OKF
 
-OKF's four deliberate omissions are exactly CE's load-bearing features. In the
-idiom of [`ce-as-edm.md`](ce-as-edm.md)'s "keepers":
+OKF's four deliberate omissions are exactly CE's load-bearing features:
 
 - **Provenance — the headline gap.** OKF has no provenance model at all. CE's
   entire epistemics is the inverse: every claim carries a `(vault:...)` citation
@@ -87,7 +85,7 @@ idiom of [`ce-as-edm.md`](ce-as-edm.md)'s "keepers":
   *schema-on-read, ratcheted* — authority flows from sources, not from a
   vocabulary agreed in advance. It is the single largest thing CE has that OKF
   does not.
-- **Identity (U1).** OKF's `resource` is a bare per-concept URI. CE mints
+- **Identity (U1, shipped).** OKF's `resource` is a bare per-concept URI. CE mints
   workspace-stable IRIs (`ce:<class>:<workspace>:<slug>`) with an
   `owl:sameAs`-style `same_as` map to external authorities that *never gates
   identity*. Resolve once, join O(1) forever — identity compounds where an
@@ -96,11 +94,11 @@ idiom of [`ce-as-edm.md`](ce-as-edm.md)'s "keepers":
   to prose. CE distinguishes `WikiLink`, `Cites`, `Depicts`, and `DataRef`
   edges, plus a mechanical `ProvisionalLink` tier — a real property graph
   (kuzu), queryable with Cypher.
-- **Declared shapes (U3).** OKF's `# Schema` is prose. CE's `table:` blocks
+- **Declared shapes (U3, shipped).** OKF's `# Schema` is prose. CE's `table:` blocks
   declare typed columns with `units` / `constraint` / `source_required`,
   enforced mechanically at insert time and at the ratchet — local and per-class,
   never a universal ontology.
-- **A deterministic query substrate (U2).** OKF is files an agent reads. CE
+- **A deterministic query substrate (U2, shipped).** OKF is files an agent reads. CE
   additionally holds a rebuildable graph (kuzu) and relational store
   (`tables.db`) so structured questions hit an engine cheaply and exactly rather
   than spending tokens per call.
@@ -115,13 +113,12 @@ idiom of [`ce-as-edm.md`](ce-as-edm.md)'s "keepers":
   plain markdown, but the semantics are CE's).
 - **Lower friction for cross-org exchange.** Untyped links and a free-form `type`
   vocabulary are a feature when two organisations must exchange knowledge without
-  first agreeing on an ontology — precisely the coordination cost
-  [`ce-as-edm.md`](ce-as-edm.md) argues LLMs made cheap.
+  first agreeing on an ontology — the coordination cost LLMs made cheap to skip
+  *internally*, while still needing a wire format at organisational boundaries.
 
-This is the boundary [`ce-as-edm.md`](ce-as-edm.md) already reserved for "an
-external open format at the federation / compliance boundary" — but that note
-assumed the format would be heavyweight RDF/maplib (with the non-OSS SHACL /
-Datalog problem). **OKF fills that role while being markdown-native**, so it
+This is the natural **federation / compliance boundary** role: not a heavyweight
+RDF/maplib stack (with non-OSS SHACL / Datalog traps), but a file format peers can
+`cat`. **OKF fills that role while being markdown-native**, so it
 matches CE's own source-of-truth grain far better than RDF ever could. Export is
 a thin projection, not a semantic re-encoding.
 
@@ -183,8 +180,8 @@ structure without losing it (`x_ce_citations` preserves the raw citation list).
 
 - **The provenance/identity extension.** OKF v0.1's omissions plus its
   unknown-key-preservation rule make a spec-legal extension the natural
-  contribution back. See [`okf-provenance-ext.md`](okf-provenance-ext.md);
-  proposing it upstream is the concrete next step.
+  contribution back. See the OKF-P gist (footer); proposing it upstream is the
+  concrete next step.
 - **A typed-link convention.** OKF links are untyped by design; whether a
   lightweight rel-annotation convention (e.g. a trailing `{rel=cites}`) is worth
   proposing upstream, or whether prose semantics suffice, is open.
@@ -196,3 +193,11 @@ structure without losing it (`x_ce_citations` preserves the raw citation list).
   intentionally *not* in `evolve_guard.sh`. The trigger to revisit: if a future
   `okf_import` ever writes directly into `wiki/` pages that feed curate scoring,
   it must be guarded.
+
+## Related essays (private gists)
+
+Design notes that are not CE-operational docs — rewrite-friendly, may be made
+public later:
+
+- [Empiricist data management: sources as authority](https://gist.github.com/benjsmith/d1f0fa276132382178457e3eb1d5015d) — posture and U1–U5 as general capabilities.
+- [OKF-P provenance extension](https://gist.github.com/benjsmith/b91b81a98557b1c99c39678506ecd8ce) — proposed `okfp` frontmatter for OKF v0.1.
