@@ -141,6 +141,11 @@ ALLOWED_FM_KEYS = frozenset({
     # entity while unlisted look-alikes abstain. All four roundtrip through
     # read_frontmatter's bracket-list parser.
     "iri", "same_as", "entity_class", "aliases",
+    # Bootstrap densify + caption harvest (v0.9.2). `origin` distinguishes
+    # caption-text figures, bootstrap facts (0 wikilink floor until the
+    # links pack), and bulk harvest. `verbatim: true` relaxes the fact
+    # word floor to 15 for near-quote exam/caption claims.
+    "origin", "verbatim",
 })
 
 TYPE_PREFIX = {

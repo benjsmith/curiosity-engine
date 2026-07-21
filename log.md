@@ -32,3 +32,31 @@ From Switch Bay densify/study-sim insights (`switchyard/docs/ce-v0.9.2-curator-n
 
 ### Open
 - Incoming additional designs (content TBD) — block implementation until reviewed.
+
+---
+
+## Session 2 work log — 2026-07-21
+
+**Bootstrap densify implemented (v0.9.2).**
+
+### Decided (locked)
+1. Table captions → always `wiki/tables/`.
+2. Figure captions → `wiki/figures/` primary; fact twin optional (`--with-facts`).
+3. Mechanical gate on writes (`score_diff` new-page floors).
+4. Resume = **agent memory** + `.curator/log.md` (no mandatory pack-state machine).
+5. **Standalone** `bootstrap.py` — not a CURATE wave mode.
+6. T2 retrieve deferred pending sim/curation feedback; can adjust later.
+
+### Changed
+- `scripts/bootstrap.py` — captions / facts-plan|pack|apply / links-plan|apply / status / prompts.
+- `score_diff.py` floors; `naming.py` allowlists `origin`/`verbatim`; `figures.py` caption-text OK without asset.
+- SKILL.md BOOTSTRAP; setup.sh allowlist + canary; template schema; tests; CHANGELOG; README; plan-assist handoff.
+
+### Status
+- Tests: `tests.test_bootstrap` OK.
+- Tag/push v0.9.2: pending end of session or explicit ship.
+- T2 still open.
+
+### Gotchas
+- Short caption fact twins need framing clause to clear 15-word floor.
+- Link density still needs existing catalog nodes (concepts/entities) — cold wikis stay sparse until CURATE creates them.

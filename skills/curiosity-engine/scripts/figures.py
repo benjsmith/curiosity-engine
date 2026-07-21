@@ -311,6 +311,12 @@ def cmd_check(args) -> int:
     for md, fm in _iter_figure_pages(wiki_dir):
         asset = fm.get("asset", "")
         origin = fm.get("origin", "")
+        # Text-only caption pages (bootstrap / caption-harvest): no asset by design.
+        if origin in ("caption-text", "caption_text") or (
+            not asset and str(fm.get("extraction_method") or "").startswith("caption")
+        ):
+            ok.append(str(md.relative_to(wiki_dir.parent)))
+            continue
         if asset:
             referenced_assets.add(asset)
         if not asset:
@@ -384,6 +390,11 @@ def cmd_regen(args) -> int:
     for md, fm in _iter_figure_pages(wiki_dir):
         asset = fm.get("asset", "")
         origin = fm.get("origin", "")
+        if origin in ("caption-text", "caption_text") or (
+            not asset and str(fm.get("extraction_method") or "").startswith("caption")
+        ):
+            skipped.append(str(md.relative_to(workspace)) + " (caption-text, no asset)")
+            continue
         if not asset:
             failed.append({"page": str(md.relative_to(workspace)),
                             "reason": "no asset field"})

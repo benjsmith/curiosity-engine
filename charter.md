@@ -18,7 +18,8 @@ Self-improving knowledge wiki skill: vault (append-only sources) + wiki (git-tra
 - Claim study-sim / Phase-2 denser product wins in CE marketing or intro materials until Switch Bay’s study-sim gate passes.
 - Let the curator edit hash-guarded skill scripts at runtime.
 - Fetch the open web as part of CURATE; acquisition is human/vault ingest only.
-- Build v0.9.2 caption-harvest / T2 retrieve **until the additional designs under review land** and the implementation plan is re-approved (hold 2026-07-20).
+- Treat **bootstrap** as a standalone densify path (`bootstrap.py`); do not fold multi-pack LLM into CURATE wave modes.
+- Do not claim study-sim wins until SB gate passes; T2 retrieve still optional follow-up.
 
 ## Architecture invariants
 
@@ -26,6 +27,7 @@ Self-improving knowledge wiki skill: vault (append-only sources) + wiki (git-tra
 - Eleven wiki page types; type-specific floors in `score_diff`.
 - Entity-resolution gate on synthesis retrieve (v0.8.3+).
 - OKF export (v0.9.0+) is a projection, not a second wiki.
+- Bootstrap densify (v0.9.2+) is opt-in volume work; long CURATE remains the quality path.
 
 ## Build-order status (high level)
 
@@ -33,7 +35,8 @@ Self-improving knowledge wiki skill: vault (append-only sources) + wiki (git-tra
 |-------|--------|
 | v0.9.0 OKF export | ✅ shipped |
 | v0.9.1 OKF docs discoverability | ✅ shipped |
-| v0.9.2 caption densify + type-aware retrieve | ⏳ plan hold — wait for more designs |
+| v0.9.2 bootstrap densify | ✅ implemented (tag when ready) |
+| T2 type-aware / two-stage retrieve | ⏳ pending study-sim feedback |
 | Study-sim product gate | ⏳ Switch Bay (not CE package) |
 
 ## Gotchas

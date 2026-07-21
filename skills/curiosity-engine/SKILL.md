@@ -74,7 +74,7 @@ The skill never fetches from the internet on its own. All sources enter the vaul
 Curiosity-engine is designed for uninterrupted autonomous loops. Approval prompts break that, so the bash surface is deliberately tiny. The ONLY bash commands you or any subagent may run in a curiosity-engine workspace:
 
 1. `git -C wiki <subcmd> ...` — never `cd wiki && git ...`, never extra flags before `-C`
-2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `entity_gate.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, `restyle.py`, `scan.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`, `query_router.py`, `identifier_cache.py`, `shape_check.py`, `derived_cache.py`, `okf_export.py`.
+2. `uv run python3 <skill_path>/scripts/<named_script>.py ...` — never bare `python3`, never `-c "..."`. The `uv run` prefix auto-discovers the workspace `.venv` (created by setup.sh) so imports like `kuzu` resolve. Covers every hash-guarded skill script: `sweep.py`, `graph.py`, `entity_gate.py`, `lint_scores.py`, `score_diff.py`, `epoch_summary.py`, `scrub_check.py`, `naming.py`, `tables.py`, `figures.py`, `code_repo.py`, `restyle.py`, `scan.py`, plus the utility scripts `vault_index.py`, `vault_search.py`, `local_ingest.py`, `query_router.py`, `identifier_cache.py`, `shape_check.py`, `derived_cache.py`, `okf_export.py`, `bootstrap.py`.
 3. `bash <skill_path>/scripts/evolve_guard.sh ...`
 4. `bash <skill_path>/scripts/viewer.sh ...` — graph-first static viewer (see §Operations → VIEWER)
 5. `printenv CURATOR_PRESET` — read the per-session preset override (see §Curator config). Run once at the start of any operation that dispatches workers/reviewers; the value is stable for the session.
@@ -591,6 +591,47 @@ Graph-first static viewer purpose-built for the curiosity-engine schema. Walks `
 3. **Rebuild only.** `bash <skill_path>/scripts/viewer.sh build` — re-emits the bundle without serving. Run after wiki edits; the page must be reloaded to pick them up.
 
 Vendor libraries (D3 + Fuse) download once into `~/.cache/curiosity-engine/wiki-view-vendor/` and copy into each workspace bundle so the rendered site is self-contained. The viewer picks up curator writes only on the next build; for live-updating previews use Obsidian.
+
+### BOOTSTRAP — "bootstrap the wiki", "bulk densify", "fast caption/fact harvest"
+
+**Standalone high-volume densify** for large cold vaults (e.g. dozens of lectures). Optimizes for **coverage** of captions and atomic facts; deliberately weak at analyses, identity merge, and careful link QA — those stay with long CURATE. **Does not** replace propose→review CURATE; not a CURATE wave mode (keeps the curated loop unpolluted).
+
+Script: `uv run python3 <skill_path>/scripts/bootstrap.py <subcommand> wiki …` (utility script; not hash-guarded). **LLM calls are made by you (the agent)** with multi-provider failover; track finished `pack_index` / `batch_index` in agent memory and append a short line under `## bootstrap` in `.curator/log.md` so a later session can resume.
+
+**Pipeline (order matters):**
+
+1. **Ingest + source stubs** already done (or run fix-source-stubs).
+2. **`graph.py rebuild wiki`** — provisional co-citation / embedding edges warm the graph (v0.6 rapid proposal).
+3. **Captions (deterministic, 0 tokens):**
+   ```
+   uv run python3 <skill_path>/scripts/bootstrap.py captions wiki --apply
+   ```
+   Fig./Figure → `wiki/figures/` with `origin: caption-text` (no PDF asset). Table → `wiki/tables/` caption-only pages. Optional `--with-facts` also writes a verbatim fact twin (figure/table page remains primary). Dry-run by default without `--apply`.
+4. **Facts packs (multi-pack LLM):**
+   ```
+   uv run python3 <skill_path>/scripts/bootstrap.py facts-plan wiki
+   uv run python3 <skill_path>/scripts/bootstrap.py facts-pack wiki --pack-index N
+   ```
+   For each pack: call worker_model (or subscription CLI) with `system_prompt` + `user_message` from the pack JSON; parse the returned JSON array; apply:
+   ```
+   uv run python3 <skill_path>/scripts/bootstrap.py facts-apply wiki --json-stdin
+   ```
+   (or `--json-file`). Normalizes `vault:vault/` → `vault:`, gates via `score_diff` floors (`origin: bootstrap-facts` allows 0 wikilinks, 15-word floor). Log each finished pack_index.
+5. **Links pack (catalog-constrained):**
+   ```
+   uv run python3 <skill_path>/scripts/bootstrap.py links-plan wiki
+   ```
+   For each batch: LLM rewrite with catalog-only stems; apply:
+   ```
+   uv run python3 <skill_path>/scripts/bootstrap.py links-apply wiki --json-stdin
+   ```
+   Unknown `[[stems]]` stripped mechanically. Log each batch_index.
+6. **`graph.py rebuild wiki`** again.
+7. **Long CURATE** for QA, entities, analyses, wire/LINK.
+
+**Status / handoff:** `bootstrap.py status wiki` prints counts and remaining pack estimates. Prompts: `bootstrap.py prompts`.
+
+**When to run:** opt-in after bulk ingest of a large frozen corpus; not on every CURATE session. Small wikis should use normal CURATE only.
 
 ### OKF — "export to OKF", "share a knowledge bundle"
 

@@ -254,6 +254,16 @@ bundles land in the vault as verbatim, untrusted, citable sources — not
 wiki pages — so the citation ratchet still governs promotion. See
 `docs/okf-interop.md` and `docs/okf-provenance-ext.md`.
 
+Bootstrap densify (optional, large cold vaults). Standalone
+`bootstrap.py` (not a CURATE wave): deterministic Fig./Table captions
+→ figures (`origin: caption-text`) / tables; multi-pack LLM atomic
+facts (`origin: bootstrap-facts`); catalog-only link rewrites. Long
+CURATE still owns analyses, identity, and QA. See SKILL.md BOOTSTRAP.
+
+Frontmatter notes: `verbatim: true` on facts (15-word floor);
+`origin: caption-text` on text-only figures (no asset required);
+`origin: bootstrap-*` allows facts with 0 wikilinks until the links pack.
+
 ## Rules
 - Write at the configured `compression` level: ultra for most page
   types (dense, telegraphic), lite for `analyses/` (human-comfortable).

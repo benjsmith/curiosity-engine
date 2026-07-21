@@ -524,6 +524,7 @@ EOF
       "Bash(uv run python3 $root/scripts/wiki_render.py:*)",
       "Bash(uv run python3 $root/scripts/viewer_server.py:*)",
       "Bash(uv run python3 $root/scripts/okf_export.py:*)",
+      "Bash(uv run python3 $root/scripts/bootstrap.py:*)",
       "Bash(uv run python3 $root/scripts/code_repo.py:*)",
       "Bash(python3 $root/scripts/code_repo.py:*)",
       "Bash(uv run python3 $root/scripts/code_capture.py:*)",
@@ -1289,6 +1290,8 @@ else
                                               # scanner
         "scripts/okf_export.py"              # v0.9.0 — Open Knowledge
                                               # Format export
+        "scripts/bootstrap.py"               # v0.9.2 — high-volume
+                                              # bootstrap densify
     )
     missing_canary=""
     for c in "${CANARY_ENTRIES[@]}"; do
@@ -1390,6 +1393,7 @@ EOF
       "Bash(uv run python3 $root/scripts/wiki_render.py:*)",
       "Bash(uv run python3 $root/scripts/viewer_server.py:*)",
       "Bash(uv run python3 $root/scripts/okf_export.py:*)",
+      "Bash(uv run python3 $root/scripts/bootstrap.py:*)",
       "Bash(bash $root/scripts/evolve_guard.sh:*)",
       "Bash(bash $root/scripts/viewer.sh:*)",
       "Bash(bash $root/scripts/update.sh:*)",

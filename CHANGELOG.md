@@ -2,6 +2,19 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-21 — v0.9.2 — bootstrap densify (high-volume captions + fact packs)
+
+**Bootstrap mode** — standalone high-volume densify for large cold vaults (prototype validated in Switch Bay on a 45-lecture corpus). Complements long CURATE; does **not** replace propose→review.
+
+- **`bootstrap.py`** (new utility script, not hash-guarded): `captions` (deterministic Fig/Table harvest), `facts-plan` / `facts-pack` / `facts-apply` (agent-orchestrated multi-pack LLM facts), `links-plan` / `links-apply` (catalog-only wikilink rewrites), `status`, `prompts`. LLM calls stay with the driving agent (multi-provider failover + resume via agent memory / `.curator/log.md`).
+- **Caption routing:** figure captions → `wiki/figures/` (`origin: caption-text`, no asset); table captions → `wiki/tables/` (caption-only); optional `--with-facts` for a verbatim fact twin.
+- **Floors:** `verbatim: true` facts → 15-word floor; `origin: bootstrap*` facts → 0 wikilink floor (links pack densifies later). `origin` / `verbatim` allowlisted in `naming.py`. `figures.py check/regen` treat caption-text as OK without assets.
+- **Safety:** `facts-apply` / caption writes gate via `score_diff` new-page floors; link apply strips non-catalog `[[stems]]`; normalizes `vault:vault/` double-prefix.
+- **SKILL.md BOOTSTRAP** operation + allowlist canary `scripts/bootstrap.py` (setup regenerates settings on next run).
+- **Tests:** `tests/test_bootstrap.py`.
+
+Not in this release: type-aware / two-stage retrieve (T2) — still pending study-sim feedback; study-sim product claims deferred.
+
 ## 2026-07-20 — v0.9.1 — OKF export discoverability in docs
 
 **Docs-only.** v0.9.0 shipped OKF export (`okf_export.py`, SKILL.md operation, design notes) but left secondary docs under-linked, so readers following architecture / multi-project / Learn more could miss the feature.

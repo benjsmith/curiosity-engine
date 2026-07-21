@@ -7,7 +7,10 @@ These gates catch catastrophic regressions that no edit should cause:
   2. No extreme raw-token bloat: body_tokens(after) <= body_tokens(before) * 1.5
   3. New pages: floor depends on directory —
        facts/*:     >=1 citation, >=1 wikilink, >=30 words
+                    (verbatim: true → >=15 words; origin bootstrap* → 0 wikilinks ok)
        evidence/*:  >=1 citation, >=1 wikilink, >=50 words
+       figures/*:   >=1 citation, 0 wikilinks, >=10 words
+       tables/*:    >=1 citation, 0 wikilinks, >=10 words
        default:     >=2 citations, >=2 wikilinks, >=100 words
   4. Citation relevance (optional): new citations must match their source
      in FTS5. Catches spurious citations without a full reviewer pass.
@@ -427,7 +430,7 @@ def notes_append_only_verdict(old_text: str, new_text: str,
     return True, "notes/ append-only: preserved"
 
 
-def _floors_for(page: Path) -> dict:
+def _floors_for(page: Path, text=None) -> dict:
     """Minimum thresholds for a new page, tightened or relaxed by directory.
 
     `facts/` and `evidence/` pages are deliberately atomic: a single
@@ -437,27 +440,43 @@ def _floors_for(page: Path) -> dict:
     reached the reviewer. Relaxed floors per directory let those pages
     land while keeping the ratchet for denser analyses/concepts.
 
+    `verbatim: true` facts (caption-grade / near-quote claims) use a
+    15-word floor so short exam atoms pass. Bootstrap-origin facts
+    (`origin: bootstrap*`) may ship with 0 wikilinks — the bootstrap
+    links pack densifies them later.
+
     `figures/` pages are captioned media: the body is an Obsidian
     transclusion + short caption, not prose. Wikilink/concept-linkage
     lives primarily in frontmatter (`relates_to`), so no wikilink
     floor. A citation is still required — the caption must name its
     source — and a minimal word floor catches empty or placeholder
-    pages.
+    pages. `origin: caption-text` needs no binary asset.
     """
     parts = set(page.parts)
+    fm = {}
+    if text:
+        try:
+            fm, _ = read_frontmatter(text)
+        except Exception:
+            fm = {}
+    origin = str(fm.get("origin") or "").strip().lower()
+    verbatim = fm.get("verbatim")
+    is_verbatim = verbatim is True or str(verbatim).lower() in ("true", "1", "yes")
+    is_bootstrap = origin.startswith("bootstrap")
+
     if "facts" in parts:
-        return {"citations": 1, "wikilinks": 1, "words": 30}
+        # Verbatim/bootstrap: short exam or caption atoms (floor 15; short
+        # captions still clear when the body includes a framing clause).
+        words = 15 if (is_verbatim or is_bootstrap) else 30
+        wikilinks = 0 if is_bootstrap else 1
+        return {"citations": 1, "wikilinks": wikilinks, "words": words}
     if "evidence" in parts:
         return {"citations": 1, "wikilinks": 1, "words": 50}
     if "figures" in parts:
         return {"citations": 1, "wikilinks": 0, "words": 10}
     if "tables" in parts:
-        # Summary tables carry structured rows, not prose — frontmatter +
-        # short framing sentence + the markdown table. Wikilinks typically
-        # live inside table cells (entity refs, source stubs); citations
-        # pin the data to its vault sources. Floor: >=1 citation, 0
-        # wikilinks required (cells carry them naturally), >=10 words of
-        # framing prose so we don't accept an empty table scaffold.
+        # Summary tables, extracted grids, and caption-only table pages.
+        # Floor: >=1 citation, 0 wikilinks required, >=10 words framing.
         return {"citations": 1, "wikilinks": 0, "words": 10}
     if "todos" in parts or "notes" in parts:
         # Notes and todo-list pages are user-authored raw input (notes/)
@@ -473,7 +492,8 @@ def _floors_for(page: Path) -> dict:
 def new_page_verdict(text: str, page: Path = None) -> tuple:
     m = metrics(text)
     words = body_tokens(text)
-    floors = _floors_for(page) if page else {"citations": 2, "wikilinks": 2, "words": 100}
+    floors = (_floors_for(page, text) if page
+              else {"citations": 2, "wikilinks": 2, "words": 100})
     if m["citations"] < floors["citations"]:
         return False, f"too few citations ({m['citations']}; need >={floors['citations']})"
     if m["wikilinks"] < floors["wikilinks"]:
