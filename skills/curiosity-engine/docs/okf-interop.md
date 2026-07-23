@@ -9,7 +9,7 @@ here changes the three-object model (vault / wiki / curator); OKF export is a
 **read-only projection** of the wiki, additive and optional — one more derived
 view alongside `data.json` and the kuzu graph. For the foundation see
 [`architecture.md`](architecture.md). Broader design essays (empiricist data
-posture; OKF-P provenance extension) live as private gists — see footer.
+posture; OKF-P provenance extension) are published as gists — see footer.
 
 ## The thesis
 
@@ -194,10 +194,10 @@ structure without losing it (`x_ce_citations` preserves the raw citation list).
   `okf_import` ever writes directly into `wiki/` pages that feed curate scoring,
   it must be guarded.
 
-## Related essays (private gists)
+## Related essays (gists)
 
-Design notes that are not CE-operational docs — rewrite-friendly, may be made
-public later:
+Design notes that are not CE-operational docs, hosted as public gists so they
+can evolve independently of releases:
 
-- [Empiricist data management: sources as authority](https://gist.github.com/benjsmith/d1f0fa276132382178457e3eb1d5015d) — posture and U1–U5 as general capabilities.
-- [OKF-P provenance extension](https://gist.github.com/benjsmith/b91b81a98557b1c99c39678506ecd8ce) — proposed `okfp` frontmatter for OKF v0.1.
+- [Empiricist data management: sources as authority](https://gist.github.com/benjsmith/53abbda45872e0a4eb27bf352be75301) — posture and U1–U5 as general capabilities.
+- [OKF-P provenance extension](https://gist.github.com/benjsmith/9e4b20a758bfe86c2b2cf59e2720243b) — proposed `okfp` frontmatter for OKF v0.1.

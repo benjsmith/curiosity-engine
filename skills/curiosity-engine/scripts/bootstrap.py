@@ -38,7 +38,7 @@ LLM calls are made by the driving agent (multi-provider, session resume via
 agent memory + .curator/log.md). This script only packs, normalizes, gates,
 and writes.
 
-See SKILL.md BOOTSTRAP; prototype notes in switchyard docs/ce-bootstrap-mode-design.md.
+See SKILL.md BOOTSTRAP.
 """
 from __future__ import annotations
 

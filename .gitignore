@@ -5,3 +5,7 @@ Thumbs.db
 scripts/__pycache__/
 __pycache__/
 *.pyc
+
+# Untracked local scratch (PR drafts, hold-until-release notes)
+pr-draft-*.md
+okf-*-draft.md
