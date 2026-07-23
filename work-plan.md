@@ -21,7 +21,7 @@ When a phase lands, summarise into `log.md` and prune here.
 1. Commit + push + **tag v0.9.4** on main; GitHub release. Global skill update (`npx skills@1.5.12 update -g curiosity-engine`).
 2. **Benchmark before any retrieval-ranking change.** Build/borrow an out-of-distribution QUERY set (closed-book baseline should score poorly) that is substantially larger than n=12. This is the gate for re-attempting type-aware demotion, vault-first two-stage, or any ranking change — in Switch Bay, not the CE package.
 3. Submit `pr-draft-awesome-llm-wiki.md` (was held for v0.9.4 — now unblocked; re-verify list HEAD + insertion points first).
-4. Review + file `okf-p-upstream-issue-draft.md` upstream (user's call; CLA only for a later PR).
+4. ~~File OKF-P upstream~~ — **retired 2026-07-23** (confidence field hard to calibrate; overlaps live OKF tracker threads). Gist deleted, draft removed, okf-interop.md cleaned. EDM essay kept (reframed as an open-question invitation).
 5. Follow-up PR: Switch Bay entry once released (agentic UI over CE + curiosity-merge).
 
 ---

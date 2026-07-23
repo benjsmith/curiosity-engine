@@ -8,8 +8,8 @@ It is a design note plus the rationale for the shipped `okf_export.py`. Nothing
 here changes the three-object model (vault / wiki / curator); OKF export is a
 **read-only projection** of the wiki, additive and optional — one more derived
 view alongside `data.json` and the kuzu graph. For the foundation see
-[`architecture.md`](architecture.md). Broader design essays (empiricist data
-posture; OKF-P provenance extension) are published as gists — see footer.
+[`architecture.md`](architecture.md). A broader design essay (the empiricist
+data-management posture) is published as a gist — see footer.
 
 ## The thesis
 
@@ -178,10 +178,11 @@ structure without losing it (`x_ce_citations` preserves the raw citation list).
 
 ## Open questions and roadmap
 
-- **The provenance/identity extension.** OKF v0.1's omissions plus its
-  unknown-key-preservation rule make a spec-legal extension the natural
-  contribution back. See the OKF-P gist (footer); proposing it upstream is the
-  concrete next step.
+- **The provenance/identity gap.** OKF v0.1 omits provenance and identity; CE's
+  structure rides in `x_ce_*` extension keys today (mapping above). Formalizing a
+  spec-legal frontmatter extension under OKF's unknown-key rule is possible but
+  not currently pursued — calibrating a cross-producer confidence field is hard,
+  and OKF's own tracker already carries several overlapping provenance proposals.
 - **A typed-link convention.** OKF links are untyped by design; whether a
   lightweight rel-annotation convention (e.g. a trailing `{rel=cites}`) is worth
   proposing upstream, or whether prose semantics suffice, is open.
@@ -194,10 +195,9 @@ structure without losing it (`x_ce_citations` preserves the raw citation list).
   `okf_import` ever writes directly into `wiki/` pages that feed curate scoring,
   it must be guarded.
 
-## Related essays (gists)
+## Related essay (gist)
 
-Design notes that are not CE-operational docs, hosted as public gists so they
-can evolve independently of releases:
+A design note that is not a CE-operational doc, hosted as a public gist so it can
+evolve independently of releases:
 
-- [Empiricist data management: sources as authority](https://gist.github.com/benjsmith/53abbda45872e0a4eb27bf352be75301) — posture and U1–U5 as general capabilities.
-- [OKF-P provenance extension](https://gist.github.com/benjsmith/9e4b20a758bfe86c2b2cf59e2720243b) — proposed `okfp` frontmatter for OKF v0.1.
+- [Empiricist data management: sources as authority](https://gist.github.com/benjsmith/53abbda45872e0a4eb27bf352be75301) — the posture, the features that proved out at small scale, and an open question about scaling it.
