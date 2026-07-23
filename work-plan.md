@@ -9,40 +9,20 @@ When a phase lands, summarise into `log.md` and prune here.
 
 ---
 
-## ⏸ SESSION HANDOFF — 2026-07-21 (type-aware demotion)
+## ⏸ SESSION HANDOFF — 2026-07-23 (v0.9.4 regression: type-aware demotion reverted)
 
-**Done + verified:**
-- v0.9.2 bootstrap densify shipped (tag).
-- Study-sim pilot: type-aware ≈ RAG; **T2 rejected** (0.56).
-- **v0.9.3 type-aware demotion** in `graph.py retrieve` (default on; `--no-type-priority` opt-out).
-- Tests: `tests.test_retrieve_type_priority`.
+**Done + verified (see log Session 6):**
+- **v0.9.4 reverts v0.9.3 type-aware demotion.** `graph.py retrieve` back to distance-then-overlap ranking; all type-priority code/flags/config/response-fields/tests removed; type-aware behaviour scrubbed from README, SKILL, config example, testing.md; CHANGELOG v0.9.4 entry added.
+- Rationale: n=12 study-sim pilot was a wash (0.81 vs 0.79) and too in-distribution to justify a ranking change; it may harm common synthesis cases. Ranking stays neutral until a valid OOD + larger benchmark exists.
+- ec6393d accuracy check done (clean; fixed 2 broken historical CHANGELOG links).
+- Earlier (2026-07-22): gists public + cross-linked; OKF-P gist rationale patch; `okf-p-upstream-issue-draft.md` drafted (gitignored, unfiled).
 
-**Also done (docs hygiene):**
-- Removed planning-only docs; CE-agnostic essays → private gists (see log Session 4).
-
-**Left to do:**
-1. Commit + push docs hygiene (no version bump required unless desired).
-2. Global skill update when convenient.
-3. SB study-sim re-run against CE retrieve with type_priority (not T2).
-4. Do **not** implement T2 unless new evidence.
-5. Optionally flip gists public after personal edit pass.
-
-**How to run bootstrap:**
-```bash
-uv run python3 skills/curiosity-engine/scripts/bootstrap.py captions wiki --apply
-uv run python3 skills/curiosity-engine/scripts/bootstrap.py facts-plan wiki
-uv run python3 skills/curiosity-engine/scripts/bootstrap.py facts-pack wiki --pack-index 0
-# agent LLM → JSON →
-uv run python3 skills/curiosity-engine/scripts/bootstrap.py facts-apply wiki --json-file /tmp/facts.json
-uv run python3 skills/curiosity-engine/scripts/bootstrap.py links-plan wiki
-# agent LLM → JSON →
-uv run python3 skills/curiosity-engine/scripts/bootstrap.py links-apply wiki --json-file /tmp/links.json
-uv run python3 skills/curiosity-engine/scripts/graph.py rebuild wiki
-```
-
-**Environment notes:**
-- LLM not inside bootstrap.py — agent makes multi-provider calls; log pack_index in `.curator/log.md`.
-- T2 retrieve still not shipped; densify content alone may not win study-sim until ranking lands.
+**Next:**
+1. Commit + push + **tag v0.9.4** on main; GitHub release. Global skill update (`npx skills@1.5.12 update -g curiosity-engine`).
+2. **Benchmark before any retrieval-ranking change.** Build/borrow an out-of-distribution QUERY set (closed-book baseline should score poorly) that is substantially larger than n=12. This is the gate for re-attempting type-aware demotion, vault-first two-stage, or any ranking change — in Switch Bay, not the CE package.
+3. Submit `pr-draft-awesome-llm-wiki.md` (was held for v0.9.4 — now unblocked; re-verify list HEAD + insertion points first).
+4. Review + file `okf-p-upstream-issue-draft.md` upstream (user's call; CLA only for a later PR).
+5. Follow-up PR: Switch Bay entry once released (agentic UI over CE + curiosity-merge).
 
 ---
 
@@ -50,12 +30,14 @@ uv run python3 skills/curiosity-engine/scripts/graph.py rebuild wiki
 
 | Item | State |
 |------|--------|
-| v0.9.2 bootstrap densify | ✅ implemented (tag pending) |
-| T2 type-aware retrieve | ⏳ wait study-sim / curation feedback |
+| v0.9.4 type-aware revert | ✅ done (tag pending) |
+| Retrieval-ranking changes (type-aware / two-stage / etc.) | ⛔ blocked on a valid OOD benchmark |
+| Valid CE-QUERY benchmark (OOD, large) | ⏳ Switch Bay — the gate for #2 above |
 | plan-assist | live |
 
 ## Explicit non-goals (this horizon)
 
+- Retrieval-ranking changes without a valid benchmark (see charter DO NOT)
 - Embedding bootstrap LLM in Python (stays agent-orchestrated)
 - Polluting CURATE wave modes with bootstrap packs
 - Study-sim claims in intro decks

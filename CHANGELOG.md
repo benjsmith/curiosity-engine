@@ -2,6 +2,14 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-23 — v0.9.4 — revert v0.9.3 type-aware retrieve demotion
+
+**Reverts the type-aware demotion shipped in v0.9.3.** `graph.py retrieve` returns to distance-then-overlap ranking (the v0.9.2 behaviour): pages are no longer reordered by page type before `--limit`, and no query type is treated specially.
+
+**Why.** v0.9.3 rested on a single n=12 study-sim exam pilot where type-aware ranking merely *matched* raw RAG (0.81 vs 0.79 — a wash, not a win). That is not sufficient evidence to change retrieval ranking. A sound test of CE QUERY superiority needs a benchmark that is **out-of-distribution** (a closed-book baseline should score poorly, or the corpus isn't doing the work) and **substantially larger**; we do not yet have one. Shipping the change on the pilot over-indexed on a test that did not capture real-world use and drifted from CE's model — curated analyses are the apex synthesis substrate, not noise to demote below every atom. Until a valid benchmark exists, retrieval ranking stays neutral. Vault-first two-stage (T2) likewise remains unshipped.
+
+**Removed:** the `--no-type-priority` flag, the `retrieve.type_priority` config key, the `needle` / `type_priority` / `type_bucket` / `type_rank` response fields, the type-priority helpers in `graph.py`, and `tests/test_retrieve_type_priority.py`. No migration needed: these were opt-outs of a default-on behaviour that no longer exists. A workspace whose `config.json` still sets `retrieve.type_priority` can drop the key — it is now ignored, not an error.
+
 ## 2026-07-21 — v0.9.3 — type-aware retrieve demotion (not T2)
 
 **Study-sim pilot feedback (n=12, post-bootstrap wiki):** type-aware wiki ranking (demote analyses) matched raw RAG (~0.81 vs 0.79). Vault-first two-stage (T2) lost badly (~0.56) — vault filled the budget and exam tasks were not treated as needles, so facts/figures lost to wholes + analyses. Bootstrap content (v0.9.2) was the right densify ship; ranking must prefer atoms when present.
@@ -142,7 +150,7 @@ Anyone who still sees the caveman install prompt is on a pre-v0.5.0 install; re-
 
 ## 2026-06-01 — v0.5.0 — U1–U5 empiricist-EDM upgrades
 
-Implements the five additive upgrades from [`docs/ce-as-edm.md`](docs/ce-as-edm.md), scoped to CE-as-research-wiki (no EDM platform, no maplib/RDF). Each deepens a capability CE already had half-built; all are backward-compatible and optional. Full design + verification log in [`docs/u1-u5-implementation-plan.md`](docs/u1-u5-implementation-plan.md). Verified against a real 382-page wiki and controlled fixtures.
+Implements the five additive upgrades from the empiricist-EDM design note (`docs/ce-as-edm.md` at the time; since rewritten CE-agnostic and moved to a gist — see the v0.9.x docs-hygiene pass), scoped to CE-as-research-wiki (no EDM platform, no maplib/RDF). Each deepens a capability CE already had half-built; all are backward-compatible and optional. Full design + verification log in `docs/u1-u5-implementation-plan.md` (a planning doc, since removed). Verified against a real 382-page wiki and controlled fixtures.
 
 **U1 — Domain-agnostic identity layer.** Generalises the chemical/gene identifier cache into an entity IRI service. New `entities` table in `.curator/identifiers.db`; `identifier_cache.py mint-entity` / `lookup-entity` mint workspace-stable IRIs (`ce:<class>:<workspace>:<slug>`) deterministically — idempotent, stable hash suffix on collision, `same_as` merges across mints from one page. Resolver registry in `identifier_resolve.py` (chemical/gene wired; other classes local-only). New `iri` / `same_as` / `entity_class` frontmatter keys (`naming.py`). The IRI never keys on an external id, so upstream re-resolution can't orphan a citation.
 

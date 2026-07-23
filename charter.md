@@ -19,7 +19,7 @@ Self-improving knowledge wiki skill: vault (append-only sources) + wiki (git-tra
 - Let the curator edit hash-guarded skill scripts at runtime.
 - Fetch the open web as part of CURATE; acquisition is human/vault ingest only.
 - Treat **bootstrap** as a standalone densify path (`bootstrap.py`); do not fold multi-pack LLM into CURATE wave modes.
-- Do not claim study-sim wins until SB gate passes; T2 retrieve still optional follow-up.
+- Do not ship retrieval-ranking changes (type-aware demotion, vault-first two-stage, etc.) without a valid benchmark: it must be out-of-distribution (a closed-book baseline should score poorly) and substantially larger than the n=12 study-sim pilot. That pilot alone is not sufficient evidence — v0.9.3 was reverted in v0.9.4 on this basis. Retrieval ranking stays distance-only until then.
 
 ## Architecture invariants
 
@@ -36,8 +36,8 @@ Self-improving knowledge wiki skill: vault (append-only sources) + wiki (git-tra
 | v0.9.0 OKF export | ✅ shipped |
 | v0.9.1 OKF docs discoverability | ✅ shipped |
 | v0.9.2 bootstrap densify | ✅ shipped |
-| v0.9.3 type-aware retrieve demotion | ✅ implemented (tag when ready) |
-| T2 vault-first two-stage | ❌ rejected by pilot (do not ship without new evidence) |
+| v0.9.3 type-aware retrieve demotion | ↩︎ reverted in v0.9.4 (pilot evidence insufficient; retrieval ranking back to distance-only) |
+| Retrieval-ranking changes (type-aware, vault-first two-stage, etc.) | ⛔ on hold — none ship until a valid OOD benchmark exists (see log) |
 | Study-sim product gate | ⏳ Switch Bay (not CE package) |
 
 ## Gotchas

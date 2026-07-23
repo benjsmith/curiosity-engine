@@ -92,8 +92,9 @@ From Switch Bay densify/study-sim insights (`switchyard/docs/ce-v0.9.2-curator-n
 - `ce-as-edm.md`, `okf-provenance-ext.md` (rewritten CE-agnostic → gists).
 
 ### Private gists (secret; flip public later if wanted)
-- Empiricist EDM: https://gist.github.com/benjsmith/d1f0fa276132382178457e3eb1d5015d
-- OKF-P extension: https://gist.github.com/benjsmith/b91b81a98557b1c99c39678506ecd8ce
+- Empiricist EDM: https://gist.github.com/benjsmith/53abbda45872e0a4eb27bf352be75301
+- OKF-P extension: https://gist.github.com/benjsmith/9e4b20a758bfe86c2b2cf59e2720243b
+- *(URLs updated 2026-07-22: original secret gists deleted, recreated public — see Session 5. GitHub cannot flip gist visibility in place.)*
 
 ### Kept
 - `okf-interop.md` (CE-specific) — links to gists in footer; U1–U5 marked shipped where relevant.
@@ -101,3 +102,48 @@ From Switch Bay densify/study-sim insights (`switchyard/docs/ce-v0.9.2-curator-n
 
 ### Status
 - Live skill docs no longer carry implementation-plan files or CE-steelman essays.
+
+## Session 5 work log — 2026-07-22
+
+**Docs watchout fixes (pre-bump); gists flipped public; awesome-llm-wiki PR drafted (hold).**
+
+### Type-aware overclaim corrections (Switch Bay reorientation: v0.9.3 was hasty; regress/correct planned)
+- `README.md` feature bullet: "Policy validated…" now scoped to **routing**; demotion described as an all-query reorder, pilot-supported, **under re-evaluation**; "analyses remain the primary synthesis substrate".
+- `SKILL.md` retrieve verb: states demotion applies to **every** query (not needle-only), cites pilot honestly (n=12, ≈ raw RAG), points agents at `--no-type-priority` for synthesis queries.
+- Code reality (unchanged this session, for the future fix): `graph.py` applies `demote_by_type` to all queries before `--limit`; non-needle analyses rank 4 — below sources/facts/figures/tables/evidence/entities/concepts — so analyses can drop out of the window on synthesis queries. Contradicts intent-taxonomy freeze ("demotion is needle-mode only").
+- `charter.md` build-order row updated (tagged; heuristic under re-evaluation). `bootstrap.py` docstring switchyard pointer removed.
+
+### Gists → public (URLs changed; GitHub can't flip visibility in place)
+- Empiricist EDM: https://gist.github.com/benjsmith/53abbda45872e0a4eb27bf352be75301
+- OKF-P extension: https://gist.github.com/benjsmith/9e4b20a758bfe86c2b2cf59e2720243b
+- Content fixes on republish: gists now cross-link each other; "License intent" → "License"; OKF-P nested `okfp` block declared normative (flat `okfp_` prefix informative); "production systems" → "a working open-source implementation". Old secret gists deleted; `okf-interop.md` footer updated.
+- Note: gists are owned by the `benjsmith` account (same as repo + gh auth) — a browser logged into another account won't list them.
+
+### awesome-llm-wiki PR (prepared, NOT submitted — hold until v0.9.4 retrieval correction lands)
+- Draft: `pr-draft-awesome-llm-wiki.md` (repo root, untracked scratch — do not commit to the skill).
+- Positioning: report the epistemics (citation ratchet, identity + abstention gate, shapes, federation, OKF-P), not "another wiki". No retrieval-ranking claims until Phase-2 bench survives.
+- Follow-up PR planned separately: Switch Bay (agentic UI over CE + curiosity-merge) once released.
+
+## Session 6 work log — 2026-07-23
+
+**v0.9.4 — reverted the v0.9.3 type-aware retrieve demotion (superseding Session 5's doc-softening, which was an interim step).**
+
+### Decision
+The n=12 study-sim exam pilot that justified v0.9.3 showed type-aware ≈ raw RAG (0.81 vs 0.79) — a wash, not a win — and we now judge it too small and too in-distribution to change retrieval ranking at all. A valid test of CE QUERY superiority needs an **out-of-distribution** set (closed-book baseline should score poorly) that is **much larger**; we don't have one yet. Rather than ship a ranking change that may actively harm common synthesis/matched-analysis cases (analyses demoted below every atom, dropped before `--limit`) for an unproven needle-case benefit, retrieval returns to neutral distance-only ranking.
+
+### Code (regressed to pre-v0.9.3 / 14fd40e^)
+- `graph.py`: restored parent file directly (was byte-identical to the v0.9.3 post-image, so a clean surgical revert). Gone: `_TYPE_PRIORITY`, `_QUOTEISH`, `query_is_needle`, `page_type_bucket`, `type_rank`, `demote_by_type`, `_retrieve_type_priority_enabled`, the `cmd_retrieve` `type_priority`/`needle` plumbing, the `--no-type-priority` flag, and the `needle`/`type_priority`/`type_bucket`/`type_rank` response fields.
+- Removed `tests/test_retrieve_type_priority.py`. Removed `retrieve.type_priority` from `template/config.example.json`. (`template/config.json` never had it.)
+- Suite: 54 tests green (was 63; −9 from the deleted type-priority test).
+
+### Docs (type-aware behaviour removed, not softened)
+- `README.md` + `SKILL.md` retrieve verb restored to their exact pre-v0.9.3 wording; SKILL config-example line + `retrieve`/`type_priority` config-doc bullet removed; `docs/testing.md` test-list clause removed.
+- `CHANGELOG.md`: added the v0.9.4 revert entry (v0.9.3 entry kept as history). Also de-linked two now-broken relative links in the historical v0.5.0 entry (`docs/ce-as-edm.md`, `docs/u1-u5-implementation-plan.md` — deleted by ec6393d) to plain inline references.
+- `charter.md`: build-order rows updated; DO-NOT directive now bars retrieval-ranking changes without a valid OOD benchmark.
+
+### ec6393d accuracy check (requested)
+Accurate: the five files it claims to delete are gone; okf-interop kept with gist footer; rewrites faithful. Only blemish found — the two broken CHANGELOG links above, now fixed. No other dangling references outside CHANGELOG/log history.
+
+### Also done since Session 5 was written (2026-07-22, same work window)
+- Patched the public OKF-P gist: added the "Why an extension" paragraph pre-empting OKF's minimalism objection ("interoperability surface, not the content model"), and qualified the base-v0.2 upstream option as recommended-optional-only.
+- Drafted the upstream OKF proposal issue → `okf-p-upstream-issue-draft.md` (repo root, gitignored). Positioned against the seven live overlapping threads (#140/#47 transport trust, #52/#214 publication metadata, #92 SOURCES, #183 typed/confidence links, #53 governance). NOT filed — user reviews first; Google CLA needed only for a later PR, not the issue.

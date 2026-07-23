@@ -47,7 +47,6 @@
     "notes_semantic_dedup_threshold": 0.92,
     "cluster_scope_threshold": 500,
     "provisional": { "enabled": true, "min_shared_sources": 2, "embedding_min_cosine": 0.60, "embedding_top_m": 5, "max_edges": 2000 },
-    "retrieve": { "type_priority": true },
     "compression": { "read": "ultra", "write_analysis": "lite", "write_other": "ultra" }
   }
 }
