@@ -186,3 +186,7 @@ v0.9.4 moved from `bc807d5` to the new head. Note this also brings `0c1561e` (OK
 
 ### Not needed
 No re-embed: edges were always still derived, and `_page_vectors` reads stored blobs at rebuild time, so the next `graph.py rebuild` picks up the cleaner provisional tier. `evolve_guard.sh` computes its fingerprint at wave start/end from the files on disk, so no committed hash list needed updating for the `graph.py` / `embedder.py` edits.
+
+### Gitignored scratch cleanup
+- Deleted `ce-zero-norm-cosine-fix.md` — actioned and superseded by the shipped fix above.
+- **`pr-draft-awesome-llm-wiki.md` kept, not deleted.** It was never submitted (`gh pr list --repo gavischneider/awesome-llm-wiki --author benjsmith --state all` → empty), and its own HOLD condition was "do not submit until the v0.9.4 retrieval correction lands" — satisfied by today's retag, so the draft just became ready rather than obsolete. Refreshed instead: status flipped to READY; **the OKF-P entry (#3) removed** because its gist 404s after the Session 7 retirement, with an explicit do-not-reinstate note in the file; the essay entry (#2) description rewritten against the *reframed* gist (was "distills five reusable capabilities" / assertive sources-as-authority — now the open-question framing, seven features, small-scale-only scoping); PR title, "four entries" → three, and the authorship-disclosure checklist line updated to match. `okf_export.py` still ships and is still described in the curiosity-engine entry — only the OKF-P *extension proposal* is gone.
