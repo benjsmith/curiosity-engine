@@ -12,3 +12,12 @@ pr-draft-*.md
 okf-*-draft.md
 ce-*-fix.md
 ce-*-note.md
+
+# Developer-side planning docs (plan-assist triad). Session continuity and
+# working intent — deliberately local-only. Remote main carries substantive
+# code and user-facing docs; what shipped is recorded in CHANGELOG.md.
+# Root-anchored so the in-workspace `.curator/log.md` journal and any
+# generated bundle log.md are unaffected.
+/charter.md
+/work-plan.md
+/log.md
