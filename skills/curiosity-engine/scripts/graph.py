@@ -491,11 +491,27 @@ def _page_vectors(wiki_dir: Path):
     for rel, blob in rows:
         by_page.setdefault(rel, []).append(np.frombuffer(blob, dtype=np.float32))
     out = {}
-    for rel, vecs in by_page.items():
-        v = np.mean(vecs, axis=0)
-        n = np.linalg.norm(v)
-        if n > 0:
-            out[rel] = v / n
+    # errstate: a stored blob holding inf/huge components (corrupt or
+    # mis-dtype bytes) overflows inside np.mean / np.linalg.norm's
+    # sum-of-squares before any guard below can see it. The RuntimeWarnings
+    # a full rebuild used to print originate here, not at the cosine matmul.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for rel, vecs in by_page.items():
+            v = np.mean(vecs, axis=0)
+            n = float(np.linalg.norm(v))
+            # isfinite AND an epsilon floor, not `> 0`:
+            #  - an inf norm passes `> 0`, and inf/inf is NaN, so the page
+            #    entered the cosine matrix as a NaN row and silently
+            #    poisoned every similarity computed against it;
+            #  - a NaN norm fails every comparison, so it was already
+            #    dropped — isfinite just makes that explicit;
+            #  - a near-zero norm (chunk vectors that nearly cancel: a
+            #    semantically mixed page, or a stub) normalises to a
+            #    finite unit vector, but its direction is amplified noise,
+            #    which injects junk into the cosine ranking and can form
+            #    spurious embedding edges.
+            if np.isfinite(n) and n > 1e-6:
+                out[rel] = v / n
     return out or None
 
 
@@ -554,6 +570,9 @@ def _build_provisional(conn, wiki_dir: Path, linked_pairs: set,
         import numpy as np
         paths = sorted(p for p in pv if types.get(p) != "source")
         if len(paths) >= 2:
+            # _page_vectors guarantees finite unit rows, so this cannot
+            # overflow — deliberately left unguarded so that if it ever
+            # warns again, the warning is real signal.
             m = np.stack([pv[p] for p in paths])
             sims = m @ m.T
             top_m = int(cfg["embedding_top_m"])

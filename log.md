@@ -162,3 +162,27 @@ Rewritten from an assertive "sources-as-authority replaces model-first EDM" piec
 ### curiosity-merge nuance (verified via subagent read of ~/Dev/curiosity-merge, then user correction)
 - Subagent finding: the *mechanical* merge (identity.py `match_identities`, IRI→`same_as` authority-pair) has **no LLM**; class-shape and contradiction reconciliation have no automatic code path — quarantined + audited. Identity reconciliation is unit/e2e-tested (synthetic); unmerge is identity-unaware + explicitly untested.
 - User correction folded in: the merge target is a **live LLM-curated wiki**, so the downstream curator does the semantic reconciliation, not a human-forever gate. Phase-1 switchyard testing exercised **semantic divergence** (same term / different meaning) and **synonymy** (different term / same meaning) and the curator *detected* both well. Genuinely untested = reliable *resolution* (likely a skill-instruction change, not new capability) and *re-curation latency* over large dense merges. Essay now frames the enterprise questions as: is asymptotic correctness acceptable, and what wall-clock is achievable if optimised.
+
+## Session 8 work log — 2026-07-26
+
+**Provisional-edge cosine pass: non-finite page vectors fixed. No version bump; v0.9.4 retagged.**
+
+### The maintainer note's diagnosis was partly wrong — corrected before shipping
+Input was a gitignored maintainer note (`ce-zero-norm-cosine-fix.md`, now matched by new `.gitignore` patterns `ce-*-fix.md` / `ce-*-note.md`) diagnosing the rebuild `RuntimeWarning`s statically. Its proposed one-line fix (`if n > 0` → `if n > 1e-6` in `_page_vectors`) would **not** have silenced them. Verified empirically with a float32 probe rather than accepting the static reasoning:
+
+- **Near-zero norm does not blow up.** `v / n` has norm 1 by construction (`|v_i| <= n`), so it cannot overflow — a 1-ulp cancellation at 1.0 gives norm `2.98e-8` and normalises to a clean `[1.0, 0, …]`, and `m @ m.T` on it warns not at all. The note's chain ("`v / 1e-18` explodes → matmul overflows") does not hold; numpy's `nrm2` is also scale-safe, and tiny-component vectors (`1e-30`) underflow to an exact `0.0` norm and were already dropped by `> 0`.
+- **The real defect is an `inf` norm**, which *passes* `> 0` (and passes `> 1e-6`): `inf / inf` is `NaN`, so the page entered the cosine matrix as a NaN row and silently poisoned every similarity against it. A `NaN` norm was already dropped (fails every comparison).
+- **The warnings fire inside `_page_vectors`**, from `np.mean` / `np.linalg.norm`'s sum-of-squares on huge components — *not* at the matmul. So the note's suggested `np.errstate` around `sims = m @ m.T` was in the wrong place and would have been dead weight masking future real signal.
+
+### Shipped
+- `graph.py` `_page_vectors`: floor is now `np.isfinite(n) and n > 1e-6`, with an `np.errstate(over, invalid)` context around the mean/norm loop where the overflow actually originates. Epsilon kept on the note's edge-quality argument (a near-cancelling page's direction is amplified noise → skewed cosine ranking, spurious embedding edges), not as a warning fix.
+- `_build_provisional` matmul left **deliberately unguarded** with a comment saying why: rows are now provably finite unit vectors, so a future warning there is real signal.
+- `embedder.py` `_normed`: `if n and np.isfinite(n)` — a `NaN` norm is truthy, so the bare `if n` divided by `NaN` and propagated it into the stored blob (a plausible upstream producer of the poisoned vectors above).
+- `tests/test_page_vectors.py` (new, 3 tests): stored-blob fixture, no network, no model load. Confirmed to fail on pre-fix code (1 error from `simplefilter("error")`, 2 assertion failures) and pass after. Suite 57 tests green.
+- `CHANGELOG.md`: bundled-fix paragraph appended to the existing v0.9.4 entry (no new section, no version bump — patch-level behaviour fix inside an already-tagged release).
+
+### Retag
+v0.9.4 moved from `bc807d5` to the new head. Note this also brings `0c1561e` (OKF-P provenance retirement docs, Session 7) inside the tag — it was committed after the original tag and was previously untagged. GitHub release for v0.9.4 follows the tag; its body was left as-is unless separately synced.
+
+### Not needed
+No re-embed: edges were always still derived, and `_page_vectors` reads stored blobs at rebuild time, so the next `graph.py rebuild` picks up the cleaner provisional tier. `evolve_guard.sh` computes its fingerprint at wave start/end from the files on disk, so no committed hash list needed updating for the `graph.py` / `embedder.py` edits.

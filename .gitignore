@@ -6,6 +6,9 @@ scripts/__pycache__/
 __pycache__/
 *.pyc
 
-# Untracked local scratch (PR drafts, hold-until-release notes)
+# Untracked local scratch (PR drafts, hold-until-release notes,
+# maintainer diagnosis notes)
 pr-draft-*.md
 okf-*-draft.md
+ce-*-fix.md
+ce-*-note.md

@@ -93,7 +93,9 @@ class Embedder:
         import numpy as np
         v = np.asarray(vec, dtype="float32")
         n = float(np.linalg.norm(v))
-        return (v / n if n else v).tolist()
+        # isfinite: a NaN norm is truthy, so a bare `if n` would divide
+        # by NaN and propagate it into the stored vector.
+        return (v / n if n and np.isfinite(n) else v).tolist()
 
     def embed_passages(self, texts: list) -> list:
         if self.backend == "fastembed":
