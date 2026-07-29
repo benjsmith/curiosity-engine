@@ -268,6 +268,20 @@ class CitationPathAliasing(unittest.TestCase):
         self.assertEqual(m["wiki-rag.md"],
                           "20260728-231916-local-wiki-rag.md.extracted.md")
 
+    def test_resolves_raw_vault_filename_with_prefix(self):
+        """Pages cite the file they can see in vault/ rather than its
+        `.extracted.md`. Prefix intact, so it stays unique even when the
+        same source was ingested twice and the un-prefixed alias is
+        ambiguous — the case that survived the first pass of the fixer."""
+        a = "20260516-185750-local-paper-pmid39042376-flavor.md.extracted.md"
+        b = "20260516-213750-local-paper-pmid39042376-flavor.md.extracted.md"
+        m = sweep._indexed_alias_map({a, b})
+        self.assertEqual(m["20260516-185750-local-paper-pmid39042376-flavor.md"], a)
+        self.assertEqual(m["20260516-213750-local-paper-pmid39042376-flavor.md"], b)
+        # The shared un-prefixed alias is ambiguous and must resolve to
+        # neither.
+        self.assertNotIn("paper-pmid39042376-flavor.md", m)
+
     def test_ambiguous_alias_is_dropped_not_guessed(self):
         """`llama` is a substring of two sources; anchoring on the whole
         original name is what keeps them apart, and a genuinely shared

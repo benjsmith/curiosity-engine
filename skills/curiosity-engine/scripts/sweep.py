@@ -2412,6 +2412,15 @@ def _indexed_alias_map(indexed: set) -> dict:
     from collections import defaultdict
     candidates = defaultdict(set)
     for path in indexed:
+        aliases = set()
+        # The raw vault file the extraction was made from, prefix intact:
+        # `20260516-185750-local-paper-x.md`. Pages cite this when they name
+        # the file they can see in vault/ rather than its `.extracted.md`.
+        # Unique by construction, since indexed paths are unique — so it
+        # still resolves when a source was ingested twice under different
+        # timestamps and the un-prefixed alias below is ambiguous.
+        if path.endswith(".extracted.md"):
+            aliases.add(path[: -len(".extracted.md")])
         core = path
         m = _INGEST_PREFIX_RE.match(core)
         if m:
@@ -2420,7 +2429,8 @@ def _indexed_alias_map(indexed: set) -> dict:
             core = core[: -len(".extracted.md")]
         # `core` is now the original filename (`gu-2023-mamba.pdf`,
         # `wiki-rag.md`). Alias on it and on its extension-stripped stem.
-        for alias in {core, Path(core).stem}:
+        aliases.update({core, Path(core).stem})
+        for alias in aliases:
             if alias and alias != path:
                 candidates[alias].add(path)
     return {alias: next(iter(paths))
