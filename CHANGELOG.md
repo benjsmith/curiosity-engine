@@ -20,6 +20,10 @@ Replaced with a coverage fraction over the claim's most *distinctive* terms: pro
 
 Docs updated to match: SKILL.md's mechanical-gate step now explains both gate shapes and tells workers *not* to pad a lead line or hand-tune `--bloat-mult`, and `template/schema.md`'s acceptance criterion is no longer stated as a flat 1.5×.
 
+**Bundled fix — `vault_index.py --rebuild` could destroy an index it then failed to repopulate.** `rebuild()` called `DB.unlink(missing_ok=True)` and `init_db()` *before* resolving the embedder. `_load_embedder` is a deliberate hard-fail — opting into embeddings without installing the deps should be loud rather than silently skipped — so a workspace with `embedding_enabled: true` and no `sqlite_vec` lost its entire FTS5 index to a rebuild that could never have succeeded. Hit for real while running this release's own ligature migration across five workspaces: a 131-source vault went to zero documents and was restored from a pre-migration backup. The embedder is now resolved before anything is unlinked, so nothing is destroyed until every prerequisite is in hand. `reembed()` already had the correct ordering and is unchanged. Regression test asserts the row count survives a failing rebuild (it fails against the old ordering).
+
+This raises the stakes on the `--rebuild` migration above: back up `vault/vault.db` before running it on an embedding-enabled workspace, or confirm `sqlite-vec` and the embedding backend are importable first.
+
 ## 2026-07-23 — v0.9.4 — revert v0.9.3 type-aware retrieve demotion
 
 **Reverts the type-aware demotion shipped in v0.9.3.** `graph.py retrieve` returns to distance-then-overlap ranking (the v0.9.2 behaviour): pages are no longer reordered by page type before `--limit`, and no query type is treated specially.

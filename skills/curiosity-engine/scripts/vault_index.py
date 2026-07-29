@@ -256,6 +256,17 @@ def index_file(path_str, title):
 
 
 def rebuild():
+    # Resolve the embedder BEFORE unlinking anything. `_load_embedder` is a
+    # hard-fail by design (opting into embeddings without installing the
+    # deps should be loud, not silently skipped), and it used to be called
+    # after the DB was already deleted — so a workspace with
+    # `embedding_enabled: true` and no `sqlite_vec` lost its entire index
+    # to a rebuild that could never have succeeded. Nothing is destroyed
+    # until every prerequisite is in hand.
+    preloaded = None
+    if _embedding_enabled():
+        preloaded = _load_embedder()
+
     DB.unlink(missing_ok=True)
     init_db()
     vault = Path("vault")
@@ -263,8 +274,8 @@ def rebuild():
     c.execute("PRAGMA journal_mode=WAL")
 
     embedder = None
-    if _embedding_enabled():
-        model, vec_mod, model_name, dim = _load_embedder()
+    if preloaded is not None:
+        model, vec_mod, model_name, dim = preloaded
         _init_embed_tables(c, vec_mod, dim)
         embedder = (model, vec_mod, model_name)
 

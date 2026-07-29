@@ -318,5 +318,50 @@ class UnindexedCitationScan(unittest.TestCase):
             self.assertTrue(out[0]["exists_on_disk"])
 
 
+class RebuildIsNonDestructiveOnFailure(unittest.TestCase):
+    """`--rebuild` is the documented migration for the ligature fix, so it
+    must not be able to destroy an index it then fails to repopulate.
+
+    It used to `DB.unlink()` first and resolve the embedder second. Since
+    `_load_embedder` is a deliberate hard-fail (opting into embeddings
+    without installing the deps should be loud, not silently skipped), a
+    workspace with `embedding_enabled: true` and no `sqlite_vec` lost its
+    whole index to a rebuild that could never have succeeded — observed for
+    real on a 131-source vault.
+    """
+
+    def test_missing_embedding_deps_leaves_index_intact(self):
+        import os
+        with workspace({PAPER_NAME: PAPER}) as root:
+            db = root / "vault" / "vault.db"
+            before = sqlite3.connect(str(db)).execute(
+                "SELECT count(*) FROM sources").fetchone()[0]
+            self.assertEqual(before, 1)
+
+            (root / ".curator").mkdir(exist_ok=True)
+            (root / ".curator" / "config.json").write_text(
+                '{"embedding_enabled": true}')
+
+            def _boom():
+                raise SystemExit("sqlite-vec not installed")
+
+            original = vault_index._load_embedder
+            vault_index._load_embedder = _boom
+            cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with self.assertRaises(SystemExit):
+                    with redirect_stdout(io.StringIO()):
+                        vault_index.rebuild()
+            finally:
+                os.chdir(cwd)
+                vault_index._load_embedder = original
+
+            self.assertTrue(db.exists(), "rebuild deleted the index it couldn't rebuild")
+            after = sqlite3.connect(str(db)).execute(
+                "SELECT count(*) FROM sources").fetchone()[0]
+            self.assertEqual(after, before, "index rows lost on a failed rebuild")
+
+
 if __name__ == "__main__":
     unittest.main()
