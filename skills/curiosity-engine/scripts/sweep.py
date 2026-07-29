@@ -2391,6 +2391,287 @@ def cmd_pending_figures(wiki_dir: Path) -> None:
     print(json.dumps({"queue": queue, "count": len(queue)}, indent=2))
 
 
+_INGEST_PREFIX_RE = re.compile(r"^\d{8}-\d{6}-[a-z]+-(.*)$")
+
+
+def _indexed_alias_map(indexed: set) -> dict:
+    """Map plausible aliases of a vault source to its indexed path.
+
+    Extractions are named `<ingest-stamp>-<channel>-<original>.extracted.md`,
+    e.g. `20260728-230732-local-gu-2023-mamba.pdf.extracted.md`. Pages that
+    cite the wrong path almost always name the *original* instead — the
+    attribution stub `gu-2023-mamba.md`, or the raw drop file `wiki-rag.md`
+    — because that is what the extraction's own frontmatter `sources:`
+    field says. So alias on the original filename and its stem.
+
+    Anchored on the whole original name, never a substring: plain
+    containment would resolve `llama` against both `touvron-2023-llama`
+    and `roziere-2023-code-llama`. Aliases claimed by more than one
+    indexed path are dropped rather than guessed.
+    """
+    from collections import defaultdict
+    candidates = defaultdict(set)
+    for path in indexed:
+        core = path
+        m = _INGEST_PREFIX_RE.match(core)
+        if m:
+            core = m.group(1)
+        if core.endswith(".extracted.md"):
+            core = core[: -len(".extracted.md")]
+        # `core` is now the original filename (`gu-2023-mamba.pdf`,
+        # `wiki-rag.md`). Alias on it and on its extension-stripped stem.
+        for alias in {core, Path(core).stem}:
+            if alias and alias != path:
+                candidates[alias].add(path)
+    return {alias: next(iter(paths))
+            for alias, paths in candidates.items() if len(paths) == 1}
+
+
+def cmd_fix_citation_paths(wiki_dir: Path, dry_run: bool = False) -> None:
+    """Repoint `(vault:...)` citations at paths the FTS5 index actually holds.
+
+    `scan` reports these under `unindexed_citations`; this repairs them.
+    A citation naming a path the index doesn't hold is invisible to every
+    search the curator has, and `score_diff`'s citation check can never
+    verify a claim against it — it fails as `source-not-indexed`, which
+    reads like a prose problem and isn't.
+
+    Two populations, both fixed by the same substitution:
+      - the body cites the attribution stub (`gu-2023-mamba.md`) instead of
+        the indexed extraction — observed on 36 of 38 affected pages, all
+        of which carried that same wrong path in frontmatter `sources:`,
+        which is where the worker copied it from;
+      - the body cites the extraction correctly while frontmatter
+        `sources:` still names the pre-deepening stub.
+
+    So the rewrite is applied wherever an unindexed vault path appears —
+    body citation or frontmatter — which converges both populations on the
+    indexed name. Substitution is 1:1, so citation counts are preserved and
+    the ratchet is unaffected.
+
+    Only unique resolutions are applied. Ambiguous or unresolvable paths
+    are reported for a human, never guessed.
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    db = vault_dir / "vault.db"
+    if not db.exists():
+        print(json.dumps({"patched": 0, "note": "no vault/vault.db — "
+                                                 "run vault_index.py --rebuild"}))
+        return
+    import sqlite3
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        indexed = {r[0] for r in conn.execute("SELECT path FROM sources")}
+        conn.close()
+    except sqlite3.Error as e:
+        print(json.dumps({"patched": 0, "error": f"cannot read index: {e}"}))
+        return
+    if not indexed:
+        print(json.dumps({"patched": 0, "note": "index is empty"}))
+        return
+
+    alias_map = _indexed_alias_map(indexed)
+    from naming import CITATION_RE
+
+    patched, substitutions, unresolved = [], 0, {}
+    for page in wiki_pages(wiki_dir):
+        rel = str(page.relative_to(wiki_dir))
+        try:
+            text = page.read_text()
+        except OSError:
+            continue
+
+        bad = []
+        for m in CITATION_RE.finditer(text):
+            p = m.group(1).strip()
+            if p in indexed:
+                continue
+            if "." not in Path(p).name:
+                continue          # schema placeholder, not a path
+            bad.append(p)
+        if not bad:
+            continue
+
+        new_text = text
+        page_subs = 0
+        for p in dict.fromkeys(bad):
+            target = None
+            if p.startswith("vault/") and p[len("vault/"):] in indexed:
+                target = p[len("vault/"):]     # double-prefix form
+            elif p in alias_map:
+                target = alias_map[p]
+            elif Path(p).stem in alias_map:
+                target = alias_map[Path(p).stem]
+            if target is None:
+                unresolved.setdefault(p, []).append(rel)
+                continue
+            # Replace the bare path token so both `(vault:<p>)` citations
+            # and a frontmatter `sources:` mention converge on the indexed
+            # name in one pass.
+            occurrences = new_text.count(p)
+            if occurrences:
+                new_text = new_text.replace(p, target)
+                page_subs += occurrences
+
+        if page_subs and new_text != text:
+            if not dry_run:
+                page.write_text(new_text)
+            patched.append({"page": rel, "substitutions": page_subs})
+            substitutions += page_subs
+
+    print(json.dumps({
+        "pages_patched": len(patched),
+        "substitutions": substitutions,
+        "unresolved": [{"vault_path": k, "citing_pages": v}
+                       for k, v in sorted(unresolved.items())],
+        "dry_run": dry_run,
+        "sample": patched[:10],
+        "next": "re-run `scan` to confirm unindexed_citations is 0, then "
+                "`graph.py rebuild wiki` so Cites edges follow the new paths",
+    }, indent=2))
+
+
+def cmd_backfill_kept_as(wiki_dir: Path, dry_run: bool = False) -> None:
+    """Add `kept_as:` to in-place extractions whose original sits in vault/.
+
+    Retroactive half of the in-place-ingest fix. Before it, an ingest run
+    with `--source-path-only` wrote `source_in_place: true` and no
+    `kept_as`, even when the original was already sitting directly in
+    `vault/` — so consumers keying on `kept_as` (multimodal and figure
+    queues) skipped those sources forever. New ingests record it; this
+    patches the ones already on disk.
+
+    Scope is deliberately narrow: `source_in_place` true, `kept_as`
+    absent, and `source_path`'s parent resolving to the vault dir itself.
+    Project-dir extractions (original genuinely outside the vault) are
+    left alone — they are handled by `_original_for_extraction`'s
+    `source_path` fallback, no frontmatter edit needed.
+
+    Idempotent: extractions already carrying `kept_as` are skipped, so a
+    workspace that was hand-patched is a no-op.
+
+    Editing an extraction changes its bytes, which stales the paired
+    source stub's `vault_sha256`. That is benign — `fix-source-stubs`
+    dedups on path OR hash — but the stub is re-stamped in the same pass
+    so the two don't drift.
+    """
+    import hashlib
+
+    vault_dir = wiki_dir.parent / "vault"
+    if not vault_dir.is_dir():
+        print(json.dumps({"patched": 0, "note": "no vault/ directory"}))
+        return
+
+    patched, skipped_has_kept_as, skipped_external, restamped = [], 0, 0, []
+    for f in sorted(vault_dir.glob("*.extracted.md")):
+        try:
+            text = f.read_text()
+        except OSError:
+            continue
+        fm, _ = read_frontmatter(text)
+        if str(fm.get("source_in_place", "")).lower() != "true":
+            continue
+        if fm.get("kept_as"):
+            skipped_has_kept_as += 1
+            continue
+        source_path = fm.get("source_path", "")
+        if not source_path:
+            continue
+        src = Path(source_path)
+        try:
+            if src.parent.resolve() != vault_dir.resolve():
+                skipped_external += 1
+                continue
+        except OSError:
+            continue
+        if not src.exists():
+            continue
+
+        # Insert after `source_in_place: true` so the pair reads together.
+        new_text = text.replace("source_in_place: true",
+                                f"source_in_place: true\nkept_as: {src.name}", 1)
+        if new_text == text:
+            continue
+        if dry_run:
+            patched.append(f.name)
+            continue
+        f.write_text(new_text)
+        patched.append(f.name)
+
+        # Re-stamp the paired stub's hash.
+        new_sha = hashlib.sha256(f.read_bytes()).hexdigest()
+        for stub in (wiki_dir / "sources").glob("*.md"):
+            try:
+                stub_text = stub.read_text()
+            except OSError:
+                continue
+            if f.name not in stub_text:
+                continue
+            stub_fm, _ = read_frontmatter(stub_text)
+            old_sha = stub_fm.get("vault_sha256", "")
+            if old_sha and old_sha != new_sha:
+                stub.write_text(stub_text.replace(
+                    f"vault_sha256: {old_sha}", f"vault_sha256: {new_sha}", 1))
+                restamped.append(stub.name)
+            break
+
+    print(json.dumps({
+        "patched": len(patched),
+        "skipped_already_have_kept_as": skipped_has_kept_as,
+        "skipped_original_outside_vault": skipped_external,
+        "stubs_restamped": len(restamped),
+        "dry_run": dry_run,
+        "sample": patched[:10],
+    }, indent=2))
+
+
+def _original_for_extraction(fm: dict, vault_dir: Path) -> Optional[Path]:
+    """Locate the original binary an extraction came from, or None.
+
+    `kept_as` is the vault-resident filename, written when local_ingest
+    copied or moved the original into `vault/` — and now also when the
+    original was ingested in place while already sitting directly in
+    `vault/`. It is legitimately absent for project-dir ingests
+    (`scan.py --source-path-only`), whose originals stay wherever the user
+    keeps them and which carry an absolute `source_path` instead.
+
+    Consumers that checked only `kept_as` therefore skipped every
+    project-dir source outright — externally-scanned PDFs could never
+    reach the multimodal or figure queues at all, independent of the
+    in-place bug above.
+
+    Returns None when no original can be found on disk (scan.py may have
+    orphaned it), so callers keep their existing "silently skip" behaviour.
+    """
+    kept_as = fm.get("kept_as", "")
+    if kept_as:
+        p = vault_dir / kept_as
+        return p if p.exists() else None
+    source_path = fm.get("source_path", "")
+    if source_path:
+        p = Path(source_path)
+        return p if p.exists() else None
+    return None
+
+
+def _original_ref_display(original: Optional[Path], vault_dir: Path) -> str:
+    """Human-facing reference for an original, honest about its location.
+
+    Vault-resident originals render as `vault/<name>` (the form the prose
+    anchors have always used). An original outside the vault renders as its
+    absolute path — prefixing `vault/` there would name a file that does
+    not exist.
+    """
+    if original is None:
+        return "(original not found)"
+    try:
+        if original.parent.resolve() == vault_dir.resolve():
+            return f"vault/{original.name}"
+    except OSError:
+        pass
+    return str(original)
+
+
 def cmd_pending_multimodal(wiki_dir: Path) -> None:
     """List vault extractions flagged for multimodal upgrade.
 
@@ -2414,9 +2695,15 @@ def cmd_pending_multimodal(wiki_dir: Path) -> None:
         flag = str(fm.get("multimodal_recommended", "")).lower() == "true"
         if not flag:
             continue
+        original = _original_for_extraction(fm, vault_dir)
         queue.append({
             "extracted": f.name,
-            "original": fm.get("kept_as", ""),
+            # `original` keeps its historical shape (the vault-resident
+            # name when there is one); `original_path` is the resolved
+            # absolute path, matching multimodal-table-candidates. Either
+            # can be empty when scan.py has orphaned the source.
+            "original": fm.get("kept_as", "") or fm.get("source_path", ""),
+            "original_path": str(original.resolve()) if original else "",
             "extraction_quality": fm.get("extraction_quality", ""),
             "has_math": str(fm.get("has_math", "")).lower() == "true",
             "has_tables": str(fm.get("has_tables", "")).lower() == "true",
@@ -2457,17 +2744,14 @@ def cmd_multimodal_table_candidates(wiki_dir: Path,
             continue
         if fm.get("multimodal_extracted"):
             continue
-        kept_as = fm.get("kept_as", "")
-        if not kept_as:
-            continue
-        original_path = vault_dir / kept_as
-        if not original_path.exists() or original_path.suffix.lower() != ".pdf":
+        original_path = _original_for_extraction(fm, vault_dir)
+        if original_path is None or original_path.suffix.lower() != ".pdf":
             continue
         stub = _stub_for_extraction(wiki_dir, f.name)
         queue.append({
             "extracted": f.name,
             "extracted_path": str(f.resolve()),
-            "original": kept_as,
+            "original": fm.get("kept_as", "") or fm.get("source_path", ""),
             "original_path": str(original_path.resolve()),
             "source_stub": stub,
             "extraction_quality": fm.get("extraction_quality", ""),
@@ -2496,10 +2780,13 @@ def _png_paths_for_extraction(wiki_dir: Path, extraction_name: str,
     if not extraction.exists():
         return []
     fm, _ = read_frontmatter(extraction.read_text())
-    kept_as = fm.get("kept_as", "")
-    if not kept_as:
+    # figures.py names rendered pages from the original's filename stem,
+    # which holds whether the original lives in vault/ or stayed in a
+    # project-dir — so the fallback keeps externally-scanned PDFs working.
+    original = _original_for_extraction(fm, vault_dir)
+    if original is None:
         return []
-    pdf_stem = Path(kept_as).stem
+    pdf_stem = original.stem
     assets_dir = wiki_dir / "figures" / "_assets"
     if not assets_dir.is_dir():
         return []
@@ -2833,15 +3120,17 @@ def cmd_apply_numeric_review(tab_page_path: Path,
         new_fm["flagged_cells_count"] = len(flagged_cells)
         new_fm["backup_id"] = backup_id
         # Log the rewind handle.
-        kept_as = ""
+        source_ref = "(original not found)"
         if src_extraction:
             try:
+                _vault_dir = wiki_dir.parent / "vault"
                 src_fm, _ = read_frontmatter(
-                    (wiki_dir.parent / "vault" / src_extraction).read_text()
+                    (_vault_dir / src_extraction).read_text()
                 )
-                kept_as = src_fm.get("kept_as", "")
+                source_ref = _original_ref_display(
+                    _original_for_extraction(src_fm, _vault_dir), _vault_dir)
             except Exception:
-                kept_as = ""
+                source_ref = "(original not found)"
         page_list = fm.get("source_pages", "")
         if isinstance(page_list, list):
             pages_str = ", ".join(str(p) for p in page_list)
@@ -2856,7 +3145,7 @@ def cmd_apply_numeric_review(tab_page_path: Path,
             f"\n- {ts} {table_stem} verdict=wrong, {n_cells} cells "
             f"overwritten ({n_backed_up} rows backed up). "
             f"Backup: {backup_id}. Rewind:\n{rewind_cmd}\n"
-            f"  Source: vault/{kept_as}, pages: [{pages_str}]\n"
+            f"  Source: {source_ref}, pages: [{pages_str}]\n"
             f"  Spot-check the source pages directly to validate "
             f"the rewrite.\n"
         )
@@ -3171,7 +3460,7 @@ def _parse_source_pages(description: Optional[str]) -> list:
     return sorted(pages)
 
 
-def _looks_spurious_table(headers: list, rows: list) -> tuple:
+def looks_spurious_table(headers: list, rows: list) -> tuple:
     """Filter false-positive table extractions from pdfplumber.
 
     pdfplumber's table detector misfires on multi-column PDF layouts
@@ -3181,7 +3470,20 @@ def _looks_spurious_table(headers: list, rows: list) -> tuple:
     also see real data columns whose adjacent label column was missed,
     leaving an orphan 1-col table that's useless without context.
 
-    Three filters, applied in order. Returns (is_spurious, reason).
+    Four filters, applied in order. Returns (is_spurious, reason).
+
+    Shared with `local_ingest.py`, which applies it at extraction time so
+    `tables_extracted` counts *usable* tables. That matters beyond page
+    hygiene: `multimodal_recommended` is set from `tables_extracted == 0`,
+    so a PDF whose only "tables" are junk used to look successfully
+    extracted and was never offered to the multimodal recovery pass.
+
+    Deliberately NOT attempted here: garbled-but-populated transcriptions
+    (character interleaving like `MuppMetuppet` / `SummSuamrizmataiorinzat`
+    from a failed text layer). Every cheap heuristic for those also
+    rejects legitimate tables, and there is already a designed path —
+    `pending-numeric-review` / `apply-numeric-review`, whose `wrong`
+    verdict backs up the rows and flags the page.
     """
     if len(headers) < 2:
         return True, "single-column"
@@ -3189,11 +3491,31 @@ def _looks_spurious_table(headers: list, rows: list) -> tuple:
         means = [sum(len(c) for c in r) / max(len(r), 1) for r in rows]
         if sum(1 for m in means if m > 150) / len(means) > 0.5:
             return True, "cells-look-like-prose"
+    # A label column with nothing beside it. pdfplumber emits this when it
+    # finds a column of row headings but no ruling around the data — the
+    # observed case was 59 rows of language names with every data column
+    # empty, which cleared all the other filters and became a wiki page
+    # carrying no information. Floor is deliberately near-zero (<10% of
+    # data cells populated) so genuinely sparse benchmark grids survive.
+    if rows and len(headers) >= 2:
+        total = filled = 0
+        for r in rows:
+            for cell in r[1:len(headers)]:
+                total += 1
+                if cell.strip():
+                    filled += 1
+        if total and filled / total < 0.1:
+            return True, "empty-data-columns"
     if len(rows) <= 1:
         for h in headers:
             if len(h.split()) > 10:
                 return True, "prose-header-single-row"
     return False, ""
+
+
+# Back-compat alias: the private name predates sharing this with
+# local_ingest. Kept so any out-of-tree caller keeps working.
+_looks_spurious_table = looks_spurious_table
 
 
 def _parse_gfm_tables_from_body(body: str) -> list:
@@ -3447,7 +3769,7 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
             # Filter pdfplumber false-positives: 1-col prose blocks
             # misdetected as tables, orphan single-column data, prose
             # masquerading as a one-row table.
-            spurious, why = _looks_spurious_table(headers, rows)
+            spurious, why = looks_spurious_table(headers, rows)
             if spurious:
                 no_stub.append(f"{extraction.name}#t{ti}:spurious-{why}")
                 continue
@@ -3483,12 +3805,14 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
             )
 
             # Spot-check anchors. Source page numbers come from the
-            # heading above each table block (`Table p.N`); the
-            # original PDF/XLSX/etc. lives at vault/<kept_as>. Both
-            # are written into the page so a curator can flip to the
-            # exact spot in the source for verification.
+            # heading above each table block (`Table p.N`); the original
+            # PDF/XLSX/etc. is at vault/<kept_as> for copied and in-place
+            # vault ingests, or at an absolute path outside the vault for
+            # project-dir ingests. Both are written into the page so a
+            # curator can flip to the exact spot for verification.
             source_pages = _parse_source_pages(tbl.get("description"))
-            kept_as = fm.get("kept_as", "")
+            original_ref = _original_ref_display(
+                _original_for_extraction(fm, vault_dir), vault_dir)
             extraction_method = fm.get("extraction_method", "")
 
             page_lines = [
@@ -3555,8 +3879,8 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                 anchor_parts.append(
                     f"source pages [{', '.join(str(p) for p in source_pages)}]"
                 )
-            if kept_as:
-                anchor_parts.append(f"original: vault/{kept_as}")
+            if original_ref != "(original not found)":
+                anchor_parts.append(f"original: {original_ref}")
             page_lines.append(
                 ", ".join(anchor_parts)
                 + ". Numeric values are literal transcriptions — do not "
@@ -4175,6 +4499,7 @@ def main():
         "multimodal-table-candidates", "mark-multimodal-extracted",
         "pending-numeric-review", "apply-numeric-review",
         "classify-projects",
+        "backfill-kept-as", "fix-citation-paths",
     ])
     ap.add_argument("--extraction", type=Path, default=None,
                     help="mark-multimodal-extracted: path to a vault "
@@ -4305,6 +4630,12 @@ def main():
                                             timestamp=args.timestamp))
     elif args.command == "classify-projects":
         cmd_classify_projects(wiki_dir, dry_run=args.dry_run)
+
+    elif args.command == "backfill-kept-as":
+        cmd_backfill_kept_as(wiki_dir, dry_run=args.dry_run)
+
+    elif args.command == "fix-citation-paths":
+        cmd_fix_citation_paths(wiki_dir, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

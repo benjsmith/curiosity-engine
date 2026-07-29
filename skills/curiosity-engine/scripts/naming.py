@@ -86,6 +86,14 @@ ALLOWED_FM_KEYS = frozenset({
     "source_path", "source_url", "source_type", "ingested_at", "fetched_at",
     "sha256", "vault_sha256", "bytes", "kept_as", "extraction",
     "max_extract_bytes", "untrusted",
+    # `source_in_place` marks an extraction whose original was never copied
+    # into vault/. local_ingest.py has always written it, but it was missing
+    # here — so read_frontmatter silently dropped it and no consumer using
+    # the parser could see it. That is why scan.py raw-parses the key by
+    # line prefix instead. Not a smuggling risk: extraction frontmatter is
+    # authored by local_ingest, never by the source (whose content lands in
+    # the body, inside the FETCHED CONTENT markers).
+    "source_in_place",
     # Author/metadata (used by parse_source_meta). `authors` (plural) is
     # the standard arXiv/paper form; `author` (singular) is used by blog/
     # email-style sources. Both are allowed.
@@ -114,11 +122,14 @@ ALLOWED_FM_KEYS = frozenset({
     # Table-extraction signals (on vault extractions, on
     # `wiki/tables/tab-*.md` extracted-table pages, and on the source
     # stubs they link to). `has_tables` / `tables_extracted` /
-    # `tables_present` are written by local_ingest.py; `extracted_from`
-    # / `table_index` / `row_count` / `db_table` / `is_snapshot` /
-    # `extraction_sha` annotate the `[tab]` wiki pages produced by
+    # `tables_present` are written by local_ingest.py; `tables_filtered`
+    # records blocks pdfplumber returned that failed the quality filter,
+    # which is what explains `has_tables: true` alongside
+    # `tables_extracted: 0`; `extracted_from` / `table_index` /
+    # `row_count` / `db_table` / `is_snapshot` / `extraction_sha`
+    # annotate the `[tab]` wiki pages produced by
     # `sweep.py promote-extracted-tables`.
-    "has_tables", "tables_extracted", "tables_present",
+    "has_tables", "tables_extracted", "tables_present", "tables_filtered",
     "extracted_from", "table_index", "row_count",
     "db_table", "is_snapshot", "extraction_sha",
     # Multimodal-upgrade flag (vault extractions): pypdf failed sanity

@@ -205,6 +205,25 @@ class CitationRelevance(unittest.TestCase):
                 score_diff.verify_new_citations(line, line,
                                                  Path("vault/vault.db")), [])
 
+    def test_single_distinctive_term_fails_open(self):
+        """One surviving probe is not evidence: a single miss reads as 0%
+        coverage and would reject on a coin flip. Observed on real pages
+        whose lone probe was ordinary vocabulary ("becomes", "entry") that
+        happened to be uncommon in a small corpus."""
+        with workspace({PAPER_NAME: PAPER, OTHER_NAME: OTHER_PAPER}):
+            db = Path("vault/vault.db")
+            line = "This becomes adjacent " + _cite(PAPER_NAME)
+            probes = None
+            conn = sqlite3.connect(str(db))
+            ndocs = conn.execute("SELECT count(*) FROM sources").fetchone()[0]
+            probes = score_diff._probe_terms(conn, line, ndocs, {})
+            conn.close()
+            if len(probes) >= score_diff.CITATION_MIN_PROBE_TERMS:
+                self.skipTest("fixture no longer yields a thin probe set")
+            self.assertEqual(
+                score_diff.verify_new_citations("", line, db), [],
+                "rejected a claim on fewer than the minimum probe terms")
+
     def test_no_probeable_terms_fails_open(self):
         """A tiny vault collapses the df ceiling to 1 document; the check
         must skip rather than reject everything."""

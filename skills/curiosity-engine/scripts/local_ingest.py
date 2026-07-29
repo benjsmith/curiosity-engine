@@ -174,8 +174,18 @@ def _extract_pdf_tables(raw_bytes: bytes) -> tuple[str, int, str]:
         import pdfplumber
     except ImportError:
         return "", 0, "pdfplumber_missing"
+    # Same quality filter `promote-extracted-tables` applies before minting
+    # a [tab] page, applied here so `tables_extracted` counts tables that
+    # are actually usable. `multimodal_recommended` is derived from
+    # `tables_extracted == 0`, so counting junk made a PDF look
+    # successfully extracted and locked it out of the multimodal recovery
+    # pass — the queue that exists precisely for tables pdfplumber can't
+    # read. One source of truth, in sweep.py.
+    from sweep import looks_spurious_table
+
     chunks = []
     n_tables = 0
+    n_rejected = 0
     try:
         with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
             for page_idx, page in enumerate(pdf.pages, 1):
@@ -185,12 +195,20 @@ def _extract_pdf_tables(raw_bytes: bytes) -> tuple[str, int, str]:
                         any(c for c in r if c is not None) for r in tbl
                     ):
                         continue
+                    # _gfm_table renders None as empty; normalise the same
+                    # way before judging so the filter sees what lands.
+                    grid = [[(c or "") for c in r] for r in tbl]
+                    spurious, _why = looks_spurious_table(grid[0], grid[1:])
+                    if spurious:
+                        n_rejected += 1
+                        continue
                     chunks.append(f"\n### Table p.{page_idx}\n")
                     chunks.append(_gfm_table(tbl))
                     n_tables += 1
     except Exception as e:
         return "", n_tables, f"pdfplumber_error:{type(e).__name__}"
-    return "\n".join(chunks), n_tables, ""
+    note = f"filtered_spurious:{n_rejected}" if n_rejected else ""
+    return "\n".join(chunks), n_tables, note
 
 
 def _extract_csv(raw_bytes: bytes) -> tuple[str, str]:
@@ -487,6 +505,7 @@ def ingest_one(
         extraction_quality = "good"
         sanity_note = ""
         tables_extracted = 0
+        tables_filtered = 0
 
         if is_pdf:
             text, pdf_note = _extract_pdf(raw)
@@ -498,6 +517,8 @@ def ingest_one(
             # a recoverable table; capture it instead of punting to
             # multimodal-only.
             tables_md, n_tables, _pp_note = _extract_pdf_tables(raw)
+            if _pp_note.startswith("filtered_spurious:"):
+                tables_filtered = int(_pp_note.split(":", 1)[1])
 
             if ok:
                 extraction_method = "pypdf"
@@ -628,6 +649,20 @@ def ingest_one(
             # accordingly. If the path disappears, scan.py marks the
             # extraction orphaned.
             fm_lines.append("source_in_place: true")
+            # `source_path_only` conflates two situations, and only one of
+            # them lacks a vault-resident original: a file ingested in place
+            # while already sitting directly in vault/ satisfies exactly the
+            # invariant consumers rely on (`vault_dir / kept_as` resolves),
+            # so record it. Without this, in-place PDFs could never enter
+            # the multimodal or figure queues, whose lookups key on
+            # `kept_as`. Parent equality, not is_relative_to: vault/raw/ is
+            # the drop folder, whose files get moved out by that flow.
+            try:
+                in_vault_root = path.parent.resolve() == VAULT_DIR.resolve()
+            except OSError:
+                in_vault_root = False
+            if in_vault_root:
+                fm_lines.append(f"kept_as: {path.name}")
         else:
             fm_lines.append(f"kept_as: {kept_path.name}")
         fm_lines.extend([
@@ -653,6 +688,11 @@ def ingest_one(
                 f"tables_extracted: {tables_extracted}",
                 f"multimodal_recommended: {str(multimodal_recommended).lower()}",
             ])
+            if tables_filtered:
+                # pdfplumber returned blocks that failed the quality filter.
+                # Recorded because it explains an otherwise-puzzling pairing:
+                # has_tables true, tables_extracted 0, multimodal queued.
+                fm_lines.append(f"tables_filtered: {tables_filtered}")
             if sanity_note:
                 fm_lines.append(f"sanity_note: {sanity_note}")
         elif is_structured:

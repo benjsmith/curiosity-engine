@@ -282,6 +282,20 @@ def _claim_words(line: str) -> str:
 # reviewer downstream, while a false reject costs a full worker round-trip.
 CITATION_COVERAGE_FLOOR = 0.5
 CITATION_MAX_PROBE_TERMS = 12
+# One surviving term is not evidence about a claim: a single miss reads as
+# 0% coverage and rejects the citation on a coin flip. Observed on real
+# pages whose lone probe was ordinary vocabulary ("becomes", "adjacent",
+# "entry") that happened to be uncommon in a 25-document corpus — df
+# filtering cannot tell rare-in-this-corpus from claim-specific. Below the
+# floor the check fails open.
+#
+# Calibrated honestly: this is a pre-filter, not a precision instrument.
+# It catches blatantly wrong citations — a claim whose distinctive terms
+# are entirely absent from the cited source — and accepts a substantial
+# share of subtler misattributions, which is what the opus batch reviewer
+# is for. The bias is deliberate, because a false reject costs a whole
+# worker round-trip and teaches workers to pad prose.
+CITATION_MIN_PROBE_TERMS = 2
 # A term in more than this fraction of the corpus is shared vocabulary,
 # not claim-specific evidence. On a very small vault the ceiling collapses
 # to 1 document and probe sets come out empty — which fails open (skip the
@@ -402,12 +416,12 @@ def verify_new_citations(old_text: str, new_text: str,
             continue
 
         probes = _probe_terms(conn, line, ndocs, df_cache)
-        if not probes:
-            # Nothing distinctive enough to test — fail open.
+        if len(probes) < CITATION_MIN_PROBE_TERMS:
+            # Too little distinctive vocabulary to judge — fail open.
             continue
         results = [(t, _term_in_doc(conn, vp, t)) for t in probes]
         testable = [(t, hit) for t, hit in results if hit is not None]
-        if not testable:
+        if len(testable) < CITATION_MIN_PROBE_TERMS:
             print(f"score_diff: FTS5 error verifying {vp} "
                   f"(probes={probes!r})", file=sys.stderr)
             continue

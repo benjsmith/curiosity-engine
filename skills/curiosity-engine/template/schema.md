@@ -123,7 +123,11 @@ the worker reads pre-rendered page PNGs (`figures.py render-all`) and
 returns one JSON object with all recovered tables. The orchestrator
 writes those tables as GFM under `## Extracted tables` in the source's
 `.extracted.md` body — exactly the heading pdfplumber uses, so
-`promote-extracted-tables` consumes both pipelines unchanged. After
+`promote-extracted-tables` consumes both pipelines unchanged. That
+section is the only part rewritten: the prose body is never touched,
+because citing pages' `(vault:...)` markers and score_diff's
+claim-word check both resolve against it, and `vault/` is not
+git-tracked. After
 each source completes, `sweep.py mark-multimodal-extracted` flips
 `multimodal_extracted: <ISO>`, clears the `multimodal_recommended`
 flag, and sets `extraction_method: multimodal-sonnet`. The worker's

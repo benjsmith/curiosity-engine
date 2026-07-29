@@ -1573,7 +1573,7 @@ if [ -d wiki/.git ]; then
         echo "  Commit or stash your wiki edits and rerun setup.sh to apply."
     else
         echo ""
-        echo "  Running behavioral-migration pass (resync-stems, fix-index, graph rebuild) ..."
+        echo "  Running behavioral-migration pass (resync-stems, backfill-kept-as, fix-index, graph rebuild) ..."
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-frontmatter-quotes wiki >/dev/null
         # Add or correct the canonical [con]/[ent]/[tbl]/... bracket
         # prefix on every page title, picking the value from
@@ -1644,6 +1644,11 @@ except Exception:
         uv run python3 "$SCRIPT_DIR/sweep.py" convert-image-embeds wiki --target "$_viewer_mode" >/dev/null 2>&1 || true
         uv run python3 "$SCRIPT_DIR/sweep.py" resync-stems wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/sweep.py" resync-prefixes wiki >/dev/null
+        # Extractions ingested in place from inside vault/ predating the
+        # kept_as fix carry no kept_as, which locked them out of the
+        # multimodal and figure queues. Idempotent; skips extractions that
+        # already have it and anything whose original is outside the vault.
+        uv run python3 "$SCRIPT_DIR/sweep.py" backfill-kept-as wiki >/dev/null 2>&1 || true
         uv run python3 "$SCRIPT_DIR/sweep.py" fix-index wiki >/dev/null
         uv run python3 "$SCRIPT_DIR/graph.py" rebuild wiki >/dev/null
         # Regenerate any figure assets missing from assets/figures/ (first
