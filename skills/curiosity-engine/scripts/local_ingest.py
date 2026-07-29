@@ -64,6 +64,7 @@ from pathlib import Path
 # optional embedding) index in the same process, without the caller
 # needing a separate --rebuild. Library-safe: no stdout side effects.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from naming import normalize_ligatures  # noqa: E402
 try:
     from vault_index import index_file_result as _vault_index_add
 except ImportError:
@@ -598,6 +599,12 @@ def ingest_one(
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
                 text = raw.decode("utf-8", errors="replace")
+
+        # Expand typographic ligatures before the snippet cut so the
+        # stored text and the FTS5 index agree with ASCII prose. PDFs are
+        # the source of these, but running it unconditionally costs one
+        # str.translate and keeps every format on one code path.
+        text = normalize_ligatures(text)
 
         extraction_mode = "full"
         text_bytes = text.encode("utf-8")

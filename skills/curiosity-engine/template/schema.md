@@ -279,10 +279,22 @@ Frontmatter notes: `verbatim: true` on facts (15-word floor);
 ## Acceptance criterion (CURATE)
 Accept a change if BOTH:
 1. `sourced_claims(after) >= sourced_claims(before)`  (no citation loss)
-2. `body_tokens(after) <= body_tokens(before) * 1.5`   (no bloat; frontmatter excluded)
+2. `body_tokens(after) <= ceiling`  (no bloat; frontmatter excluded), where
+   the ceiling is `body_tokens(before) * 1.5` raised in two cases:
+   - **stub expansion** — a page under 120 body tokens may reach 240, since
+     filling a placeholder is a 3-4× expansion by construction
+   - **citation-backed growth** — scaled by the citation increase, up to 4×,
+     because the cap exists to catch padding and padding doesn't cite
 
 Measure: `uv run python3 <skill_path>/scripts/score_diff.py wiki/<page>.md --new-text-stdin`
 (pipe candidate text on stdin).
+
+With `--vault-db vault/vault.db` the gate also checks citation relevance: it
+probes the claim line's most distinctive terms against the cited source and
+requires half to hit. It does NOT require the source to contain every word on
+the line — so never pad a claim with a short lead sentence just to carry a
+citation. A `source-not-indexed` suspect means the citation path is wrong or
+the vault needs re-indexing; the prose is not the problem.
 
 Quality beyond the floors is judged by the fresh-context opus reviewer,
 not by the mechanical gate.

@@ -4,7 +4,9 @@
 Hard floors only — the opus judge handles nuanced quality review.
 These gates catch catastrophic regressions that no edit should cause:
   1. No citation loss: citations(after) >= citations(before)
-  2. No extreme raw-token bloat: body_tokens(after) <= body_tokens(before) * 1.5
+  2. No extreme raw-token bloat: body_tokens(after) <= body_tokens(before) * 1.5,
+     raised for stub expansion (placeholder -> normal page length) and for
+     citation-backed growth (padding doesn't cite)
   3. New pages: floor depends on directory —
        facts/*:     >=1 citation, >=1 wikilink, >=30 words
                     (verbatim: true → >=15 words; origin bootstrap* → 0 wikilinks ok)
@@ -26,9 +28,10 @@ Usage:
     python3 score_diff.py <page.md> --new-text-stdin --dry-run
 
 --vault-db enables citation verification: for each newly added (vault:...)
-  citation, queries FTS5 to confirm the cited source contains words related
-  to the claim. Rejects if any new citation is suspect. One FTS5 query per
-  new citation — negligible overhead.
+  citation, probes the claim line's most distinctive terms against the cited
+  source in FTS5 and requires half of them to hit. Rejects if any new
+  citation is suspect. A handful of single-term FTS5 queries per new
+  citation — negligible overhead.
 --dry-run returns the verdict without writing the file (for batch review).
 
 Outputs one JSON line to stdout. Exit code always 0 on well-formed input.
@@ -41,7 +44,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from naming import WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
+from naming import (  # noqa: E402
+    WIKILINK_RE, CITATION_RE, read_frontmatter, normalize_ligatures,
+)
 
 CITATION_RAW_RE = re.compile(r"\(vault:[^)]+\)")
 # Table citation forms:
@@ -243,21 +248,109 @@ def _claim_words(line: str) -> str:
     """Extract significant content words from a citation line for FTS5 matching."""
     cleaned = CITATION_RAW_RE.sub("", line)
     cleaned = re.sub(r"\[\[[^\]]*\]\]", "", cleaned)
-    words = re.findall(r"[a-zA-Z]{4,}", cleaned)
+    # Ligature-normalise before word extraction: a curator who copied the
+    # paper's own wording out of a PDF extraction may carry `speciﬁc`
+    # (U+FB01), which `[a-zA-Z]{4,}` would split into `speci` + a dropped
+    # `c` and then fail to match anything.
+    words = re.findall(r"[a-zA-Z]{4,}", normalize_ligatures(cleaned))
     stop = {"the", "and", "for", "are", "was", "were", "with", "from",
             "that", "this", "which", "have", "has", "been", "also",
             "more", "than", "about", "their", "other", "some"}
     return " ".join(w for w in words if w.lower() not in stop)
 
 
+# --- citation relevance ------------------------------------------------
+# This check asks whether the cited source actually discusses the claim.
+# It deliberately does NOT issue one bare multi-term FTS5 MATCH: FTS5 ANDs
+# bare terms, so a compressed single-line paragraph — 40-90 content words
+# under the default `write_other: ultra` — demands that every one of those
+# words occur in that one document. Measured against a curated 25-source
+# wiki, the AND form rejected 50% of citations an opus reviewer had
+# already approved, and the workaround it taught workers (prepend a short
+# lead line carrying the citation) is citation inflation the schema's
+# "no filler" rule forbids.
+#
+# Instead: probe the claim's most DISTINCTIVE terms individually and
+# require a coverage fraction. Distinctiveness carries the signal — in a
+# topically homogeneous vault every paper contains "model" and "training",
+# so coverage over ALL terms barely separates a real citation from a wrong
+# one (47% of hard negatives passed at this threshold). Restricting the
+# probe to low-document-frequency terms drops that to ~21% while accepting
+# 100% of the genuine citations in the calibration set.
+#
+# Bias is toward accepting: a false accept is still caught by the batch
+# reviewer downstream, while a false reject costs a full worker round-trip.
+CITATION_COVERAGE_FLOOR = 0.5
+CITATION_MAX_PROBE_TERMS = 12
+# A term in more than this fraction of the corpus is shared vocabulary,
+# not claim-specific evidence. On a very small vault the ceiling collapses
+# to 1 document and probe sets come out empty — which fails open (skip the
+# check) rather than rejecting everything.
+CITATION_MAX_DF_FRACTION = 0.5
+
+
+def _term_in_doc(conn, path: str, term: str):
+    """True if `term` FTS5-matches within one document. None on FTS5 error."""
+    try:
+        row = conn.execute(
+            "SELECT count(*) FROM sources WHERE path = ? AND sources MATCH ?",
+            (path, _sanitize_fts(term))
+        ).fetchone()
+        return row[0] > 0
+    except sqlite3.Error:
+        return None
+
+
+def _probe_terms(conn, line: str, ndocs: int, df_cache: dict) -> list:
+    """The claim line's most distinctive indexed terms, rarest first.
+
+    Terms absent from the whole corpus (df == 0) are the curator's own
+    analytical vocabulary — "interpretation", "propagates", a coined
+    label. They can never match any source, so they carry no evidence
+    about *this* source and are excluded from the denominator instead of
+    counted as failures.
+    """
+    seen, terms = set(), []
+    for w in _claim_words(line).split():
+        k = w.lower()
+        if k not in seen:
+            seen.add(k)
+            terms.append(w)
+
+    df_ceiling = max(1, int(ndocs * CITATION_MAX_DF_FRACTION))
+    scored = []
+    for t in terms:
+        k = t.lower()
+        if k not in df_cache:
+            try:
+                row = conn.execute(
+                    "SELECT count(*) FROM sources WHERE sources MATCH ?",
+                    (_sanitize_fts(t),)
+                ).fetchone()
+                df_cache[k] = row[0]
+            except sqlite3.Error:
+                df_cache[k] = -1
+        df = df_cache[k]
+        if df <= 0 or df > df_ceiling:
+            continue
+        scored.append((df, t))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return [t for _, t in scored[:CITATION_MAX_PROBE_TERMS]]
+
+
 def verify_new_citations(old_text: str, new_text: str,
                           vault_db: Path) -> list:
     """Check that each newly added citation actually relates to the claim.
 
-    For each (vault:path) in new_text but not in old_text, extracts the
-    content words from the line containing the citation and queries FTS5
-    for a match in that specific source. If no match, the citation is
-    suspect — the source doesn't mention anything the claim talks about.
+    For each (vault:path) in new_text but not in old_text, probes the most
+    distinctive content words on the citation's line against that specific
+    source in FTS5 and requires `CITATION_COVERAGE_FLOOR` of them to hit.
+    Below the floor the citation is suspect — the source doesn't discuss
+    what the claim talks about.
+
+    A citation whose path isn't in the index at all is reported separately
+    (`reason: "source-not-indexed"`): that's a broken citation path, not an
+    unsupported claim, and the two need different repairs.
 
     Returns a list of suspect citations (empty = all OK).
     """
@@ -285,25 +378,51 @@ def verify_new_citations(old_text: str, new_text: str,
         return [{"citation": vp, "claim_words": "<db-unavailable>", "error": str(e)}
                 for vp in line_map]
 
+    try:
+        ndocs = conn.execute("SELECT count(*) FROM sources").fetchone()[0]
+    except sqlite3.Error as e:
+        conn.close()
+        return [{"citation": vp, "claim_words": "<index-unreadable>", "error": str(e)}
+                for vp in line_map]
+
+    df_cache: dict = {}
     for vp, line in line_map.items():
-        words = _claim_words(line)
-        if not words:
-            continue
-        sanitized = _sanitize_fts(words)
         try:
-            row = conn.execute(
-                "SELECT count(*) FROM sources WHERE path = ? AND sources MATCH ?",
-                (vp, sanitized)
-            ).fetchone()
-        except sqlite3.Error as e:
-            # FTS5 error reaching here means our sanitizer missed something.
-            # Don't reject the citation (the edit may be fine) — surface the
-            # bug to stderr and treat this citation as unverified.
-            print(f"score_diff: FTS5 error verifying {vp}: {e} "
-                  f"(words={sanitized!r})", file=sys.stderr)
+            indexed = conn.execute(
+                "SELECT count(*) FROM sources WHERE path = ?", (vp,)
+            ).fetchone()[0]
+        except sqlite3.Error:
+            indexed = 1  # can't tell — don't invent a failure
+        if not indexed:
+            # The cited file may well exist on disk; what it isn't is an
+            # indexed FTS5 entry, so no claim against it can ever verify.
+            # Say that plainly instead of blaming the prose.
+            suspects.append({"citation": vp, "reason": "source-not-indexed",
+                              "claim_words": "<source-not-indexed>"})
             continue
-        if row[0] == 0:
-            suspects.append({"citation": vp, "claim_words": sanitized})
+
+        probes = _probe_terms(conn, line, ndocs, df_cache)
+        if not probes:
+            # Nothing distinctive enough to test — fail open.
+            continue
+        results = [(t, _term_in_doc(conn, vp, t)) for t in probes]
+        testable = [(t, hit) for t, hit in results if hit is not None]
+        if not testable:
+            print(f"score_diff: FTS5 error verifying {vp} "
+                  f"(probes={probes!r})", file=sys.stderr)
+            continue
+        hits = [t for t, hit in testable if hit]
+        coverage = len(hits) / len(testable)
+        if coverage < CITATION_COVERAGE_FLOOR:
+            suspects.append({
+                "citation": vp,
+                "reason": "low-claim-coverage",
+                "coverage": round(coverage, 2),
+                "floor": CITATION_COVERAGE_FLOOR,
+                "probed": [t for t, _ in testable],
+                "missing": [t for t, hit in testable if not hit],
+                "claim_words": " ".join(t for t, _ in testable),
+            })
     conn.close()
     return suspects
 
@@ -338,18 +457,69 @@ def metrics(text: str) -> dict:
     }
 
 
+# Below this many body tokens a page is a placeholder, not prose, and a
+# multiplicative ceiling is the wrong instrument: the skill creates its own
+# stubs (`sweep.py fix-source-stubs`, demand promotions, bootstrap), so a
+# 1.5× cap blocks the first real curation pass on every stub it ever makes.
+# Measured on a curated wiki, source stubs sit at 31-62 body tokens while
+# finished concept/entity pages sit at 160-230 — i.e. the work the stub
+# exists to receive is a 3-4× expansion by construction.
+STUB_TOKEN_CEILING = 120
+# What a stub is allowed to become in one pass: a shade above the p75 of
+# finished concept/entity pages, so it can reach normal length but not
+# balloon into an analysis (those start around 375 tokens).
+STUB_TARGET_TOKENS = 240
+# Hard ceiling on any computed allowance. 4.0 is what curate waves were
+# already passing by hand via --bloat-mult when fighting this.
+MAX_EFFECTIVE_BLOAT_MULT = 4.0
+
+
+def _bloat_ceiling(before: dict, after: dict, bloat_mult: float) -> tuple:
+    """Body-token ceiling for this edit, plus labels for allowances applied.
+
+    Two relaxations, both of which only ever raise the ceiling:
+
+    - **stub expansion** — a placeholder page may reach normal page length.
+    - **citation-backed growth** — the cap exists to catch padding, and
+      padding does not cite. An edit that triples the body while going
+      1 -> 9 citations is nine sources' worth of grounded prose, not the
+      failure mode being guarded against.
+    """
+    ceiling = before["tokens"] * bloat_mult
+    allowances = []
+
+    if before["tokens"] < STUB_TOKEN_CEILING and STUB_TARGET_TOKENS > ceiling:
+        ceiling = float(STUB_TARGET_TOKENS)
+        allowances.append("stub-expansion")
+
+    cite_before, cite_after = before["citations"], after["citations"]
+    if cite_after > cite_before:
+        growth = (cite_after / cite_before if cite_before
+                  else MAX_EFFECTIVE_BLOAT_MULT)
+        effective = min(bloat_mult * growth, MAX_EFFECTIVE_BLOAT_MULT)
+        if before["tokens"] * effective > ceiling:
+            ceiling = before["tokens"] * effective
+            allowances.append(f"citation-backed({cite_before}->{cite_after})")
+
+    return ceiling, allowances
+
+
 def verdict(before: dict, after: dict, bloat_mult: float = 1.5) -> tuple:
     """Mechanical gate. `bloat_mult` overrides the default 1.5× ceiling
     on body-token growth — restyle waves pass 2.0× because prose
     hydration of compressed pages legitimately expands the body
     (typically ~1.5–1.65×) without adding new content. Citation
     floor is unconditional; the multiplier only relaxes the bloat
-    side of the gate."""
+    side of the gate. `_bloat_ceiling` may raise the ceiling further for
+    stub expansion and citation-backed growth."""
     if after["citations"] < before["citations"]:
         return False, f"citation loss ({before['citations']}->{after['citations']})"
-    if before["tokens"] > 0 and after["tokens"] > before["tokens"] * bloat_mult:
-        pct = int((bloat_mult - 1) * 100)
-        return False, f"bloat ({before['tokens']}->{after['tokens']}, >{pct}%)"
+    if before["tokens"] > 0:
+        ceiling, allowances = _bloat_ceiling(before, after, bloat_mult)
+        if after["tokens"] > ceiling:
+            detail = f", allowed {'+'.join(allowances)}" if allowances else ""
+            return False, (f"bloat ({before['tokens']}->{after['tokens']}, "
+                            f"ceiling {int(ceiling)}{detail})")
     return True, "pass"
 
 
@@ -608,7 +778,21 @@ def main():
         suspects = verify_new_citations(old_text, new_text, Path(args.vault_db))
         if suspects:
             accept = False
-            reason = f"suspect citations: {', '.join(s['citation'] for s in suspects)}"
+            # Name the two failure kinds separately in the headline reason.
+            # They need opposite repairs — rewrite the claim vs fix the path
+            # — and a curator that reads only `reason` shouldn't be sent to
+            # rewrite prose that was never the problem.
+            unindexed = [s["citation"] for s in suspects
+                         if s.get("reason") == "source-not-indexed"]
+            unsupported = [s["citation"] for s in suspects
+                           if s.get("reason") != "source-not-indexed"]
+            parts = []
+            if unsupported:
+                parts.append(f"suspect citations: {', '.join(unsupported)}")
+            if unindexed:
+                parts.append("citation paths not in the vault index "
+                              f"(fix the path or re-index): {', '.join(unindexed)}")
+            reason = "; ".join(parts)
             result.update({"accept": False, "reason": reason, "suspects": suspects})
 
     if accept and args.tables_db:

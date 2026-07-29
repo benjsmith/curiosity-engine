@@ -322,6 +322,68 @@ def scan_missing_source_stubs(wiki_dir: Path) -> list:
     return missing
 
 
+def scan_unindexed_citations(wiki_dir: Path) -> list:
+    """Citations whose vault path is absent from the FTS5 index.
+
+    A `(vault:...)` path can point at a real file and still be invisible to
+    every search path the curator has — `vault_search`, and score_diff's
+    citation check, both query `vault/vault.db` by `path`. When they
+    disagree, nothing says so: the page looks cited, the graph draws the
+    Cites edge, and the only symptom is that new claims against that source
+    get rejected as suspect with no explanation. Two distinguishable cases,
+    reported separately because they need different repairs:
+
+      exists_on_disk: true  -> re-index it (`vault_index.py --rebuild`), or
+                               the citation names a raw drop file where it
+                               should name that file's `.extracted.md`
+      exists_on_disk: false -> the citation path is simply wrong
+    """
+    vault_dir = wiki_dir.parent / "vault"
+    db = vault_dir / "vault.db"
+    if not db.exists():
+        return []
+    import sqlite3
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        indexed = {r[0] for r in conn.execute("SELECT path FROM sources")}
+        conn.close()
+    except sqlite3.Error:
+        return []
+    if not indexed:
+        return []
+
+    from naming import CITATION_RE
+    seen = {}
+    for p in wiki_pages(wiki_dir):
+        rel = str(p.relative_to(wiki_dir))
+        try:
+            text = p.read_text()
+        except OSError:
+            continue
+        for m in CITATION_RE.finditer(text):
+            path = m.group(1).strip()
+            if path in indexed:
+                continue
+            # Tolerate the `vault:vault/x.md` double-prefix form before
+            # calling it unindexed — bootstrap link-apply normalises it.
+            if path.startswith("vault/") and path[len("vault/"):] in indexed:
+                continue
+            # Not a filename, so not a citation: the notes/todos scaffolding
+            # carries a literal `(vault:path)` inside a `<...>` placeholder
+            # showing the citation shape. Real vault paths end in `.md`.
+            if "." not in Path(path).name:
+                continue
+            entry = seen.setdefault(path, {
+                "vault_path": path,
+                "exists_on_disk": (vault_dir / path).exists()
+                                   or (vault_dir / path.replace("vault/", "", 1)).exists(),
+                "citing_pages": [],
+            })
+            if rel not in entry["citing_pages"]:
+                entry["citing_pages"].append(rel)
+    return [seen[k] for k in sorted(seen)]
+
+
 def cmd_scan(wiki_dir: Path):
     pages = wiki_pages(wiki_dir)
     _, dead_refs, inbound = scan_wikilinks(pages)
@@ -339,6 +401,7 @@ def cmd_scan(wiki_dir: Path):
         "frontmatter_issues": scan_frontmatter(pages),
         "index_drift": scan_index_drift(wiki_dir, pages),
         "missing_source_stubs": scan_missing_source_stubs(wiki_dir),
+        "unindexed_citations": scan_unindexed_citations(wiki_dir),
     }
     report["hygiene_debt"] = (
         len(report["dead_wikilinks"])
@@ -349,6 +412,7 @@ def cmd_scan(wiki_dir: Path):
         + len(report["index_drift"]["on_disk_not_in_index"])
         + len(report["index_drift"]["in_index_not_on_disk"])
         + len(report["missing_source_stubs"])
+        + len(report["unindexed_citations"])
     )
     print(json.dumps(report, indent=2))
 

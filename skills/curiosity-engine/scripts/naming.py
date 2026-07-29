@@ -18,6 +18,7 @@ Exposes:
                         from a vault extraction file
   extract_topic       — pull clean topic from a raw vault stem
   url_to_origin       — map a URL to a short origin label
+  normalize_ligatures — expand ﬁ/ﬂ/ﬀ… so FTS5 terms match ASCII prose
 
 Filename/slug conventions:
   - Papers:    attention-vaswani-2017
@@ -37,6 +38,39 @@ from pathlib import Path
 SKIP_FILES = {"index.md", "log.md", "schema.md"}
 WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 CITATION_RE = re.compile(r"\(vault:([^)]+)\)")
+
+# Typographic ligatures survive PDF text extraction — pypdf faithfully
+# preserves the codepoints TeX emitted — and FTS5's `unicode61` tokenizer
+# folds case but does not decompose them. So `speciﬁc` (U+FB01) and
+# `specific` are two unrelated tokens, and a curator writing ordinary
+# ASCII prose can never match the indexed text. The fi/fl/ff/ffi/ffl set
+# covers most of the affected ML vocabulary: specific, efficient,
+# different, final, workflow, coefficient.
+#
+# Deliberately a targeted table rather than `unicodedata.normalize("NFKC")`:
+# NFKC also flattens superscripts and fractions, which silently corrupts
+# scientific prose (`10²` becomes `102`, `½` becomes `1⁄2`).
+LIGATURES = {
+    "ﬀ": "ff",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+    "ﬅ": "st",   # long-s + t
+    "ﬆ": "st",
+}
+_LIGATURE_TABLE = str.maketrans(LIGATURES)
+
+
+def normalize_ligatures(text: str) -> str:
+    """Expand typographic ligatures to ASCII so FTS5 terms match.
+
+    Applied on both sides of the search boundary: at extraction time
+    (`local_ingest.py`), at index time (`vault_index.py`, so existing
+    vaults heal on `--rebuild`), and to claim text before it becomes an
+    FTS5 query (`score_diff.py`). Idempotent and safe on any string.
+    """
+    return text.translate(_LIGATURE_TABLE)
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
                       "fact", "summary-table", "extracted-table", "figure",

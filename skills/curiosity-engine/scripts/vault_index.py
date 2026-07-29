@@ -12,6 +12,10 @@ Usage:
 Dedup: inserts are keyed on `path`. Re-indexing the same path replaces
 the old row rather than creating a duplicate.
 
+Indexed text is ligature-normalised (`ﬁ` -> `fi`) so ASCII queries match
+PDF-extracted prose. Vaults indexed before this landed need one
+`--rebuild` to pick it up — incremental indexing skips unchanged files.
+
 Optional semantic layer: if `.curator/config.json` has
 `embedding_enabled: true`, every indexed source also gets a vector
 embedding via `sentence-transformers` + `sqlite-vec` stored alongside
@@ -27,6 +31,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from embedder import load_embedder  # noqa: E402
+from naming import normalize_ligatures  # noqa: E402
 
 # macOS system Python's sqlite3 is often compiled without
 # --enable-loadable-sqlite-extensions, so conn.load_extension is missing —
@@ -191,7 +196,13 @@ def index_file_result(path_str, title):
     p = Path(path_str)
     if not p.exists():
         return {"path": path_str, "status": "error", "error": "not found"}
-    text = p.read_text()
+    # Ligature expansion happens here as well as at extraction time, so
+    # vaults ingested before the extraction-time fix heal on `--rebuild`
+    # without rewriting append-only vault files. The recorded sha256 stays
+    # the file's own hash, so this is invisible to change detection —
+    # which also means an incremental re-index of an unchanged file is a
+    # no-op. Use `--rebuild` to re-normalise an existing index.
+    text = normalize_ligatures(p.read_text())
     rel = str(p.relative_to(Path("vault"))) if str(p).startswith("vault") else str(p)
     sha = file_sha256(p)
     src = _find_original(p)
@@ -262,7 +273,9 @@ def rebuild():
     pending_texts = []
     files = sorted(vault.rglob("*.extracted.md"))
     for f in files:
-        text = f.read_text()
+        # Same normalisation as index_file_result — this is the path that
+        # heals a vault indexed before ligature expansion landed.
+        text = normalize_ligatures(f.read_text())
         rel = str(f.relative_to(vault))
         sha = file_sha256(f)
         src = _find_original(f)
