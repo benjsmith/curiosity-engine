@@ -2,6 +2,8 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+> **Versioning changed on 2026-07-30.** Releases from that date use CalVer `YYYY.MINOR.MICRO` (JetBrains style) — `2026.1.0`, `2026.1.1`, `2026.2.0`, resetting `MINOR` each January, tagged without a `v` prefix. Everything up to and including `v0.10.0` below is SemVer and is left as it was; the jump from `v0.10.0` to `2026.1.0` is the scheme change, not a major release. Because CalVer carries no compatibility signal, entries now state migrations and breaking changes explicitly on their own **`Migration:`** / **`Breaking:`** lines. Rationale and the full policy: [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md#versioning-policy--calver-yyyyminormicro).
+
 ## 2026-07-29 — v0.10.0 — vault-original resolution, citation-path repair, table quality
 
 Minor rather than patch: two new sweep commands and two new frontmatter keys, all backward-compatible.
