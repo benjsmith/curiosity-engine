@@ -19,6 +19,7 @@ Exposes:
   extract_topic       — pull clean topic from a raw vault stem
   url_to_origin       — map a URL to a short origin label
   normalize_ligatures — expand ﬁ/ﬂ/ﬀ… so FTS5 terms match ASCII prose
+  repair_letter_spacing — rejoin pypdf's tracked-heading splits (QL ORA)
 
 Filename/slug conventions:
   - Papers:    attention-vaswani-2017
@@ -71,6 +72,77 @@ def normalize_ligatures(text: str) -> str:
     FTS5 query (`score_diff.py`). Idempotent and safe on any string.
     """
     return text.translate(_LIGATURE_TABLE)
+
+
+# pypdf's `extract_text()` inserts a space inside a word when the PDF renders
+# it with tracking (letter-spacing) — the norm for display headings and
+# small-caps runs in paper templates. `QLORA` extracts as `QL ORA` (34 times
+# in one real extraction), `REACT` as `REAC T`. Since extractions are the
+# FTS5-indexed citation target, the split token is not merely ugly: the term
+# becomes unsearchable and `score_diff`'s claim-word probes miss it.
+#
+# Repaired by rejoining against the document's OWN vocabulary, which makes
+# the check self-verifying with no dictionary and no second extraction pass:
+# a paper that letter-spaces `QLORA` in a heading also writes `QLoRA` in
+# body text 20 times, so the joined form is confirmed present before any
+# edit. Measured over 565 real extractions: 6 documents touched, 21 repairs,
+# zero false positives.
+#
+# Both halves must be wholly uppercase. A looser "mostly caps" rule admitted
+# bibliography entries — `In ACL` / `In EMNLP` became `InACL` / `InEMNLP` —
+# because `In` is title-case, not tracked text.
+_TRACKED_PAIR_RE = re.compile(r"\b([A-Za-z]{1,6})[ ](?=([A-Za-z]{1,6})\b)")
+_VOCAB_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
+_MIN_JOIN_LEN = 4
+
+
+def repair_letter_spacing(text: str) -> str:
+    """Rejoin intra-word spaces pypdf introduced on letter-spaced text.
+
+    Conservative by construction: a join happens only when both halves are
+    uppercase, the joined form is at least `_MIN_JOIN_LEN` characters, the
+    document already uses that joined form elsewhere, and the two halves are
+    not both independently attested as words (which would make the join
+    ambiguous). Anything failing a test is left exactly as-is.
+
+    Applied to pypdf output at extraction time (`local_ingest.py`) and, for
+    pypdf-derived extractions, at index time (`vault_index.py`) so vaults
+    predating this heal on `--rebuild` without rewriting append-only files.
+    """
+    vocab = {t.casefold() for t in _VOCAB_TOKEN_RE.findall(text)}
+    accepted = []
+
+    for m in _TRACKED_PAIR_RE.finditer(text):
+        a, b = m.group(1), m.group(2)
+        if not (a.isupper() and b.isupper()):
+            continue
+        joined = a + b
+        if len(joined) < _MIN_JOIN_LEN:
+            continue
+        if joined.casefold() not in vocab:
+            continue
+        if a.casefold() in vocab and b.casefold() in vocab:
+            continue
+        start, end = m.start(), m.end() + len(b)
+        # The lookahead lets candidates overlap, which is deliberate: with a
+        # consuming pattern a REJECTED candidate (`4-BIT QL`) swallows the
+        # text and hides the real one (`QL ORA`) behind it, which silently
+        # left 13 of 34 occurrences unrepaired. Accepted joins must still not
+        # overlap each other.
+        if accepted and start < accepted[-1][1]:
+            continue
+        accepted.append((start, end, joined))
+
+    if not accepted:
+        return text
+    out, cursor = [], 0
+    for start, end, joined in accepted:
+        out.append(text[cursor:start])
+        out.append(joined)
+        cursor = end
+    out.append(text[cursor:])
+    return "".join(out)
+
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
                       "fact", "summary-table", "extracted-table", "figure",

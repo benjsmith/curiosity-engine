@@ -2,6 +2,23 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-07-31 — v1.1.0 — repair pypdf's letter-spacing artifact
+
+**Migration:** run `vault_index.py --rebuild` once per workspace to heal existing indexes. No vault file is rewritten — the repair applies on the way into the index, so the append-only store is untouched. **Breaking:** none.
+
+`pypdf.extract_text()` inserts a space *inside* a word when the PDF renders it with tracking (letter-spacing) — the norm for display headings and small-caps runs in paper templates. `QLORA` extracts as `QL ORA` (34 occurrences in one real extraction), `REACT` as `REAC T`. Since the `fix-citation-paths` migration made extractions the FTS5-indexed citation target, this is not a cosmetic problem: the split token is unsearchable, so `vault_search` misses the paper's own name and `score_diff`'s claim-word probes miss it too.
+
+**Fixed by rejoining against the document's own vocabulary**, which is what supplies precision — no dictionary, no second extraction pass, and self-verifying: a paper that letter-spaces `QLORA` in a heading also writes `QLoRA` in body text 20 times, so the joined form is confirmed present before any edit is made. A join additionally requires both halves to be wholly uppercase, a joined length of at least 4, and that the two halves are not both independently attested as words. Measured across **565 real extractions in five workspaces: 6 documents touched, 21 repairs, zero false positives** — every one a real section heading, benchmark name (`WEBSHOP`, `HOTPOTQA`, `SVAMP`, `MAWPS`, `FEVER`), or the paper's own model name.
+
+Two things the measurements changed about the obvious implementation:
+
+- **Both halves must be wholly uppercase, not merely "mostly caps".** The looser rule corrupted bibliographies: `In ACL` / `In EMNLP` became `InACL` / `InEMNLP`. `In` is title-case, not tracked display text. A test asserts this against the adversarial case where `InACL` *is* in the document's vocabulary, so the join is attested and rejected purely on the case rule.
+- **Candidate matching must overlap.** With a consuming regex, a *rejected* candidate (`4-BIT QL`) swallows the text and hides the real one (`QL ORA`) behind it — which silently left 13 of 34 occurrences unrepaired.
+
+**Why not switch the prose pass to pdfplumber**, whose `x_tolerance` controls exactly this behaviour: measured on the two repro PDFs, pdfplumber's *default* `x_tolerance=3.0` under-splits catastrophically, collapsing QLoRA from 14,124 words to 4,692 by merging adjacent words — strictly worse for FTS5 than the bug being fixed. Tuned to `x_tolerance=1.0`-`2.0` the word count matches pypdf and QLoRA is clean, but ReAct still retains an occurrence at every usable setting, and at `1.0` it over-splits (18,566 words vs pypdf's 16,970). No single tolerance is right for a document with mixed typography, because it is a global threshold. pdfplumber is also ~5× slower per page (33ms vs 7ms). The two extractors fail differently rather than one dominating, so the split is not purely about speed.
+
+Applied at extraction time (`local_ingest.py`) and at index time (`vault_index.py`), matching the ligature fix. The index-time gate is `source_path` ending in `.pdf`, **not** `extraction_method`: that field records the *last* method applied, so a source that went through the multimodal table pass reads `multimodal-sonnet` even though its prose is still pypdf output — and those are exactly the files most likely to have been processed. Gating on `extraction_method` silently skipped the very file that motivated this.
+
 ## 2026-07-30 — v1.0.0 — orchestration fixes; SemVer promises become real
 
 **First release with actual stability guarantees.** Everything through `v0.10.0` was `0.x`, where SemVer explicitly promises nothing — so each release paid the cost of classifying patch-vs-minor while the version number carried no signal anyone could rely on. From here the major number means what `RELEASE_CHECKLIST.md` says it means: a renamed or removed command/flag/config key, a frontmatter key whose *meaning* changes, a change to `embedder.py`'s declared-stable surface, or a migration `setup.sh` cannot perform silently. No functional change comes with the 1.0 marker itself — it is a promise about what future numbers will mean.

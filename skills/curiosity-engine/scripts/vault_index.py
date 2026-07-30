@@ -12,9 +12,11 @@ Usage:
 Dedup: inserts are keyed on `path`. Re-indexing the same path replaces
 the old row rather than creating a duplicate.
 
-Indexed text is ligature-normalised (`ﬁ` -> `fi`) so ASCII queries match
-PDF-extracted prose. Vaults indexed before this landed need one
-`--rebuild` to pick it up — incremental indexing skips unchanged files.
+Indexed text is normalised on the way in: ligatures expand (`ﬁ` -> `fi`)
+so ASCII queries match PDF-extracted prose, and pypdf's letter-spacing
+splits are rejoined (`QL ORA` -> `QLORA`) so tracked display headings stay
+searchable. Vaults indexed before these landed need one `--rebuild` to
+pick them up — incremental indexing skips unchanged files.
 
 Optional semantic layer: if `.curator/config.json` has
 `embedding_enabled: true`, every indexed source also gets a vector
@@ -31,7 +33,38 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from embedder import load_embedder  # noqa: E402
-from naming import normalize_ligatures  # noqa: E402
+from naming import (  # noqa: E402
+    normalize_ligatures, read_frontmatter, repair_letter_spacing,
+)
+
+
+def _normalise_for_index(text: str) -> str:
+    """Text normalisations applied on the way into the FTS5 index.
+
+    Ligature expansion is unconditional — it is an unambiguous character
+    mapping. Letter-spacing repair is a heuristic, so it is restricted to
+    extractions whose ORIGINAL was a PDF, which is where the artifact comes
+    from; hand-authored markdown in the vault is never rewritten by it.
+
+    The gate is `source_path`, not `extraction_method`. `extraction_method`
+    records the *last* method applied, so a source that went through the
+    multimodal table pass reads `multimodal-sonnet` even though its prose
+    is still pypdf output — and those are precisely the files most likely
+    to have been processed, so gating on it silently skips them.
+
+    Both run here as well as at extraction time so vaults ingested before
+    these landed heal on a single `--rebuild`, without touching the
+    append-only files themselves.
+    """
+    text = normalize_ligatures(text)
+    try:
+        fm, _ = read_frontmatter(text)
+    except Exception:
+        return text
+    source = str(fm.get("source_path", "") or fm.get("kept_as", ""))
+    if source.lower().endswith(".pdf"):
+        text = repair_letter_spacing(text)
+    return text
 
 # macOS system Python's sqlite3 is often compiled without
 # --enable-loadable-sqlite-extensions, so conn.load_extension is missing —
@@ -202,7 +235,7 @@ def index_file_result(path_str, title):
     # the file's own hash, so this is invisible to change detection —
     # which also means an incremental re-index of an unchanged file is a
     # no-op. Use `--rebuild` to re-normalise an existing index.
-    text = normalize_ligatures(p.read_text())
+    text = _normalise_for_index(p.read_text())
     rel = str(p.relative_to(Path("vault"))) if str(p).startswith("vault") else str(p)
     sha = file_sha256(p)
     src = _find_original(p)
@@ -285,8 +318,8 @@ def rebuild():
     files = sorted(vault.rglob("*.extracted.md"))
     for f in files:
         # Same normalisation as index_file_result — this is the path that
-        # heals a vault indexed before ligature expansion landed.
-        text = normalize_ligatures(f.read_text())
+        # heals a vault indexed before these normalisations landed.
+        text = _normalise_for_index(f.read_text())
         rel = str(f.relative_to(vault))
         sha = file_sha256(f)
         src = _find_original(f)

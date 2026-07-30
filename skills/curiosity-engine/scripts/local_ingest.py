@@ -64,7 +64,7 @@ from pathlib import Path
 # optional embedding) index in the same process, without the caller
 # needing a separate --rebuild. Library-safe: no stdout side effects.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from naming import normalize_ligatures  # noqa: E402
+from naming import normalize_ligatures, repair_letter_spacing  # noqa: E402
 try:
     from vault_index import index_file_result as _vault_index_add
 except ImportError:
@@ -133,7 +133,10 @@ def _extract_pdf(raw_bytes: bytes) -> tuple[str, str]:
                 pages.append(page.extract_text() or "")
             except Exception:
                 pages.append("")
-        return "\n\n".join(pages), ""
+        # Repair letter-spacing splits across the whole document at once —
+        # the check verifies a join against the document's own vocabulary,
+        # so it needs every page joined first, not per-page text.
+        return repair_letter_spacing("\n\n".join(pages)), ""
     except Exception as e:
         return "", f"pypdf_error:{type(e).__name__}"
 

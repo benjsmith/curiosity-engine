@@ -144,6 +144,66 @@ class LigatureNormalisation(unittest.TestCase):
         self.assertIn("specific", words)
 
 
+class LetterSpacingRepair(unittest.TestCase):
+    """pypdf inserts a space inside a word when the PDF renders it with
+    tracking, so display headings extract as `QL ORA` / `REAC T` — 34
+    occurrences in one real extraction. Since extractions are the
+    FTS5-indexed citation target, the split token is unsearchable.
+
+    Repaired against the document's own vocabulary, which is what supplies
+    precision: a paper that letter-spaces QLORA in a heading also writes
+    QLoRA in body text, so the join is confirmed before it is applied.
+    """
+
+    def test_rejoins_when_document_attests_the_word(self):
+        text = ("The QL ORA method quantises weights. QLoRA reduces memory. "
+                "We evaluate QLoRA on several tasks.")
+        self.assertIn("QLORA", naming.repair_letter_spacing(text))
+        self.assertNotIn("QL ORA", naming.repair_letter_spacing(text))
+
+    def test_leaves_unattested_pairs_alone(self):
+        """No vocabulary evidence for the join — do nothing."""
+        text = "The AB CD sequence appears once and nowhere else."
+        self.assertEqual(naming.repair_letter_spacing(text), text)
+
+    def test_does_not_corrupt_bibliography_entries(self):
+        """`In ACL` became `InACL` under a looser 'mostly caps' rule,
+        silently corrupting references. Adversarial here: `InACL` is in the
+        document's vocabulary, so the join IS attested — it is rejected
+        purely because `In` is title-case, not tracked display text."""
+        text = "Smith et al. In ACL 2023. See InACL for details."
+        out = naming.repair_letter_spacing(text)
+        self.assertIn("In ACL 2023", out)
+
+    def test_leaves_ordinary_prose_untouched(self):
+        text = ("The model was trained on a large corpus of text and then "
+                "evaluated. THE MODEL was the best.")
+        self.assertEqual(naming.repair_letter_spacing(text), text)
+
+    def test_rejected_candidate_does_not_hide_a_real_one(self):
+        """With a consuming pattern, `BIT QL` is evaluated, rejected, and
+        consumes the text — hiding `QL ORA` behind it. That silently left
+        13 of 34 occurrences unrepaired on the real document."""
+        text = ("We present 4-BIT QL ORA finetuning. QLoRA is efficient. "
+                "QLoRA again.")
+        out = naming.repair_letter_spacing(text)
+        self.assertNotIn("QL ORA", out)
+        self.assertIn("QLORA", out)
+
+    def test_requires_both_halves_uppercase(self):
+        text = "The Qu ery method. Query is common. Query again."
+        self.assertEqual(naming.repair_letter_spacing(text), text)
+
+    def test_short_joins_rejected(self):
+        text = "A B and AB and AB again"
+        self.assertEqual(naming.repair_letter_spacing(text), text)
+
+    def test_idempotent(self):
+        text = "The QL ORA method. QLoRA is efficient. QLoRA again."
+        once = naming.repair_letter_spacing(text)
+        self.assertEqual(once, naming.repair_letter_spacing(once))
+
+
 class CitationRelevance(unittest.TestCase):
 
     def test_grounded_compressed_claim_is_accepted(self):
