@@ -747,22 +747,14 @@ def project_activity(wiki_dir: Path, pages_text: dict, results: list,
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("wiki", nargs="?", default="wiki")
-    ap.add_argument("--last-n", type=int, default=5)
-    ap.add_argument("--shard", default=None,
-                    help="seed page path → emit a federation shard export "
-                         "(U4) instead of the epoch summary")
-    args = ap.parse_args()
+def build_summary(wiki_dir: Path, last_n: int = 5) -> dict:
+    """Compute the epoch summary as a dict. Library entry point.
 
-    wiki_dir = Path(args.wiki).resolve()
-
-    # U4 — explicit shard export. Bypasses the full epoch summary; emits the
-    # bounded neighborhood + seam IRIs for the given seed page.
-    if args.shard:
-        print(json.dumps(shard_export(wiki_dir, args.shard), indent=2))
-        return
+    `main()` is a thin wrapper that prints this. Split out so callers that
+    need the signals in-process — `planner.py pick-mode`, primarily — don't
+    have to shell out and re-parse their own stdout.
+    """
+    wiki_dir = Path(wiki_dir).resolve()
 
     # Single pass over wiki pages: read each file exactly once and share
     # the dict across cluster_analysis / vault_frontier / page_type_counts.
@@ -803,11 +795,30 @@ def main():
         "table_citation_risk": table_citation_risk(wiki_dir),
         "table_aggregates": table_aggregates(wiki_dir),
         "wave_scope": wave_scope(wiki_dir, non_source, scope_threshold),
-        "recent_log": recent_log_entries(wiki_dir, args.last_n),
+        "recent_log": recent_log_entries(wiki_dir, last_n),
         "project_activity": project_activity(wiki_dir, pages_text, results),
     }
+    return summary
 
-    print(json.dumps(summary, indent=2))
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("wiki", nargs="?", default="wiki")
+    ap.add_argument("--last-n", type=int, default=5)
+    ap.add_argument("--shard", default=None,
+                    help="seed page path → emit a federation shard export "
+                         "(U4) instead of the epoch summary")
+    args = ap.parse_args()
+
+    wiki_dir = Path(args.wiki).resolve()
+
+    # U4 — explicit shard export. Bypasses the full epoch summary; emits the
+    # bounded neighborhood + seam IRIs for the given seed page.
+    if args.shard:
+        print(json.dumps(shard_export(wiki_dir, args.shard), indent=2))
+        return
+
+    print(json.dumps(build_summary(wiki_dir, args.last_n), indent=2))
 
 
 if __name__ == "__main__":

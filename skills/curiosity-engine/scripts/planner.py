@@ -73,6 +73,176 @@ PASSTHROUGH_MODES = {
 # Wave mode that stays global (no project-level reshaping).
 GLOBAL_MODES = {"wire"}
 
+# ── wave-mode selection ───────────────────────────────────────────────
+#
+# The ladder is ordered bounded-queues-first, and that ordering is the
+# whole point rather than a style preference.
+#
+# `numeric-review`, `table-audit`, `figure-extract` and
+# `multimodal-table-extract` are **bounded and self-draining**: everything
+# they touch is marked processed (`figures.py mark-extracted`,
+# `sweep.py mark-multimodal-extracted`, `sweep.py apply-numeric-review`)
+# and drops off its queue, so each empties in a finite number of waves and
+# control falls through permanently.
+#
+# `create` is **unbounded** — there is always another analysis to write.
+# Its trigger includes `vault_frontier.uncited_count < 5`, and that count
+# trends to zero on a well-curated wiki and stays there. That is the
+# success state, not a backlog. So with create tested first, a fully-cited
+# vault selects create on every wave forever and the four bounded queues
+# become unreachable: observed on a 79-page workspace with
+# `uncited_count: 0` and `utilization: 1.0` while
+# `multimodal-table-candidates` simultaneously returned 15 sources.
+#
+# The asymmetry is the argument: placing create above a bounded queue
+# starves that queue forever, while placing it below one costs at most a
+# few waves. `numeric-review` leads because it is not new work but an
+# outstanding correctness obligation — `[tab]` pages whose numbers are
+# unverified, which `extracted-query` already refuses to serve. Clearing
+# that debt outranks minting more of it, and it still sequences correctly
+# within a run, since a multimodal-table-extract wave populates the queue
+# and the next wave reviews it.
+WAVE_MODE_LADDER = (
+    "numeric-review",
+    "table-audit",
+    "figure-extract",
+    "multimodal-table-extract",
+    "create",
+    "wire",
+    "repair",
+)
+
+
+def _config(wiki_dir: Path) -> dict:
+    try:
+        return json.loads(
+            (wiki_dir.parent / ".curator" / "config.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _sweep_json(command: str, wiki_dir: Path) -> dict:
+    """Run a sweep command that prints one JSON object and parse it.
+
+    In-process rather than a subprocess: same interpreter, no PATH or
+    venv resolution to get wrong, and sweep is already importable from
+    this directory. A command that fails for any reason yields `{}`, which
+    reads downstream as an empty queue — selection degrades to the next
+    rung rather than crashing the wave.
+    """
+    import contextlib
+    import io
+
+    try:
+        import sweep
+    except ImportError:
+        return {}
+    fn = {
+        "pending-numeric-review": "cmd_pending_numeric_review",
+        "figure-candidates": "cmd_figure_candidates",
+        "multimodal-table-candidates": "cmd_multimodal_table_candidates",
+    }.get(command)
+    handler = getattr(sweep, fn, None) if fn else None
+    if handler is None:
+        return {}
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            handler(wiki_dir)
+        return json.loads(buf.getvalue())
+    except Exception:
+        return {}
+
+
+def _queue_len(payload: dict) -> int:
+    """Queue depth from a sweep payload, whatever it calls its list."""
+    if not isinstance(payload, dict):
+        return 0
+    if isinstance(payload.get("count"), int):
+        return payload["count"]
+    for key in ("queue", "candidates", "pages", "pending"):
+        val = payload.get(key)
+        if isinstance(val, list):
+            return len(val)
+    return 0
+
+
+def pick_mode(summary: dict, wiki_dir: Path) -> dict:
+    """Select the wave mode. Returns {mode, reason, queue_depths, signals}.
+
+    Implements the ladder documented in SKILL.md § CURATE Phase 1 step 4;
+    SKILL.md remains the contract, this is the executable form of it. The
+    prose version is silently overridable — a real run both mis-selected
+    by following it and then deviated from it by hand — so the choice is
+    made inspectable and loggable here.
+    """
+    cfg = _config(wiki_dir)
+
+    numeric = _sweep_json("pending-numeric-review", wiki_dir)
+    figures = _sweep_json("figure-candidates", wiki_dir)
+    multimodal = _sweep_json("multimodal-table-candidates", wiki_dir)
+
+    min_citers = int(cfg.get("figure_extract_min_citers", 2) or 2)
+    fig_ready = [
+        c for c in (figures.get("candidates") or [])
+        if isinstance(c, dict) and int(c.get("distinct_citers", 0) or 0) >= min_citers
+    ]
+
+    risks = summary.get("table_citation_risk") or []
+    at_risk = [r for r in risks
+               if isinstance(r, dict) and float(r.get("risk", 0) or 0) > 0.5]
+
+    saturation = (summary.get("saturation") or {}).get("action")
+    uncited = int(
+        (summary.get("vault_frontier") or {}).get("uncited_count", 0) or 0)
+    orphan = float(
+        (summary.get("orphan_dominance") or {}).get("ratio", 0) or 0)
+    orphan_threshold = float(cfg.get("orphan_dominance_threshold", 0.6) or 0.6)
+
+    queue_depths = {
+        "numeric_review": _queue_len(numeric),
+        "table_audit_at_risk": len(at_risk),
+        "figure_candidates_ready": len(fig_ready),
+        "multimodal_table_candidates": _queue_len(multimodal),
+    }
+    signals = {
+        "saturation_action": saturation,
+        "uncited_count": uncited,
+        "orphan_dominance": orphan,
+        "orphan_dominance_threshold": orphan_threshold,
+        "figure_extract_min_citers": min_citers,
+    }
+
+    if queue_depths["numeric_review"]:
+        mode, reason = "numeric-review", (
+            f"{queue_depths['numeric_review']} [tab] page(s) awaiting numeric "
+            "review — unverified rows are a correctness debt and "
+            "extracted-query already refuses to serve them")
+    elif at_risk:
+        mode, reason = "table-audit", (
+            f"{len(at_risk)} table(s) with citation risk > 0.5")
+    elif fig_ready:
+        mode, reason = "figure-extract", (
+            f"{len(fig_ready)} figure candidate(s) with >= {min_citers} "
+            "distinct citers")
+    elif queue_depths["multimodal_table_candidates"]:
+        mode, reason = "multimodal-table-extract", (
+            f"{queue_depths['multimodal_table_candidates']} source(s) whose "
+            "tables pdfplumber could not recover")
+    elif saturation == "pivot_to_exploration" or uncited < 5:
+        mode, reason = "create", (
+            f"bounded queues empty; saturation={saturation!r}, "
+            f"uncited_count={uncited}")
+    elif orphan > orphan_threshold:
+        mode, reason = "wire", (
+            f"orphan dominance {orphan:.3f} > {orphan_threshold}")
+    else:
+        mode, reason = "repair", "no queue or pivot signal; editorial work remains"
+
+    return {"mode": mode, "reason": reason,
+            "queue_depths": queue_depths, "signals": signals,
+            "ladder": list(WAVE_MODE_LADDER)}
+
 
 def _activity_score(p: dict, max_ingests: int, max_signals: int,
                      max_cadence: float) -> float:
@@ -494,11 +664,43 @@ def cmd_allocate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pick_mode(args: argparse.Namespace) -> int:
+    wiki_dir = Path(args.wiki)
+    if args.epoch_summary in (None, "-"):
+        if args.epoch_summary == "-":
+            summary = json.load(sys.stdin)
+        else:
+            # No summary supplied: compute one. Costs a lint pass, but it
+            # makes `planner.py pick-mode --wiki wiki` work standalone.
+            try:
+                import epoch_summary as _es
+                summary = _es.build_summary(wiki_dir)
+            except Exception as e:
+                print(f"ERROR: could not build epoch summary ({e}); pass one "
+                      f"as an argument or via '-'", file=sys.stderr)
+                return 2
+    else:
+        summary = json.loads(Path(args.epoch_summary).read_text())
+
+    print(json.dumps(pick_mode(summary, wiki_dir), indent=2))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Recency-weighted slot allocator for project-aware CURATE waves."
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p_pick = sub.add_parser(
+        "pick-mode",
+        help="Select the wave mode from queue depths + epoch-summary signals")
+    p_pick.add_argument(
+        "epoch_summary", nargs="?", default=None,
+        help="Path to epoch_summary.py JSON, or '-' for stdin. Omit to "
+             "compute one (slower).")
+    p_pick.add_argument("--wiki", default="wiki", help="Wiki directory")
+    p_pick.set_defaults(func=cmd_pick_mode)
 
     p_alloc = sub.add_parser("allocate", help="Compute slot allocation for a wave")
     p_alloc.add_argument(

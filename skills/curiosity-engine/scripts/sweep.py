@@ -2437,6 +2437,241 @@ def _indexed_alias_map(indexed: set) -> dict:
             for alias, paths in candidates.items() if len(paths) == 1}
 
 
+_EXTRACTED_TABLES_HEADING = "## Extracted tables"
+_END_FETCHED_MARKER = "<!-- END FETCHED CONTENT -->"
+
+
+def _split_extracted_tables(body: str) -> tuple:
+    """Split a body into (before, tables_section, after).
+
+    The section runs from the `## Extracted tables` heading to whichever
+    comes first: the next `##`-level heading, the END FETCHED CONTENT
+    marker, or end of body. When the heading is absent, returns
+    (before, "", after) with an insertion point just ahead of the END
+    marker so a caller can append without disturbing the wrapper.
+    """
+    idx = body.find(_EXTRACTED_TABLES_HEADING)
+    if idx == -1:
+        end_idx = body.find(_END_FETCHED_MARKER)
+        if end_idx == -1:
+            return body, "", ""
+        return body[:end_idx], "", body[end_idx:]
+
+    rest = body[idx + len(_EXTRACTED_TABLES_HEADING):]
+    stop = len(rest)
+    for candidate in (rest.find("\n## "), rest.find(_END_FETCHED_MARKER)):
+        if candidate != -1:
+            stop = min(stop, candidate)
+    return (body[:idx],
+            body[idx: idx + len(_EXTRACTED_TABLES_HEADING) + stop],
+            body[idx + len(_EXTRACTED_TABLES_HEADING) + stop:])
+
+
+def _prose_chars_in_section(section: str) -> int:
+    """Characters of prose-looking content inside a tables section.
+
+    The splice carries `before` and `after` across verbatim, so it cannot
+    lose text by construction — the real risk is the section *boundary*
+    landing in the wrong place and swallowing prose, which a before/after
+    comparison can't see because both sides split the same way. Counting
+    what is about to be discarded is the check that actually catches it.
+
+    Table rows, headings, blank lines and the italic preface are expected
+    section furniture; anything else is prose that shouldn't be in here.
+    """
+    total = 0
+    for line in section.splitlines():
+        s = line.strip()
+        if not s or s.startswith("|") or s.startswith("#"):
+            continue
+        if s.startswith("_") and s.endswith("_"):
+            continue
+        if set(s) <= set("-: |"):        # GFM separator rows
+            continue
+        total += len(s)
+    return total
+
+
+# A tables section carrying more than this much non-table prose means the
+# heading matched somewhere it shouldn't have. Generous enough for a few
+# lines of extraction notes.
+MAX_SECTION_PROSE_CHARS = 400
+
+
+def _render_tables_section(tables: list) -> str:
+    """Render worker JSON as the GFM block `promote-extracted-tables` parses."""
+    out = [_EXTRACTED_TABLES_HEADING, "",
+           "_Transcribed from source page images. Treat numeric values as "
+           "literal transcriptions; do not derive or unit-convert when "
+           "citing._", ""]
+    for tbl in tables:
+        page = tbl.get("page")
+        desc = (tbl.get("description") or "").strip()
+        heading = f"### Table p.{page}" if page is not None else "### Table"
+        if desc:
+            heading += f" — {desc}"
+        out += [heading, ""]
+
+        headers = [str(h) for h in (tbl.get("headers") or [])]
+        units = [str(u) for u in (tbl.get("units") or [])]
+        if units and any(u.strip() for u in units):
+            headers = [f"{h} ({u})" if u.strip() else h
+                       for h, u in zip(headers, units + [""] * len(headers))]
+        rows = tbl.get("rows") or []
+        if headers:
+            out.append(_gfm_row(headers))
+            out.append("|" + "|".join(["---"] * len(headers)) + "|")
+            for row in rows:
+                cells = ["" if c is None else str(c) for c in row]
+                cells += [""] * (len(headers) - len(cells))
+                out.append(_gfm_row(cells[:len(headers)]))
+            out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _gfm_row(cells: list) -> str:
+    safe = [str(c).replace("|", "\\|").replace("\n", " ") for c in cells]
+    return "| " + " | ".join(safe) + " |"
+
+
+def cmd_write_extracted_tables(extraction: Path, json_file: Path,
+                                 dry_run: bool = False) -> None:
+    """Splice worker-transcribed tables into an extraction, prose untouched.
+
+    Replaces the `## Extracted tables` section of a vault extraction with
+    the tables in `json_file` (the `scientific_table_extractor` worker's
+    output shape: `{"source": ..., "tables": [{page, description, headers,
+    units, rows, parsing_issues, extraction_notes, review_required}]}`),
+    appending the section when it isn't there yet.
+
+    **Why this exists as a verb.** The multimodal-table-extract wave
+    previously had no mechanical path to persist worker output, so each
+    worker was handed an Edit-based contract to replace the region between
+    the heading and the END FETCHED CONTENT marker by exact string match.
+    That works until it doesn't: a mis-specified `old_string` against a
+    182KB file silently truncates prose that is not version-controlled and
+    that every citing page's `(vault:...)` marker — and score_diff's
+    claim-word probes — resolve against. One real worker also could not
+    remove a legacy garbled block at all, because it contained
+    non-printable control characters that cannot be typed for an
+    exact-match edit, and had to wrap it in an HTML comment instead.
+
+    The hard guarantee: **the prose outside the tables section is compared
+    byte-for-byte before and after, and any difference aborts the write.**
+    Splicing by section boundary rather than by string match also handles
+    unprintable content, which is unaddressable by an exact-match edit.
+    """
+    try:
+        payload = json.loads(json_file.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        print(json.dumps({"ok": False, "error": f"cannot read {json_file}: {e}"}))
+        return
+    tables = payload.get("tables")
+    if not isinstance(tables, list):
+        print(json.dumps({"ok": False,
+                          "error": "payload has no 'tables' list"}))
+        return
+    try:
+        original = extraction.read_text()
+    except OSError as e:
+        print(json.dumps({"ok": False, "error": f"cannot read {extraction}: {e}"}))
+        return
+
+    fm_text_end = 0
+    if original.startswith("---\n"):
+        m = re.search(r"\n---\n", original[4:])
+        if m:
+            fm_text_end = 4 + m.end()
+    head, body = original[:fm_text_end], original[fm_text_end:]
+
+    before, section, after = _split_extracted_tables(body)
+    new_section = _render_tables_section(tables) if tables else ""
+    if section and not tables:
+        # An empty result must not silently wipe an existing section.
+        print(json.dumps({"ok": False, "refused": "empty-tables-would-erase",
+                          "error": "payload has 0 tables but the extraction "
+                                   "already has an Extracted tables section; "
+                                   "refusing to erase it"}))
+        return
+
+    joiner = "" if (not before or before.endswith("\n\n")) else (
+        "\n" if before.endswith("\n") else "\n\n")
+    new_body = before + joiner + new_section + ("\n" if new_section else "") + after
+
+    # The guarantee. Everything outside the tables section must survive
+    # intact; a shrink here is exactly the failure mode the Edit contract
+    # could cause silently.
+    #
+    # Compared per segment rather than as one concatenation, and normalised
+    # only at the edges: inserting the section legitimately adds a newline
+    # at the seam, which a whole-string comparison would reject while still
+    # missing a deletion in the middle. Segment-wise catches truncation or
+    # insertion anywhere in either half.
+    discarded_prose = _prose_chars_in_section(section)
+    if discarded_prose > MAX_SECTION_PROSE_CHARS:
+        print(json.dumps({
+            "ok": False, "refused": "section-contains-prose",
+            "prose_chars_in_section": discarded_prose,
+            "limit": MAX_SECTION_PROSE_CHARS,
+            "error": "the region that would be replaced holds substantial "
+                     "non-table prose — the '## Extracted tables' heading "
+                     "probably matched inside the body. Refusing to write; "
+                     "inspect the extraction by hand.",
+        }, indent=2))
+        return
+
+    nb_before, _nb_section, nb_after = _split_extracted_tables(new_body)
+    if before.rstrip() != nb_before.rstrip() or after.strip() != nb_after.strip():
+        print(json.dumps({
+            "ok": False, "refused": "prose-would-change",
+            "prose_bytes_before": len(before.rstrip()) + len(after.strip()),
+            "prose_bytes_after": len(nb_before.rstrip()) + len(nb_after.strip()),
+            "error": "non-table prose would change (truncated, or content "
+                     "moved across the section boundary); refusing to write",
+        }, indent=2))
+        return
+    if _END_FETCHED_MARKER in body and _END_FETCHED_MARKER not in new_body:
+        print(json.dumps({"ok": False, "refused": "lost-fetched-content-marker",
+                          "error": "END FETCHED CONTENT marker would be lost"}))
+        return
+
+    new_text = head + new_body
+    # Frontmatter: table count plus the worker's self-reported uncertainty,
+    # so the numeric-review pass and any curator see it without opening JSON.
+    issues, notes, flagged = [], [], 0
+    for tbl in tables:
+        issues += [str(i) for i in (tbl.get("parsing_issues") or [])]
+        notes += [str(n) for n in (tbl.get("extraction_notes") or [])]
+        if tbl.get("review_required"):
+            flagged += 1
+    new_text = set_frontmatter_field(new_text, "tables_extracted", str(len(tables)))
+    if issues:
+        new_text = set_frontmatter_field(
+            new_text, "parsing_issues",
+            "[" + ", ".join(f'"{i}"' for i in issues[:20]) + "]")
+    if notes:
+        new_text = set_frontmatter_field(
+            new_text, "extraction_notes",
+            "[" + ", ".join(f'"{n}"' for n in notes[:20]) + "]")
+    if flagged:
+        new_text = set_frontmatter_field(new_text, "review_required", "true")
+
+    if not dry_run:
+        extraction.write_text(new_text)
+    print(json.dumps({
+        "ok": True,
+        "extraction": str(extraction),
+        "tables_written": len(tables),
+        "section_existed": bool(section),
+        "prose_bytes_preserved": len(before.rstrip()) + len(after.strip()),
+        "parsing_issues": len(issues),
+        "tables_flagged_for_review": flagged,
+        "dry_run": dry_run,
+        "next": "sweep.py promote-extracted-tables wiki, then "
+                "sweep.py mark-multimodal-extracted --extraction <path>",
+    }, indent=2))
+
+
 def cmd_fix_citation_paths(wiki_dir: Path, dry_run: bool = False) -> None:
     """Repoint `(vault:...)` citations at paths the FTS5 index actually holds.
 
@@ -4509,8 +4744,11 @@ def main():
         "multimodal-table-candidates", "mark-multimodal-extracted",
         "pending-numeric-review", "apply-numeric-review",
         "classify-projects",
-        "backfill-kept-as", "fix-citation-paths",
+        "backfill-kept-as", "fix-citation-paths", "write-extracted-tables",
     ])
+    ap.add_argument("--json-file", type=Path, default=None,
+                    help="write-extracted-tables: path to the "
+                         "scientific_table_extractor worker's JSON output")
     ap.add_argument("--extraction", type=Path, default=None,
                     help="mark-multimodal-extracted: path to a vault "
                          "*.extracted.md file to flag as completed")
@@ -4646,6 +4884,15 @@ def main():
 
     elif args.command == "fix-citation-paths":
         cmd_fix_citation_paths(wiki_dir, dry_run=args.dry_run)
+
+    elif args.command == "write-extracted-tables":
+        if not args.extraction or not args.json_file:
+            print(json.dumps({"ok": False, "error":
+                              "write-extracted-tables needs --extraction "
+                              "<vault/*.extracted.md> and --json-file <path>"}))
+            return
+        cmd_write_extracted_tables(args.extraction, args.json_file,
+                                    dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
