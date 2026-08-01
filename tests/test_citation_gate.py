@@ -397,6 +397,32 @@ class UnindexedCitationScan(unittest.TestCase):
             self.assertTrue(out[0]["exists_on_disk"])
 
 
+class ReembedOnAVaultWithNoVectors(unittest.TestCase):
+    """`--reembed` is the natural command for turning embeddings ON in an
+    existing workspace, but it cleared `embedding_meta` with a DELETE
+    before `_init_embed_tables` had created it — so the very first
+    invocation on a vault that never had vectors died with
+    "no such table: embedding_meta". Hit for real while enabling
+    embeddings on two workspaces.
+    """
+
+    def test_clears_tables_with_drop_not_delete(self):
+        src = (SCRIPTS / "vault_index.py").read_text()
+        reembed = src[src.index("def reembed"):]
+        reembed = reembed[:reembed.index("\ndef ")] if "\ndef " in reembed else reembed
+        self.assertIn('DROP TABLE IF EXISTS embedding_meta', reembed)
+        self.assertNotIn('DELETE FROM embedding_meta', reembed,
+                          "a DELETE here fails when the table does not exist yet")
+
+    def test_drops_precede_table_creation(self):
+        src = (SCRIPTS / "vault_index.py").read_text()
+        reembed = src[src.index("def reembed"):]
+        drop = reembed.index("DROP TABLE IF EXISTS embedding_meta")
+        init = reembed.index("_init_embed_tables")
+        self.assertLess(drop, init,
+                        "tables must be dropped before being recreated")
+
+
 class RebuildIsNonDestructiveOnFailure(unittest.TestCase):
     """`--rebuild` is the documented migration for the ligature fix, so it
     must not be able to destroy an index it then fails to repopulate.

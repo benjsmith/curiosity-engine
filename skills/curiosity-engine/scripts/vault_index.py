@@ -389,9 +389,13 @@ def reembed():
         vec_mod.load(c)
     finally:
         c.enable_load_extension(False)
-    # Dimensions may differ; wipe and recreate both tables.
+    # Dimensions may differ; wipe and recreate both tables. Both are
+    # dropped rather than one dropped and one DELETEd: `--reembed` is the
+    # natural command for turning embeddings ON in an existing workspace,
+    # and there `embedding_meta` does not exist yet, so a DELETE against it
+    # raised "no such table" before `_init_embed_tables` could create it.
     c.execute("DROP TABLE IF EXISTS source_embeddings")
-    c.execute("DELETE FROM embedding_meta")
+    c.execute("DROP TABLE IF EXISTS embedding_meta")
     _init_embed_tables(c, vec_mod, dim)
 
     rows = c.execute("SELECT path, body FROM sources").fetchall()
