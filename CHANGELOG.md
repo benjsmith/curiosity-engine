@@ -2,6 +2,22 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-01 — v1.1.1 — setup.sh honours a config that already enables embeddings
+
+**Migration:** none. **Breaking:** none.
+
+`setup.sh` offered the fastembed + sqlite-vec install only behind an interactive
+prompt. A workspace whose `.curator/config.json` already carries
+`embedding_enabled: true` — the shipped-workspace case: unpack it, run setup
+non-interactively, start working — therefore got no embedding deps, and the
+first `vault_index.py` or `graph.py rebuild` call hard-failed on a missing
+`sqlite_vec` while the config insisted embeddings were on.
+
+Setup now checks the config independently of how it was invoked and installs the
+deps when they are declared but absent, warning clearly if the install fails.
+The config is the statement of intent; setup satisfies it rather than leaving it
+contradicted. Found while dry-running a demo workspace release end to end.
+
 ## 2026-08-01 — v1.1.0 — cross-table conflict detection; frontmatter round-trip fix
 
 **Migration:** none — but run `sweep.py annotate-cross-table-conflicts wiki` once per workspace to surface existing conflicts, and refresh `.curator/prompts.md` from the template. **Breaking:** none.

@@ -1523,6 +1523,37 @@ p.write_text(json.dumps(cfg, indent=2))
     esac
 fi
 
+# A workspace whose config ALREADY declares embeddings on needs the deps
+# regardless of how setup was invoked. This is the shipped-workspace case:
+# clone or unpack a workspace with `embedding_enabled: true`, run setup
+# non-interactively, and without this the prompt above never fires — the
+# first vault_index/graph call then hard-fails on a missing sqlite-vec,
+# with a config that says embeddings are on. The config is the statement
+# of intent; setup satisfies it rather than leaving it contradicted.
+if [ -f ".curator/config.json" ]; then
+    _wants_embed=$(uv run --no-project python3 -c "
+import json
+try:
+    print('yes' if json.load(open('.curator/config.json')).get('embedding_enabled') else 'no')
+except Exception:
+    print('no')
+" 2>/dev/null || echo "no")
+    if [ "$_wants_embed" = "yes" ] && \
+       ! uv run python3 -c "import sqlite_vec" >/dev/null 2>&1; then
+        echo ""
+        echo "  config.json sets embedding_enabled=true but the embedding"
+        echo "  deps are missing — installing them so the workspace works ..."
+        if uv pip install fastembed sqlite-vec pysqlite3 >/dev/null 2>&1; then
+            echo "  Installed fastembed + sqlite-vec (+ pysqlite3)."
+        else
+            echo "  WARNING: install failed. Either run"
+            echo "    uv pip install fastembed sqlite-vec"
+            echo "  or set embedding_enabled=false in .curator/config.json —"
+            echo "  otherwise vault_index.py and graph.py will fail."
+        fi
+    fi
+fi
+
 # Optional: install curiosity-merge for cross-wiki operations
 # (merge, unmerge, subgraph-export, discover-bridges). Most users
 # don't need this — only install when you want to combine wikis,
