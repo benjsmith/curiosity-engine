@@ -418,7 +418,8 @@ class ReembedOnAVaultWithNoVectors(unittest.TestCase):
         src = (SCRIPTS / "vault_index.py").read_text()
         reembed = src[src.index("def reembed"):]
         drop = reembed.index("DROP TABLE IF EXISTS embedding_meta")
-        init = reembed.index("_init_embed_tables")
+        # The call, not the comment above the DROPs that names the helper.
+        init = reembed.index("_init_embed_tables(c,")
         self.assertLess(drop, init,
                         "tables must be dropped before being recreated")
 

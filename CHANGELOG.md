@@ -2,6 +2,14 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-01 — v1.0.2 — `--reembed` works on a vault with no existing vectors
+
+**Migration:** none. **Breaking:** none.
+
+`vault_index.py --reembed` cleared `embedding_meta` with a `DELETE` before `_init_embed_tables` had created it, so the first invocation on a vault that never held vectors died with `no such table: embedding_meta`. That is precisely the path for turning embeddings **on** in an existing workspace — set `embedding_enabled: true`, then reembed — which is what the command exists for; the docstring's "use after swapping `embedding_model`" case happened to be the only one exercised. Both tables are now dropped and recreated.
+
+Found while enabling embeddings on two live workspaces. Note for anyone doing the same: `embedder._select_backend` deliberately re-pins `embedding_backend: "auto"` to sentence-transformers whenever `embedding_model` starts with `sentence-transformers/`, to preserve pre-v0.6 vector spaces — so moving a legacy workspace to fastembed means setting the backend explicitly, not just installing fastembed.
+
 ## 2026-08-01 — v1.0.1 — PDF extraction fidelity: kerning, unmapped glyphs, escalation
 
 Three bug fixes to PDF text extraction and the multimodal escalation triggers, found by measuring the extractors against rendered page images rather than reasoning about them.
