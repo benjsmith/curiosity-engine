@@ -2902,6 +2902,108 @@ def cmd_annotate_cross_table_conflicts(wiki_dir: Path,
     }, indent=2))
 
 
+_TABLE_INDEX_RE = re.compile(
+    r"\n*<!-- extracted-tables -->.*?<!-- /extracted-tables -->\n*",
+    re.DOTALL)
+
+
+def cmd_backfill_table_backlinks(wiki_dir: Path, dry_run: bool = False) -> None:
+    """List each source stub's extracted tables on the stub, as wikilinks.
+
+    `promote-extracted-tables` writes `Extracted from [[<stub>]]` on every
+    `[tab]` page — an *outbound* pointer. Nothing ever wrote the reverse,
+    so extracted tables are born unreachable: on a real 150-table wiki, 96
+    of them were orphans, 42% of the whole wiki. This is the same gap the
+    create-mode reciprocal-link step closes for new pages, showing up for
+    promoted ones.
+
+    Deterministic, so no reviewer is involved: a tab page's `extracted_from`
+    frontmatter names its stub exactly. The LINK proposer's judgement is for
+    relationships that have to be argued for; this one is a fact.
+
+    Idempotent — the block is comment-delimited and replaced wholesale, so
+    re-running after new tables are promoted refreshes it, and a stub whose
+    tables were deleted loses the section.
+    """
+    tables_dir = wiki_dir / "tables"
+    sources_dir = wiki_dir / "sources"
+    if not tables_dir.is_dir() or not sources_dir.is_dir():
+        print(json.dumps({"stubs_updated": 0,
+                          "note": "no tables/ or sources/ directory"}))
+        return
+
+    by_stub: dict = {}
+    orphan_tables = []
+    for page in sorted(tables_dir.glob("tab-*.md")):
+        try:
+            fm, _ = read_frontmatter(page.read_text())
+        except OSError:
+            continue
+        stub = str(fm.get("extracted_from", "") or "").strip()
+        if not stub:
+            orphan_tables.append(page.stem)
+            continue
+        title = str(fm.get("title", "") or "").strip().strip('"')
+        # Drop the `[tab] ` display prefix; the section header says it.
+        for prefix in ("[tab] ", "[tbl] "):
+            if title.startswith(prefix):
+                title = title[len(prefix):]
+        # Promote appends `— <stub>` to the display title. On the stub's own
+        # page that is the one thing the reader already knows, and it
+        # repeats on every line.
+        if stub and title.endswith(f"— {stub}"):
+            title = title[: -len(f"— {stub}")].rstrip(" —").rstrip()
+        by_stub.setdefault(stub, []).append((page.stem, title))
+
+    updated, cleared, missing_stubs = [], [], []
+    for stub, entries in sorted(by_stub.items()):
+        stub_path = sources_dir / f"{stub}.md"
+        if not stub_path.exists():
+            missing_stubs.append(stub)
+            continue
+        try:
+            text = stub_path.read_text()
+        except OSError:
+            continue
+        lines = ["<!-- extracted-tables -->",
+                 f"## Extracted tables ({len(entries)})", ""]
+        for stem, title in sorted(entries):
+            lines.append(f"- [[{stem}]]{f' — {title}' if title else ''}")
+        lines.append("<!-- /extracted-tables -->")
+        block = "\n".join(lines)
+
+        stripped = _TABLE_INDEX_RE.sub("\n\n", text)
+        new_text = stripped.rstrip("\n") + "\n\n" + block + "\n"
+        if new_text != text:
+            if not dry_run:
+                stub_path.write_text(new_text)
+            updated.append({"stub": stub, "tables": len(entries)})
+
+    # A stub that no longer has tables should lose its stale section.
+    for stub_path in sorted(sources_dir.glob("*.md")):
+        if stub_path.stem in by_stub:
+            continue
+        try:
+            text = stub_path.read_text()
+        except OSError:
+            continue
+        stripped = _TABLE_INDEX_RE.sub("\n\n", text)
+        if stripped != text:
+            if not dry_run:
+                stub_path.write_text(stripped.rstrip("\n") + "\n")
+            cleared.append(stub_path.stem)
+
+    print(json.dumps({
+        "stubs_updated": len(updated),
+        "stubs_cleared": len(cleared),
+        "tables_linked": sum(u["tables"] for u in updated),
+        "tables_without_extracted_from": orphan_tables,
+        "stubs_missing": missing_stubs,
+        "dry_run": dry_run,
+        "sample": updated[:8],
+    }, indent=2))
+
+
 def cmd_backfill_kept_as(wiki_dir: Path, dry_run: bool = False) -> None:
     """Add `kept_as:` to in-place extractions whose original sits in vault/.
 
@@ -5005,7 +5107,7 @@ def main():
         "pending-numeric-review", "apply-numeric-review",
         "classify-projects",
         "backfill-kept-as", "fix-citation-paths", "write-extracted-tables",
-        "annotate-cross-table-conflicts",
+        "annotate-cross-table-conflicts", "backfill-table-backlinks",
     ])
     ap.add_argument("--json-file", type=Path, default=None,
                     help="write-extracted-tables: path to the "
@@ -5155,6 +5257,9 @@ def main():
 
     elif args.command == "annotate-cross-table-conflicts":
         cmd_annotate_cross_table_conflicts(wiki_dir, dry_run=args.dry_run)
+
+    elif args.command == "backfill-table-backlinks":
+        cmd_backfill_table_backlinks(wiki_dir, dry_run=args.dry_run)
 
     elif args.command == "fix-citation-paths":
         cmd_fix_citation_paths(wiki_dir, dry_run=args.dry_run)

@@ -587,6 +587,96 @@ class CrossTableConflicts(unittest.TestCase):
             self.assertNotIn("cross-table-conflicts", a.read_text())
 
 
+class TableBacklinks(unittest.TestCase):
+    """`promote-extracted-tables` writes `Extracted from [[stub]]` on every
+    `[tab]` page — an *outbound* pointer — and nothing ever wrote the
+    reverse, so extracted tables are born unreachable. On a real 150-table
+    wiki, 96 were orphans: 42% of the whole thing. Same gap the create-mode
+    reciprocal-link step closes for new pages, showing up for promoted ones.
+    """
+
+    @contextmanager
+    def _ws(self, tabs, stubs=("src-a",)):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "wiki" / "tables").mkdir(parents=True)
+            (root / "wiki" / "sources").mkdir(parents=True)
+            for stub in stubs:
+                (root / "wiki" / "sources" / f"{stub}.md").write_text(
+                    f'---\ntitle: "[src] {stub}"\ntype: source\n---\n\nSummary.\n')
+            for stem, stub, title in tabs:
+                fm = f'---\ntitle: "{title}"\ntype: extracted-table\n'
+                if stub:
+                    fm += f"extracted_from: {stub}\n"
+                (root / "wiki" / "tables" / f"{stem}.md").write_text(
+                    fm + "---\n\n| a |\n|---|\n| 1 |\n")
+            yield root
+
+    def _run(self, root, dry_run=False):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            sweep.cmd_backfill_table_backlinks(root / "wiki", dry_run=dry_run)
+        return json.loads(buf.getvalue())
+
+    def test_stub_gains_a_link_to_each_of_its_tables(self):
+        with self._ws([("tab-a-t1", "src-a", "[tab] Table p.1 — src-a"),
+                       ("tab-a-t2", "src-a", "[tab] Table p.2 — src-a")]) as root:
+            got = self._run(root)
+            self.assertEqual(got["stubs_updated"], 1)
+            self.assertEqual(got["tables_linked"], 2)
+            stub = (root / "wiki" / "sources" / "src-a.md").read_text()
+            self.assertIn("[[tab-a-t1]]", stub)
+            self.assertIn("[[tab-a-t2]]", stub)
+
+    def test_stub_name_not_repeated_on_every_line(self):
+        """Promote appends `— <stub>` to the display title; on the stub's
+        own page that is the one thing the reader already knows."""
+        with self._ws([("tab-a-t1", "src-a", "[tab] Table p.1 — src-a")]) as root:
+            self._run(root)
+            stub = (root / "wiki" / "sources" / "src-a.md").read_text()
+            body = stub[stub.index("<!-- extracted-tables -->"):]
+            self.assertIn("Table p.1", body)
+            self.assertNotIn("— src-a", body)
+
+    def test_idempotent(self):
+        with self._ws([("tab-a-t1", "src-a", "[tab] T1")]) as root:
+            self._run(root)
+            first = (root / "wiki" / "sources" / "src-a.md").read_text()
+            again = self._run(root)
+            self.assertEqual(again["stubs_updated"], 0)
+            self.assertEqual((root / "wiki" / "sources" / "src-a.md").read_text(),
+                             first)
+            self.assertEqual(first.count("<!-- extracted-tables -->"), 1)
+
+    def test_section_clears_when_tables_are_gone(self):
+        with self._ws([("tab-a-t1", "src-a", "[tab] T1")]) as root:
+            self._run(root)
+            (root / "wiki" / "tables" / "tab-a-t1.md").unlink()
+            got = self._run(root)
+            self.assertEqual(got["stubs_cleared"], 1)
+            self.assertNotIn("extracted-tables",
+                             (root / "wiki" / "sources" / "src-a.md").read_text())
+
+    def test_table_without_extracted_from_is_reported(self):
+        with self._ws([("tab-orphan", "", "[tab] Orphan")]) as root:
+            got = self._run(root)
+            self.assertEqual(got["tables_without_extracted_from"], ["tab-orphan"])
+
+    def test_missing_stub_is_reported_not_created(self):
+        with self._ws([("tab-b-t1", "src-b", "[tab] T1")], stubs=("src-a",)) as root:
+            got = self._run(root)
+            self.assertEqual(got["stubs_missing"], ["src-b"])
+            self.assertFalse((root / "wiki" / "sources" / "src-b.md").exists())
+
+    def test_dry_run_writes_nothing(self):
+        with self._ws([("tab-a-t1", "src-a", "[tab] T1")]) as root:
+            before = (root / "wiki" / "sources" / "src-a.md").read_text()
+            got = self._run(root, dry_run=True)
+            self.assertEqual(got["stubs_updated"], 1)
+            self.assertEqual((root / "wiki" / "sources" / "src-a.md").read_text(),
+                             before)
+
+
 class MultimodalEscalationTriggers(unittest.TestCase):
     """Two ways a source that needs the multimodal reader failed to reach it.
 

@@ -2,6 +2,30 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-01 — v1.2.0 — table backlinks: extracted tables are no longer born orphans
+
+**Migration:** run `sweep.py backfill-table-backlinks wiki` once per workspace.
+**Breaking:** none.
+
+`promote-extracted-tables` writes `Extracted from [[<stub>]]` on every `[tab]`
+page — an *outbound* pointer — and nothing ever wrote the reverse. Extracted
+tables were therefore born unreachable: on a real 150-table wiki **96 of them
+were orphans, 42% of the entire wiki**, with no path to them from anywhere. It
+is the same gap the create-mode reciprocal-link step closes for new pages,
+surfacing for promoted ones.
+
+New **`sweep.py backfill-table-backlinks wiki [--dry-run]`** gives each source
+stub an `## Extracted tables` index linking every table extracted from it. No
+reviewer is involved and none should be: a tab page's `extracted_from`
+frontmatter names its stub exactly, so the relationship is a fact rather than a
+judgement, and the LINK proposer's budget is better spent on relationships that
+have to be argued for. Idempotent via a comment-delimited block; a stub whose
+tables were deleted loses the section.
+
+Measured on the workspace that surfaced it: orphans **96 → 0**, wikilinks 479 →
+629 (exactly one per table), citations unchanged at 251 so the ratchet is
+untouched.
+
 ## 2026-08-01 — v1.1.1 — setup.sh honours a config that already enables embeddings
 
 **Migration:** none. **Breaking:** none.
