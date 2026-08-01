@@ -2,6 +2,38 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-01 — v1.1.0 — cross-table conflict detection; frontmatter round-trip fix
+
+**Migration:** none — but run `sweep.py annotate-cross-table-conflicts wiki` once per workspace to surface existing conflicts, and refresh `.curator/prompts.md` from the template. **Breaking:** none.
+
+### CE could not notice when a source contradicts itself
+
+Numeric review compares *one table* against *one page image*. That is the right unit for catching transcription error, but a paper reporting different values for the same cell in two of its own tables passes review twice, cleanly, with no signal anywhere. The wiki then holds two contradictory numbers, both correctly transcribed, and a reader citing "the paper" picks one at random. Seven such pairs turned up across fifteen papers — every one caught by accident, because reviewers happened to be batched by source. A one-table-per-reviewer run would have caught none.
+
+**New `tables.py cross-table-conflicts [--source-stub X] [--cross-source]`** — mechanical, no LLM; everything needed was already in `.curator/tables.db`. It cross-joins each source's tables and reports cells where the same normalised row label and column header carry different values.
+
+**New `sweep.py annotate-cross-table-conflicts wiki [--dry-run]`** writes a short note **above the table** on *both* pages of each pair, naming the other table and both values. Placement is the point: recording these only in the review block below the data, or in `log.md`, puts them where nobody citing a number will look. Idempotent — the block is comment-delimited and replaced wholesale, and a pair that stops conflicting loses its note.
+
+**`planner.py pick-mode` gained a `cross-table-conflicts` rung** between `numeric-review` and `table-audit`. Bounded and self-draining: annotate once and the pair stops counting, so it cannot starve `create`.
+
+**Precision was the whole design problem, and the first two cuts failed it.** A naive implementation reported **366** conflicts on a real 150-table corpus. Three rules, each calibrated against that corpus, took it to **22 across exactly two table pairs**, both of which are genuine:
+
+- **Row labels must name an entity, not a magnitude.** Several papers put the parameter count in the first column and the model name in a data column, so keying on `11b` matched `T5-XXL` against `Flan-T5-XXL` at the same size and reported the two *names* as a conflict. That was essentially all of the 366.
+- **Both values must be numeric.** The detector is about disagreeing *measurements*; a differing model name is not a contradiction.
+- **The pair must agree somewhere.** Two tables that disagree on *every* shared key are not a source contradicting itself — they are two different quantities that happen to share a row label and a generic header like `0-shot`. Measured: every 0%-agreement pair was that shape (Chinchilla `16.6` vs `55.4`, from two different benchmarks), while every genuine self-contradiction agreed on part of its overlap and differed on the rest (6 of 18, 2 of 12). Requiring one agreement is what says "these tables are about the same thing".
+
+**Known limitation, stated plainly:** matching is exact on normalised label + header, and the entity must be a *row*. Two of the seven reported pairs are missed because the entity is a column header instead — `Chinchilla` is a row in LLaMA T9 but a column in T16, and SVAMP is a column in both CoT tables. Handling transposed tables would multiply false-positive risk, and no-false-alarms is what makes automatic annotation safe. A third (results-section prose vs an appendix table) is out of scope for a table-only detector.
+
+**Cross-source mode** (`--cross-source`) matches across `source_stub` boundaries and correctly surfaces the Mistral 7B / Mixtral disagreements. Advisory only, never auto-annotated: two papers measuring the same model under different harnesses legitimately differ.
+
+**Reviewer template** now asks for `cross_table_conflicts` when a reviewer holds more than one table from a source, with an example entry, and instructs that neither transcription be changed — the paper contradicting itself is a finding, not an error. SKILL.md now states that numeric-review reviewers **should be batched by source**, which is what makes that possible.
+
+### `apply-numeric-review`'s `wrong` path double-quoted frontmatter list values
+
+`read_frontmatter` stripped quotes from scalars but kept them on list items, while `_assemble_page` re-quotes on write — so each pass of the `wrong` path deepened the quoting: `["x"]` → `["\"x\""]` → and so on, cumulatively. Latent but real: `source_pages` feeds `pending-numeric-review`'s PNG path construction, so a re-review of a corrected page would look for `...-p"39".png` and find nothing — and a page that has been corrected is exactly the page most likely to be re-reviewed. It also silently broke consumers doing `name.endswith(".extracted.md")` against a quoted item.
+
+Fixed at the read side so the round-trip is an identity, with legacy nested values self-healing on parse. A test asserts write→read is stable across repeated application.
+
 ## 2026-08-01 — v1.0.3 — numeric-review corrections fail loudly; review queue ignores verb order
 
 Two silent-failure bugs from a full curate run over 15 PDF sources (150 extracted table pages, each numeric-reviewed against its source page image).

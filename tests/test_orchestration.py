@@ -45,7 +45,9 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "curiosity-engine" / 
 sys.path.insert(0, str(SCRIPTS))
 
 import planner  # noqa: E402
+import naming  # noqa: E402
 import sweep  # noqa: E402
+import tables as tables_mod  # noqa: E402
 
 
 def _summary(uncited=0, saturation=None, orphan=0.0, risks=None):
@@ -134,8 +136,9 @@ class WaveModeLadder(unittest.TestCase):
     def test_ladder_order_is_bounded_queues_first(self):
         self.assertEqual(
             planner.WAVE_MODE_LADDER,
-            ("numeric-review", "table-audit", "figure-extract",
-             "multimodal-table-extract", "create", "wire", "repair"))
+            ("numeric-review", "cross-table-conflicts", "table-audit",
+             "figure-extract", "multimodal-table-extract", "create",
+             "wire", "repair"))
         self.assertLess(planner.WAVE_MODE_LADDER.index("multimodal-table-extract"),
                         planner.WAVE_MODE_LADDER.index("create"),
                         "create above a bounded queue starves it forever")
@@ -327,6 +330,48 @@ class NumericReviewCorrections(unittest.TestCase):
         self.assertTrue(problems)
 
 
+class FrontmatterListRoundTrip(unittest.TestCase):
+    """`read_frontmatter` stripped quotes from scalars but kept them on list
+    items, while `_assemble_page` re-quotes on write. So every pass of
+    `apply-numeric-review`'s `wrong` path deepened the quoting:
+    `["x"]` -> `["\\"x\\""]` -> ... Latent but real — `source_pages` feeds
+    `pending-numeric-review`'s PNG path construction, so a re-review of a
+    corrected page would look for `...-p"39".png` and find nothing. A page
+    that has been corrected is exactly the page most likely to be
+    re-reviewed.
+    """
+
+    def test_scalar_and_list_quoting_are_symmetric(self):
+        fm, _ = naming.read_frontmatter(
+            '---\ntitle: "[tab] X"\nsources: ["a.md"]\nsource_pages: ["39"]\n---\nx')
+        self.assertEqual(fm["title"], "[tab] X")
+        self.assertEqual(fm["sources"], ["a.md"])
+        self.assertEqual(fm["source_pages"], ["39"])
+
+    def test_unquoted_lists_unchanged(self):
+        fm, _ = naming.read_frontmatter(
+            "---\nsources: [a.md, b.md]\nsource_pages: [39]\n---\nx")
+        self.assertEqual(fm["sources"], ["a.md", "b.md"])
+        self.assertEqual(fm["source_pages"], ["39"])
+
+    def test_legacy_nested_quoting_self_heals(self):
+        fm, _ = naming.read_frontmatter(
+            '---\nsources: ["\\"a.md\\""]\nsource_pages: ["\\"39\\""]\n---\nx')
+        self.assertEqual(fm["sources"], ["a.md"])
+        self.assertEqual(fm["source_pages"], ["39"])
+
+    def test_assemble_read_is_an_identity(self):
+        """The property that was violated: write then read must give back
+        what was written, however many times it is applied."""
+        fm = {"sources": ["a.md"], "source_pages": ["39"], "row_count": "3"}
+        text = fm
+        for _ in range(3):
+            page = sweep._assemble_page(dict(text), "\n\nbody\n")
+            text, _ = naming.read_frontmatter(page)
+        self.assertEqual(text["sources"], ["a.md"])
+        self.assertEqual(text["source_pages"], ["39"])
+
+
 class NumericReviewQueueIgnoresVerbOrder(unittest.TestCase):
     """`promote-extracted-tables` copies `extraction_method` onto each page
     at mint time, and `mark-multimodal-extracted` is what sets it to
@@ -376,6 +421,170 @@ class NumericReviewQueueIgnoresVerbOrder(unittest.TestCase):
                               "numeric_review_done: 2026-08-01T00:00:00Z"),
                 src_fm="multimodal_extracted: 2026-08-01T00:00:00Z")
             self.assertEqual(got["count"], 0)
+
+
+class CrossTableConflicts(unittest.TestCase):
+    """Numeric review compares one table against one page image, so a paper
+    reporting different values for the same cell in two of its own tables
+    passes review twice, cleanly, with no signal anywhere. The wiki then
+    holds two contradictory numbers, both correctly transcribed, and a
+    reader citing "the paper" picks one at random. Seven such pairs turned
+    up across fifteen papers, every one caught by accident.
+
+    Precision is the whole design constraint — a detector that cries wolf
+    cannot be allowed to auto-annotate pages. The first cut reported 366
+    conflicts on a real corpus; the rules below took it to 22 across
+    exactly the pairs that were real.
+    """
+
+    @contextmanager
+    def _db(self, rows):
+        """rows: [(table_stem, source_stub, headers, row_idx, cells)]"""
+        import sqlite3
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".curator").mkdir()
+            (root / "wiki" / "tables").mkdir(parents=True)
+            db = root / ".curator" / "tables.db"
+            conn = sqlite3.connect(str(db))
+            conn.execute("""CREATE TABLE _extracted_tables (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, table_stem TEXT NOT NULL,
+                source_stub TEXT, source_extraction TEXT NOT NULL,
+                headers_json TEXT NOT NULL, row_idx INTEGER NOT NULL,
+                cells_json TEXT NOT NULL, extraction_sha TEXT NOT NULL)""")
+            for stem, stub, headers, ri, cells in rows:
+                conn.execute(
+                    "INSERT INTO _extracted_tables (table_stem, source_stub, "
+                    "source_extraction, headers_json, row_idx, cells_json, "
+                    "extraction_sha) VALUES (?,?,?,?,?,?,?)",
+                    (stem, stub, "x.extracted.md", json.dumps(headers), ri,
+                     json.dumps(cells), "sha"))
+            conn.commit()
+            yield root, conn
+            conn.close()
+
+    HEADERS = ["Model", "HumanEval", "MBPP"]
+
+    def _pair(self, b_rows, stub_b="src"):
+        return ([("tab-t1", "src", self.HEADERS, 1, ["Code Llama", "32.3", "46.2"]),
+                 ("tab-t1", "src", self.HEADERS, 2, ["Llama 2", "12.2", "20.8"])]
+                + [("tab-t2", stub_b, self.HEADERS, i, r)
+                   for i, r in enumerate(b_rows, 1)])
+
+    def test_partial_disagreement_is_reported(self):
+        """The real signature: the tables agree on some cells and differ on
+        others, which is what says they are about the same thing."""
+        rows = self._pair([["Code Llama", "33.5", "41.4"],
+                           ["Llama 2", "12.2", "20.8"]])
+        with self._db(rows) as (_root, conn):
+            got = tables_mod.cross_table_conflicts(conn)
+        self.assertEqual(len(got), 2)
+        self.assertEqual({c["column"] for c in got}, {"humaneval", "mbpp"})
+        self.assertEqual(got[0]["row_label"], "code llama")
+
+    def test_total_disagreement_is_not_a_conflict(self):
+        """Two tables differing on EVERY shared key are two different
+        quantities sharing a row label and a generic header, not a source
+        contradicting itself. Measured: every 0%-agreement pair on a real
+        corpus was that shape (Chinchilla 16.6 vs 55.4 on `0-shot`)."""
+        rows = self._pair([["Code Llama", "99.9", "88.8"],
+                           ["Llama 2", "77.7", "66.6"]])
+        with self._db(rows) as (_root, conn):
+            self.assertEqual(tables_mod.cross_table_conflicts(conn), [])
+
+    def test_size_only_row_labels_are_ignored(self):
+        """Several papers put the parameter count first and the model name
+        in a data column; keying on `11b` matched T5-XXL against
+        Flan-T5-XXL at the same size and called it a conflict."""
+        for label in ("11b", "250M", "3B", "1.5b", "540b"):
+            self.assertFalse(tables_mod._is_usable_row_label(label.casefold()),
+                              f"{label} should not be a row key")
+        for label in ("code llama", "chinchilla", "llama 2 70b"):
+            self.assertTrue(tables_mod._is_usable_row_label(label))
+
+    def test_non_numeric_cells_are_not_compared(self):
+        """A differing model name is not a disagreeing measurement."""
+        headers = ["Size", "Model"]
+        rows = [("t1", "src", headers, 1, ["Large", "T5-XXL"]),
+                ("t2", "src", headers, 1, ["Large", "Flan-T5-XXL"])]
+        with self._db(rows) as (_root, conn):
+            self.assertEqual(tables_mod.cross_table_conflicts(conn), [])
+
+    def test_cross_source_pairs_excluded_by_default(self):
+        rows = self._pair([["Code Llama", "33.5", "41.4"],
+                           ["Llama 2", "12.2", "20.8"]], stub_b="other-src")
+        with self._db(rows) as (_root, conn):
+            self.assertEqual(tables_mod.cross_table_conflicts(conn), [])
+
+    def test_cross_source_mode_reports_only_cross_source(self):
+        rows = self._pair([["Code Llama", "33.5", "41.4"],
+                           ["Llama 2", "12.2", "20.8"]], stub_b="other-src")
+        with self._db(rows) as (_root, conn):
+            got = tables_mod.cross_table_conflicts(conn, cross_source=True)
+        self.assertEqual(len(got), 2)
+        self.assertTrue(all(not c["same_source"] for c in got))
+
+    def _annotate(self, root):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            sweep.cmd_annotate_cross_table_conflicts(root / "wiki")
+        return json.loads(buf.getvalue())
+
+    def _page(self, root, stem):
+        p = root / "wiki" / "tables" / f"{stem}.md"
+        p.write_text(f"---\ntitle: \"[tab] {stem}\"\ntype: extracted-table\n"
+                      f"---\n\nFraming prose.\n\n"
+                      f"| Model | HumanEval | MBPP |\n|---|---|---|\n"
+                      f"| Code Llama | 32.3 | 46.2 |\n")
+        return p
+
+    def test_annotation_lands_above_the_table_on_both_pages(self):
+        """Recording these only below the data, or in log.md, puts them
+        where nobody citing a number will look."""
+        rows = self._pair([["Code Llama", "33.5", "41.4"],
+                           ["Llama 2", "12.2", "20.8"]])
+        with self._db(rows) as (root, _conn):
+            a, b = self._page(root, "tab-t1"), self._page(root, "tab-t2")
+            got = self._annotate(root)
+            self.assertEqual(got["pages_annotated"], 2)
+            for p in (a, b):
+                text = p.read_text()
+                self.assertIn("<!-- cross-table-conflicts -->", text)
+                self.assertLess(text.index("cross-table-conflicts"),
+                                text.index("| Model |"),
+                                "note must sit above the table")
+            self.assertIn("[[tab-t2]]", a.read_text())
+            self.assertIn("[[tab-t1]]", b.read_text())
+
+    def test_annotation_is_idempotent(self):
+        rows = self._pair([["Code Llama", "33.5", "41.4"],
+                           ["Llama 2", "12.2", "20.8"]])
+        with self._db(rows) as (root, _conn):
+            a = self._page(root, "tab-t1")
+            self._page(root, "tab-t2")
+            self._annotate(root)
+            first = a.read_text()
+            again = self._annotate(root)
+            self.assertEqual(again["pages_annotated"], 0)
+            self.assertEqual(a.read_text(), first)
+            self.assertEqual(first.count("<!-- cross-table-conflicts -->"), 1)
+
+    def test_resolved_conflict_clears_its_note(self):
+        rows = self._pair([["Code Llama", "33.5", "41.4"],
+                           ["Llama 2", "12.2", "20.8"]])
+        with self._db(rows) as (root, conn):
+            a = self._page(root, "tab-t1")
+            self._page(root, "tab-t2")
+            self._annotate(root)
+            self.assertIn("cross-table-conflicts", a.read_text())
+            # Resolve the disagreement in the row store.
+            conn.execute("UPDATE _extracted_tables SET cells_json = ? "
+                          "WHERE table_stem='tab-t2' AND row_idx=1",
+                          (json.dumps(["Code Llama", "32.3", "46.2"]),))
+            conn.commit()
+            got = self._annotate(root)
+            self.assertEqual(got["pages_cleared"], 2)
+            self.assertNotIn("cross-table-conflicts", a.read_text())
 
 
 class MultimodalEscalationTriggers(unittest.TestCase):

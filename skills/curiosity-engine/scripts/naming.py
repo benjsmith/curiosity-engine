@@ -96,6 +96,21 @@ _VOCAB_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
 _MIN_JOIN_LEN = 4
 
 
+def _unquote(value: str) -> str:
+    """Strip one layer of matching surrounding quotes, repeatedly.
+
+    Repeatedly, because a value may already carry nested quoting written
+    by an earlier round-trip through a re-quoting writer; one pass would
+    leave `"\\"39\\""` as `\\"39\\"`.
+    """
+    out = value.strip()
+    while len(out) >= 2 and out[0] == out[-1] and out[0] in "\"'":
+        inner = out[1:-1]
+        # Unescape the layer we just removed, so `\"39\"` becomes `"39"`.
+        out = inner.replace('\\"', '"').replace("\\'", "'").strip()
+    return out
+
+
 def repair_letter_spacing(text: str) -> str:
     """Rejoin intra-word spaces pypdf introduced on letter-spaced text.
 
@@ -373,7 +388,16 @@ def read_frontmatter(text: str) -> tuple:
                 i = j
                 continue
         if v.startswith("[") and v.endswith("]"):
-            fm[key] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
+            # Strip quotes from list items exactly as the scalar branch
+            # below does. Keeping them made the parse asymmetric — a scalar
+            # `"x"` read back as `x` while a list `["x"]` read back as
+            # `'"x"'` — so any writer that re-quotes on output (see
+            # `sweep._assemble_page`) deepened the quoting on every
+            # round-trip: `["x"]` -> `["\"x\""]` -> `["\"\\\"x\\\"\""]`.
+            # It also silently broke consumers doing
+            # `name.endswith(".extracted.md")` against a quoted item.
+            fm[key] = [_unquote(x.strip()) for x in v[1:-1].split(",")
+                       if x.strip()]
         elif (v.startswith('"') and v.endswith('"')) or \
              (v.startswith("'") and v.endswith("'")):
             fm[key] = v[1:-1]

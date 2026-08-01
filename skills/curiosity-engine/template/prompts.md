@@ -653,10 +653,27 @@ the proposal call. Receives the proposal list and judges each candidate.
 >    than the one you meant. You already know the row's name; you quote it
 >    in `reason`.
 >
+> 7. **Cross-table conflicts.** If a value here disagrees with one you have
+>    already seen in another table from this *same paper*, for the same
+>    model and metric, report it under `cross_table_conflicts` with both
+>    values and both table identifiers. Do **not** change either
+>    transcription — the paper contradicting itself is a finding, not an
+>    error. Say why if you can tell (single seed vs 5-seed mean, results
+>    section vs appendix); that explanation is the part a mechanical
+>    detector cannot supply.
+>
 > Return exactly one JSON object (no prose, no markdown fences):
 > ```
 > {"page": "<TAB_PAGE_PATH>",
 >  "verdict": "ok" | "suspect" | "wrong",
+>  "cross_table_conflicts": [{
+>    "row_label": "Llama 2 70B",
+>    "column": "MBPP pass@100",
+>    "this_table": "83.1",
+>    "other_table": "85.5",
+>    "other_table_id": "tab-roziere-2023-code-llama-open-t10",
+>    "note": "T2 reports single-run; T10 appears to be a different eval setup"
+>  }],
 >  "flagged_cells": [{
 >    "row_idx": 2,
 >    "row_label": "HEPES",

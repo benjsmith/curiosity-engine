@@ -104,6 +104,7 @@ GLOBAL_MODES = {"wire"}
 # and the next wave reviews it.
 WAVE_MODE_LADDER = (
     "numeric-review",
+    "cross-table-conflicts",
     "table-audit",
     "figure-extract",
     "multimodal-table-extract",
@@ -154,6 +155,51 @@ def _sweep_json(command: str, wiki_dir: Path) -> dict:
         return {}
 
 
+def _unannotated_conflicts(wiki_dir: Path) -> int:
+    """Cross-table conflicts not yet noted on their pages.
+
+    Self-draining: `sweep.py annotate-cross-table-conflicts` writes a
+    delimited block on both pages of each pair, and an annotated pair stops
+    counting — so this is a bounded queue and cannot starve `create`.
+    """
+    import contextlib
+    import io
+    import sqlite3
+
+    db = wiki_dir.parent / ".curator" / "tables.db"
+    if not db.exists():
+        return 0
+    try:
+        import tables as _tables
+    except ImportError:
+        return 0
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return 0
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            conflicts = _tables.cross_table_conflicts(conn)
+    except Exception:
+        conflicts = []
+    finally:
+        conn.close()
+    if not conflicts:
+        return 0
+    tables_dir = wiki_dir / "tables"
+    pending = 0
+    for c in conflicts:
+        for stem in (c["table_a"], c["table_b"]):
+            page = tables_dir / f"{stem}.md"
+            try:
+                if "<!-- cross-table-conflicts -->" not in page.read_text():
+                    pending += 1
+                    break
+            except OSError:
+                continue
+    return pending
+
+
 def _queue_len(payload: dict) -> int:
     """Queue depth from a sweep payload, whatever it calls its list."""
     if not isinstance(payload, dict):
@@ -201,6 +247,7 @@ def pick_mode(summary: dict, wiki_dir: Path) -> dict:
 
     queue_depths = {
         "numeric_review": _queue_len(numeric),
+        "cross_table_conflicts": _unannotated_conflicts(wiki_dir),
         "table_audit_at_risk": len(at_risk),
         "figure_candidates_ready": len(fig_ready),
         "multimodal_table_candidates": _queue_len(multimodal),
@@ -218,6 +265,11 @@ def pick_mode(summary: dict, wiki_dir: Path) -> dict:
             f"{queue_depths['numeric_review']} [tab] page(s) awaiting numeric "
             "review — unverified rows are a correctness debt and "
             "extracted-query already refuses to serve them")
+    elif queue_depths["cross_table_conflicts"]:
+        mode, reason = "cross-table-conflicts", (
+            f"{queue_depths['cross_table_conflicts']} table pair(s) where the "
+            "source contradicts itself and neither page says so — run "
+            "`sweep.py annotate-cross-table-conflicts wiki`")
     elif at_risk:
         mode, reason = "table-audit", (
             f"{len(at_risk)} table(s) with citation risk > 0.5")

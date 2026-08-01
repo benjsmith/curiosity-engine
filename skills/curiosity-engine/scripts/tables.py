@@ -1294,6 +1294,175 @@ def _restore_page_body(page_path: Path, headers: list,
     return True
 
 
+def _conflict_norm(value) -> str:
+    """Normalise a row label / header / cell for exact-match comparison."""
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
+# A row label that is only a magnitude — `11b`, `250m`, `3b`, `540b` — does
+# not identify anything. Several papers put the parameter count in the first
+# column and the model name in a data column, so keying on it matched
+# `T5-XXL` against `Flan-T5-XXL` at the same size and reported the two model
+# names as a "conflict". 366 hits on a real corpus, essentially all of that
+# shape. The label must name a thing, not a size.
+_SIZE_ONLY_LABEL_RE = re.compile(r"^[\d.,]+\s*[bmkgt]?$", re.IGNORECASE)
+# The detector is about disagreeing *measurements*. Two tables listing
+# different model names under the same key is not a contradiction, so both
+# sides must parse as numbers before a difference means anything.
+_NUMERIC_CELL_RE = re.compile(r"^[<>~±]?\s*[-+]?[\d.,]+\s*%?$")
+
+
+def _is_numeric_cell(value: str) -> bool:
+    return bool(_NUMERIC_CELL_RE.match(str(value or "").strip()))
+
+
+def _is_usable_row_label(label: str) -> bool:
+    """Row labels must identify an entity, not a magnitude or a blank."""
+    if len(label) < 2:
+        return False
+    if _SIZE_ONLY_LABEL_RE.match(label):
+        return False
+    return any(ch.isalpha() for ch in label)
+
+
+def _table_cell_index(conn, source_stub: Optional[str] = None,
+                       all_sources: bool = False) -> dict:
+    """Map table_stem -> {(row_label, header): (value, row_idx)}.
+
+    The first column is treated as the row label — that is how these
+    tables are built (`promote-extracted-tables` renders the label column
+    first), and it is what a reader keys on when citing a number.
+    """
+    sql = ("SELECT table_stem, source_stub, headers_json, row_idx, cells_json "
+           "FROM _extracted_tables")
+    params: List = []
+    if source_stub and not all_sources:
+        sql += " WHERE source_stub = ?"
+        params.append(source_stub)
+    sql += " ORDER BY table_stem, row_idx"
+
+    index: dict = {}
+    stub_of: dict = {}
+    for stem, stub, headers_json, row_idx, cells_json in conn.execute(sql, params):
+        try:
+            headers = json.loads(headers_json) if headers_json else []
+            cells = json.loads(cells_json) if cells_json else []
+        except json.JSONDecodeError:
+            continue
+        if not headers or not cells:
+            continue
+        stub_of[stem] = stub
+        label = _conflict_norm(cells[0])
+        if not _is_usable_row_label(label):
+            continue
+        cellmap = index.setdefault(stem, {})
+        # Skip the label column itself; compare data columns only, and only
+        # numeric ones — a differing model name is not a contradiction.
+        for ci in range(1, min(len(headers), len(cells))):
+            header = _conflict_norm(headers[ci])
+            value = str(cells[ci] or "").strip()
+            if not header or not value or not _is_numeric_cell(value):
+                continue
+            cellmap.setdefault((label, header), (value, row_idx))
+    return index, stub_of
+
+
+def cross_table_conflicts(conn, source_stub: Optional[str] = None,
+                           cross_source: bool = False) -> list:
+    """Find cells two tables disagree on for the same row label + header.
+
+    Numeric review compares **one table against one page image**, which is
+    the right unit for catching transcription error but blind to a paper
+    that reports different values for the same cell in two of its own
+    tables. Both transcriptions pass review cleanly, the wiki holds two
+    contradictory numbers, and a reader citing "the paper" picks one at
+    random. Seven such pairs turned up across fifteen papers, every one
+    caught by accident.
+
+    Matching is deliberately **exact on normalised label + header** —
+    whitespace collapsed, case-folded, nothing else. That misses near
+    misses like `Llama-v2 70B` vs `Llama 2 70B`, which is the right trade:
+    a detector that cries wolf would not survive contact with a real wiki,
+    and no-false-alarms is what makes it safe to annotate pages
+    automatically.
+    """
+    index, stub_of = _table_cell_index(conn, source_stub,
+                                        all_sources=cross_source)
+    stems = sorted(index)
+    conflicts = []
+    for i, a in enumerate(stems):
+        for b in stems[i + 1:]:
+            same_source = stub_of.get(a) == stub_of.get(b)
+            if cross_source:
+                # Cross-source mode reports ONLY the cross-source pairs;
+                # same-source ones are the default mode's job.
+                if same_source:
+                    continue
+            elif not same_source:
+                continue
+            shared = index[a].keys() & index[b].keys()
+            if not shared:
+                continue
+            differing = [k for k in sorted(shared)
+                         if _conflict_norm(index[a][k][0])
+                         != _conflict_norm(index[b][k][0])]
+            # Two tables that disagree on EVERY shared key are not a source
+            # contradicting itself — they are two different quantities that
+            # happen to share a row label and a generic column header
+            # (`0-shot`, `average`). Measured on a real corpus: every
+            # 0%-agreement pair was that shape (Chinchilla 16.6 vs 55.4 on
+            # `0-shot`, from two different benchmarks), while every genuine
+            # self-contradiction agreed on part of its overlap and differed
+            # on the rest (6 of 18, 2 of 12). Requiring at least one
+            # agreement is what says "these tables are about the same thing".
+            if len(differing) == len(shared):
+                continue
+            for key in differing:
+                va, ra = index[a][key]
+                vb, rb = index[b][key]
+                conflicts.append({
+                    "row_label": key[0],
+                    "column": key[1],
+                    "table_a": a, "value_a": va, "row_idx_a": ra,
+                    "table_b": b, "value_b": vb, "row_idx_b": rb,
+                    "source_stub_a": stub_of.get(a),
+                    "source_stub_b": stub_of.get(b),
+                    "same_source": same_source,
+                })
+    return conflicts
+
+
+def cmd_cross_table_conflicts(source_stub: Optional[str],
+                                cross_source: bool = False) -> int:
+    """Report cells where two extracted tables disagree."""
+    if not DB_PATH.exists():
+        print(json.dumps({"conflicts": [], "count": 0,
+                          "note": "no .curator/tables.db"}))
+        return 0
+    conn = _connect()
+    if not _ensure_extracted_table(conn):
+        conn.close()
+        print(json.dumps({"conflicts": [], "count": 0,
+                          "note": "_extracted_tables not present"}))
+        return 0
+    conflicts = cross_table_conflicts(conn, source_stub, cross_source)
+    conn.close()
+    out = {
+        "conflicts": conflicts,
+        "count": len(conflicts),
+        "mode": "cross-source (advisory)" if cross_source else "within-source",
+    }
+    if cross_source:
+        out["note"] = (
+            "Advisory only — two papers measuring the same model under "
+            "different harnesses legitimately disagree. Surface to a human; "
+            "do not annotate pages from this.")
+    else:
+        out["next"] = ("sweep.py annotate-cross-table-conflicts wiki")
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 def cmd_extracted_list(source_stub: Optional[str]) -> int:
     """List all extracted tables (one entry per `table_stem`).
 
@@ -1409,6 +1578,17 @@ def main() -> int:
     p_el.add_argument("--source-stub", default=None,
                        help="filter to tables from a specific source-stub stem")
 
+    p_ctc = sub.add_parser(
+        "cross-table-conflicts",
+        help="cells two extracted tables disagree on (same row label + column)")
+    p_ctc.add_argument("--source-stub", default=None,
+                        help="restrict to one source's tables")
+    p_ctc.add_argument("--cross-source", action="store_true",
+                        help="compare ACROSS sources instead of within them. "
+                             "Advisory only: two papers measuring the same "
+                             "model under different harnesses legitimately "
+                             "disagree, so never auto-annotate from this.")
+
     p_lb = sub.add_parser("list-backups",
                             help="list available row backups for tab-* pages")
     p_lb.add_argument("--table-stem", default=None,
@@ -1449,6 +1629,8 @@ def main() -> int:
                                      wiki_dir=Path(args.wiki))
     if args.cmd == "extracted-list":
         return cmd_extracted_list(args.source_stub)
+    if args.cmd == "cross-table-conflicts":
+        return cmd_cross_table_conflicts(args.source_stub, args.cross_source)
     if args.cmd == "list-backups":
         return cmd_list_backups(args.table_stem)
     if args.cmd == "restore-backup":

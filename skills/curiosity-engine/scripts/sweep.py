@@ -2776,6 +2776,132 @@ def cmd_fix_citation_paths(wiki_dir: Path, dry_run: bool = False) -> None:
     }, indent=2))
 
 
+_CONFLICT_BLOCK_RE = re.compile(
+    r"\n*<!-- cross-table-conflicts -->.*?<!-- /cross-table-conflicts -->\n*",
+    re.DOTALL)
+
+
+def _render_conflict_block(entries: list) -> str:
+    """A short note naming the other table and both values, per conflict."""
+    lines = ["<!-- cross-table-conflicts -->",
+             "> **This source reports conflicting values for "
+             f"{'this cell' if len(entries) == 1 else 'these cells'} "
+             "in more than one of its own tables.** Both transcriptions were "
+             "verified against the source page; the disagreement is the "
+             "paper's, not a transcription error. Check the source before "
+             "citing either number.",
+             ">"]
+    for e in sorted(entries, key=lambda x: (x["row_label"], x["column"])):
+        lines.append(
+            f"> - `{e['row_label']}` / `{e['column']}`: **{e['value_here']}** "
+            f"here, **{e['value_there']}** in [[{e['other_table']}]]")
+    lines.append("<!-- /cross-table-conflicts -->")
+    return "\n".join(lines)
+
+
+def cmd_annotate_cross_table_conflicts(wiki_dir: Path,
+                                        dry_run: bool = False) -> None:
+    """Note cross-table disagreements on both `[tab]` pages of each pair.
+
+    Numeric review compares one table against one page image, so a paper
+    that reports different values for the same cell in two of its own
+    tables passes review twice, cleanly, with no signal anywhere — the wiki
+    then holds two contradictory numbers, both correctly transcribed, and a
+    reader citing "the paper" picks one at random. Seven such pairs turned
+    up across fifteen papers, every one caught by accident.
+
+    The note goes **above** the table, not in the review block below it:
+    recording these only below the data (or in `log.md`) puts them where
+    nobody citing a number will look.
+
+    Idempotent — the block is delimited by HTML comments and replaced
+    wholesale, so re-running after new conflicts appear refreshes it and a
+    pair that is no longer in conflict loses its note.
+    """
+    import sqlite3 as _sqlite3
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tables as _tables
+    except ImportError as e:
+        print(json.dumps({"ok": False, "error": f"cannot import tables.py: {e}"}))
+        return
+
+    db = curator_dir(wiki_dir) / "tables.db"
+    if not db.exists():
+        print(json.dumps({"annotated": 0, "note": "no .curator/tables.db"}))
+        return
+    try:
+        conn = _sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except _sqlite3.Error as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        return
+    try:
+        conflicts = _tables.cross_table_conflicts(conn)
+    except Exception as e:
+        conn.close()
+        print(json.dumps({"ok": False, "error": f"detector failed: {e}"}))
+        return
+    conn.close()
+
+    # Group per page, recording the value on THIS page and the other's.
+    per_page: dict = {}
+    for c in conflicts:
+        per_page.setdefault(c["table_a"], []).append({
+            "row_label": c["row_label"], "column": c["column"],
+            "value_here": c["value_a"], "value_there": c["value_b"],
+            "other_table": c["table_b"]})
+        per_page.setdefault(c["table_b"], []).append({
+            "row_label": c["row_label"], "column": c["column"],
+            "value_here": c["value_b"], "value_there": c["value_a"],
+            "other_table": c["table_a"]})
+
+    tables_dir = wiki_dir / "tables"
+    annotated, cleared, missing = [], [], []
+    for page in sorted(tables_dir.glob("tab-*.md")) if tables_dir.is_dir() else []:
+        stem = page.stem
+        try:
+            text = page.read_text()
+        except OSError:
+            continue
+        head, body = "", text
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end != -1:
+                head, body = text[:end + 4], text[end + 4:]
+        stripped = _CONFLICT_BLOCK_RE.sub("\n\n", body)
+        entries = per_page.get(stem)
+        if entries:
+            block = _render_conflict_block(entries)
+            # Above the table: insert before the first GFM row.
+            m = re.search(r"^\|", stripped, re.MULTILINE)
+            if m:
+                new_body = (stripped[:m.start()].rstrip("\n") + "\n\n"
+                            + block + "\n\n" + stripped[m.start():])
+            else:
+                new_body = stripped.rstrip("\n") + "\n\n" + block + "\n"
+            if new_body != body:
+                if not dry_run:
+                    page.write_text(head + new_body)
+                annotated.append({"page": stem, "conflicts": len(entries)})
+        elif stripped != body:
+            if not dry_run:
+                page.write_text(head + stripped)
+            cleared.append(stem)
+
+    for stem in sorted(per_page):
+        if not (tables_dir / f"{stem}.md").exists():
+            missing.append(stem)
+
+    print(json.dumps({
+        "conflicts": len(conflicts),
+        "pages_annotated": len(annotated),
+        "pages_cleared": len(cleared),
+        "pages_missing": missing,
+        "dry_run": dry_run,
+        "sample": annotated[:10],
+    }, indent=2))
+
+
 def cmd_backfill_kept_as(wiki_dir: Path, dry_run: bool = False) -> None:
     """Add `kept_as:` to in-place extractions whose original sits in vault/.
 
@@ -4879,6 +5005,7 @@ def main():
         "pending-numeric-review", "apply-numeric-review",
         "classify-projects",
         "backfill-kept-as", "fix-citation-paths", "write-extracted-tables",
+        "annotate-cross-table-conflicts",
     ])
     ap.add_argument("--json-file", type=Path, default=None,
                     help="write-extracted-tables: path to the "
@@ -5025,6 +5152,9 @@ def main():
 
     elif args.command == "backfill-kept-as":
         cmd_backfill_kept_as(wiki_dir, dry_run=args.dry_run)
+
+    elif args.command == "annotate-cross-table-conflicts":
+        cmd_annotate_cross_table_conflicts(wiki_dir, dry_run=args.dry_run)
 
     elif args.command == "fix-citation-paths":
         cmd_fix_citation_paths(wiki_dir, dry_run=args.dry_run)
