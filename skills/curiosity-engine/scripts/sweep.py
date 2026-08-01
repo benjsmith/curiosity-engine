@@ -3558,8 +3558,10 @@ def cmd_mark_multimodal_extracted(extraction_path: Path,
 
     Mirrors `figures.py mark-extracted` for the table-extraction
     pipeline. Writes (or updates) the following frontmatter fields:
-    `multimodal_extracted: <ISO>`, `multimodal_recommended: false`,
-    `extraction_method: multimodal-sonnet`, `extraction_quality: good`.
+    `multimodal_extracted: <ISO>`, `extraction_method: multimodal-sonnet`,
+    `extraction_quality: good`, and `multimodal_recommended` recomputed
+    from any reason the table pass did NOT address (`has_math`,
+    `cid_glyphs`) rather than blanket-cleared.
     Idempotent — replaces existing values for these keys, doesn't
     duplicate. Preserves the FETCHED CONTENT block verbatim.
     """
@@ -3583,9 +3585,24 @@ def cmd_mark_multimodal_extracted(extraction_path: Path,
     ts = timestamp or datetime.datetime.now(
         datetime.timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # `multimodal_recommended` is set at ingest from
+    # `has_math OR (has_tables AND tables_extracted == 0) OR cid_glyphs`,
+    # so it can stand for more than one unmet need. This verb marks the
+    # TABLE pass done — clearing the flag outright also discards an
+    # outstanding math or unmapped-glyph reason that no table pass
+    # addressed. Observed: a paper with `has_math: true` and demonstrably
+    # mangled equations read `multimodal_recommended: false` after its
+    # table pass, so its equations could never be revisited. Recompute
+    # from the reasons that remain instead of blanket-clearing.
+    prior, _ = read_frontmatter(text)
+    still_recommended = (
+        str(prior.get("has_math", "")).lower() == "true"
+        or int(prior.get("cid_glyphs", 0) or 0) > 0
+    )
     updates = {
         "multimodal_extracted": ts,
-        "multimodal_recommended": "false",
+        "multimodal_recommended": "true" if still_recommended else "false",
         "extraction_method": "multimodal-sonnet",
         "extraction_quality": "good",
     }

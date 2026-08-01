@@ -238,6 +238,81 @@ class EvolveGuardStaleSnapshot(unittest.TestCase):
         self.assertIn("DRIFT", out.stdout)
 
 
+class MultimodalEscalationTriggers(unittest.TestCase):
+    """Two ways a source that needs the multimodal reader failed to reach it.
+
+    `(cid:NN)` is what PDF extraction emits when a font carries no usable
+    ToUnicode mapping: the glyph rendered, but its identity is unknown. The
+    tokens are printable and word-shaped, so the sanity check waves them
+    through — three papers in a real 25-source vault were 8.8%, 26.1% and
+    41.4% cid glyphs while marked `extraction_quality: good`, with
+    thousands of unreadable tokens in the FTS5-indexed citation target.
+
+    Separately, `multimodal_recommended` is set from several reasons at
+    once, and `mark-multimodal-extracted` blanket-cleared it — so a paper
+    with `has_math: true` and mangled equations read `false` after its
+    *table* pass, and its equations could never be revisited.
+    """
+
+    def test_cid_damage_measured_as_token_fraction(self):
+        import local_ingest
+        clean = "ordinary prose with no glyph problems at all here"
+        self.assertEqual(local_ingest._cid_damage(clean), (0, 0.0))
+        dirty = "word (cid:11) word (cid:20) word (cid:12)"
+        n, ratio = local_ingest._cid_damage(dirty)
+        self.assertEqual(n, 3)
+        self.assertGreater(ratio, local_ingest.CID_DEGRADED_RATIO)
+
+    def test_threshold_clears_observed_values(self):
+        """Clean extractions score exactly 0; the observed damaged ones
+        start at 8.8%. The threshold must sit clear of both."""
+        import local_ingest
+        self.assertLess(local_ingest.CID_DEGRADED_RATIO, 0.088)
+        self.assertGreater(local_ingest.CID_DEGRADED_RATIO, 0.0)
+
+    def test_cid_detection_does_not_route_through_sanity_fail(self):
+        """Failing `_sanity_check` substitutes a placeholder and discards
+        the prose. At 26% cid the other 74% is still good text, so the
+        check must pass and the source degrade instead of being destroyed."""
+        import local_ingest
+        text = ("real readable sentence here " * 40) + ("(cid:11) " * 30)
+        ok, _note = local_ingest._sanity_check(text)
+        self.assertTrue(ok, "cid damage must not trip the destructive path")
+        n, ratio = local_ingest._cid_damage(text)
+        self.assertGreater(ratio, local_ingest.CID_DEGRADED_RATIO)
+
+    def _mark(self, root, name, fm_extra):
+        ext = root / "vault" / f"{name}.pdf.extracted.md"
+        ext.write_text(f"---\nsource_path: vault/{name}.pdf\nsha256: a\n"
+                        f"{fm_extra}\nmultimodal_recommended: true\n---\n\nprose\n")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            sweep.cmd_mark_multimodal_extracted(ext)
+        return ext.read_text()
+
+    def test_table_pass_preserves_an_outstanding_math_need(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "vault").mkdir()
+            out = self._mark(root, "x", "has_math: true\ntables_extracted: 13")
+            self.assertIn("multimodal_recommended: true", out)
+            self.assertIn("multimodal_extracted:", out)
+
+    def test_table_pass_preserves_an_outstanding_glyph_need(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "vault").mkdir()
+            out = self._mark(root, "z", "has_math: false\ncid_glyphs: 4659")
+            self.assertIn("multimodal_recommended: true", out)
+
+    def test_flag_cleared_when_nothing_remains(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "vault").mkdir()
+            out = self._mark(root, "y", "has_math: false\ntables_extracted: 4")
+            self.assertIn("multimodal_recommended: false", out)
+
+
 class WriteExtractedTables(unittest.TestCase):
 
     PROSE = ("Real prose every (vault:...) citation resolves against.\n"

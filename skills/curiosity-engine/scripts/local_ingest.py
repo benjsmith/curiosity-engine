@@ -384,6 +384,32 @@ def _extract_pptx(raw_bytes: bytes) -> tuple[str, str]:
     return "\n".join(chunks), ""
 
 
+# `(cid:NN)` is what pdf text extraction emits when a font carries no
+# usable ToUnicode mapping — the glyph was rendered, but its identity is
+# unknown. The tokens are printable and word-shaped, so `_sanity_check`
+# waves them through: three papers in a real 25-source vault were 8.8%,
+# 26.1% and 41.4% cid glyphs while marked `extraction_quality: good`, with
+# thousands of unreadable tokens sitting in the FTS5-indexed citation
+# target.
+#
+# Deliberately NOT wired into `_sanity_check`: failing that check discards
+# the prose and substitutes a placeholder, and at 26% cid the other 74% is
+# still perfectly good text worth keeping. This degrades and escalates
+# instead of destroying.
+_CID_GLYPH_RE = re.compile(r"\(cid:\d+\)")
+# Clean extractions score exactly 0; the observed bad ones start at 8.8%.
+# 2% sits well clear of both.
+CID_DEGRADED_RATIO = 0.02
+
+
+def _cid_damage(text: str) -> tuple[int, float]:
+    """(count, fraction-of-tokens) of unmapped-glyph artifacts."""
+    n = len(_CID_GLYPH_RE.findall(text))
+    if not n:
+        return 0, 0.0
+    return n, n / max(len(text.split()), 1)
+
+
 def _sanity_check(text: str) -> tuple[bool, str]:
     """Is this extraction usable? Fails cheap checks before downstream costs.
 
@@ -509,6 +535,7 @@ def ingest_one(
         sanity_note = ""
         tables_extracted = 0
         tables_filtered = 0
+        cid_glyphs = 0
 
         if is_pdf:
             text, pdf_note = _extract_pdf(raw)
@@ -528,6 +555,16 @@ def ingest_one(
                 extraction_quality = "good"
                 has_math = _detect_math(text)
                 has_tables = _detect_tables(text)
+                # Text is structurally fine but the font didn't map — keep
+                # the readable remainder and route the source to the
+                # multimodal reader, which works from rendered pages and
+                # is unaffected by the missing ToUnicode table.
+                _cid_n, _cid_ratio = _cid_damage(text)
+                if _cid_ratio > CID_DEGRADED_RATIO:
+                    extraction_quality = "degraded"
+                    cid_glyphs = _cid_n
+                    sanity_note = (f"cid_glyphs={_cid_n} "
+                                    f"({_cid_ratio:.0%} of tokens unmapped)")
             elif n_tables > 0:
                 # Prose failed sanity, but pdfplumber rescued tables —
                 # drop the (likely garbled) pypdf prose; the table block
@@ -579,7 +616,7 @@ def ingest_one(
             if extraction_method != "pypdf_failed":
                 multimodal_recommended = has_math or (
                     has_tables and tables_extracted == 0
-                )
+                ) or cid_glyphs > 0
         elif is_structured:
             # Structured spreadsheet/slide formats already expose cell
             # boundaries — emit them as GFM tables directly. No math/
@@ -696,6 +733,8 @@ def ingest_one(
                 # Recorded because it explains an otherwise-puzzling pairing:
                 # has_tables true, tables_extracted 0, multimodal queued.
                 fm_lines.append(f"tables_filtered: {tables_filtered}")
+            if cid_glyphs:
+                fm_lines.append(f"cid_glyphs: {cid_glyphs}")
             if sanity_note:
                 fm_lines.append(f"sanity_note: {sanity_note}")
         elif is_structured:

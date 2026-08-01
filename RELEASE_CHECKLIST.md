@@ -54,7 +54,13 @@ Semantic versioning, and **since `v1.0.0` the promises are real** — under `0.x
   - a change to `embedder.py`'s public surface (`load_embedder`, `predict_model_id`, the `Embedder` API), which is a declared-stable library surface other tools vendor;
   - a migration that `setup.sh`'s additive merge cannot perform silently and correctly.
 
-**A migration `setup.sh` handles automatically is not by itself breaking** — `backfill-kept-as` runs in the migration pass and needs nothing from the user, so it shipped in a minor. A migration the user must run by hand (`vault_index.py --rebuild` in v0.9.5) is a minor at least, and must carry a bolded **`Migration:`** line in its CHANGELOG entry saying exactly what to run.
+**Migrations do not by themselves set the version — what happens if you skip one does.** Every migration carries a bolded **`Migration:`** line in its CHANGELOG entry saying exactly what to run; the version digit is decided separately:
+
+- **Skipping it leaves the workspace correct, just without the improvement** → patch is fine. `vault_index.py --rebuild` to pick up a text-normalisation fix is this shape: the old index keeps working exactly as before, and the rebuild is how you *gain* the fix.
+- **Skipping it leaves the workspace wrong, or the release changes behaviour a user depends on** → minor at least, and major if a documented contract moved.
+- **`setup.sh` performs it automatically** → does not influence the version at all; say so in the entry so nobody runs it by hand.
+
+The distinction matters because the version number's job is to signal *compatibility*, not to advertise that an optional improvement exists. An earlier draft of this policy said any hand-run migration was "a minor at least", which would have forced a minor bump on a pure bug-fix release whose migration was entirely optional.
 
 ### The 0.x history
 

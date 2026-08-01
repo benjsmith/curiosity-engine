@@ -2,9 +2,37 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
-## 2026-07-31 — v1.1.0 — repair pypdf's letter-spacing artifact
+## 2026-08-01 — v1.0.1 — PDF extraction fidelity: kerning, unmapped glyphs, escalation
 
-**Migration:** run `vault_index.py --rebuild` once per workspace to heal existing indexes. No vault file is rewritten — the repair applies on the way into the index, so the append-only store is untouched. **Breaking:** none.
+Three bug fixes to PDF text extraction and the multimodal escalation triggers, found by measuring the extractors against rendered page images rather than reasoning about them.
+
+**Migration:** run `vault_index.py --rebuild` once per workspace to heal existing indexes. Optional — skipping it leaves the workspace correct, just without the fix, which is why this is a patch and not a minor (see `RELEASE_CHECKLIST.md`). No vault file is rewritten; the repair applies on the way into the index, so the append-only store is untouched. **Breaking:** none.
+
+### Unmapped glyphs were invisible to every quality gate
+
+`(cid:NN)` is what PDF text extraction emits when a font carries no usable ToUnicode mapping — the glyph rendered, but its identity is unknown. Those tokens are printable and word-shaped, so `_sanity_check` waved them straight through. Measured across a real 25-source vault:
+
+| paper | cid glyphs | share of tokens | recorded quality |
+|---|---|---|---|
+| Tree-of-Thoughts | 4,664 | **41.4%** | `good` |
+| ReAct | 4,659 | 26.1% | `good` |
+| Reflexion | 1,015 | 8.8% | `good` |
+
+Thousands of unreadable tokens sitting in the FTS5-indexed citation target, with nothing flagging it. Ingest now measures cid density; above 2% (clean extractions score exactly 0, the observed damaged ones start at 8.8%) the extraction is marked `extraction_quality: degraded`, records `cid_glyphs: <n>`, and sets `multimodal_recommended`.
+
+Deliberately **not** wired into `_sanity_check`: failing that check substitutes a placeholder and discards the prose, and at 26% cid the other 74% is still perfectly good text. This degrades and escalates rather than destroying — a test pins that the destructive path is not taken.
+
+### `multimodal_recommended` is one flag for several unmet needs
+
+It is set at ingest from `has_math OR (has_tables AND tables_extracted == 0) OR cid_glyphs`, and `mark-multimodal-extracted` blanket-cleared it. So a paper with `has_math: true` and demonstrably mangled equations read `multimodal_recommended: false` after its *table* pass consumed the flag — its equations could never be revisited. The verb now recomputes from the reasons the table pass did not address instead of clearing outright.
+
+### Why the equations matter, and why not simply switch extractors
+
+Measured on QLoRA p3 against the rendered page: **both** deterministic extractors destroy stacked fractions. Equation 1's numerator `127` vanishes from pypdf and pdfplumber alike; equation 2 renders as `dequant(cFP32, XInt8) = = XFP32`. pdfplumber additionally drops subscripts pypdf keeps (`sXL L` versus the correct `sXL1L2`). A Sonnet multimodal worker reading the same page recovered all three equations correctly in LaTeX, and transcribed a real results table 16/16 digit-for-digit including its bold best-in-column marks, where pdfplumber recovered 3 of 16 numbers with no structure and turned a rotated axis label into `ME AQtoptoH`.
+
+pdfplumber also hallucinates tables from graphics — 13 on a page that is one composite figure, 2 on a page of scatter plots with no table at all — while the multimodal reader correctly reports none. It is nonetheless ~70s and ~16k tokens per page against pypdf's 7ms and nothing, so the fast deterministic default stays; what these fixes repair is the *triggers* that decide when to escalate to the reader that gets it right.
+
+### Letter-spaced display headings extracted as split words
 
 `pypdf.extract_text()` inserts a space *inside* a word when the PDF renders it with tracking (letter-spacing) — the norm for display headings and small-caps runs in paper templates. `QLORA` extracts as `QL ORA` (34 occurrences in one real extraction), `REACT` as `REAC T`. Since the `fix-citation-paths` migration made extractions the FTS5-indexed citation target, this is not a cosmetic problem: the split token is unsearchable, so `vault_search` misses the paper's own name and `score_diff`'s claim-word probes miss it too.
 

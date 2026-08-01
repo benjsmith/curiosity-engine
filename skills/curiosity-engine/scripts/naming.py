@@ -202,6 +202,11 @@ ALLOWED_FM_KEYS = frozenset({
     # annotate the `[tab]` wiki pages produced by
     # `sweep.py promote-extracted-tables`.
     "has_tables", "tables_extracted", "tables_present", "tables_filtered",
+    # `cid_glyphs` counts `(cid:NN)` artifacts — glyphs the PDF's font
+    # carried no Unicode mapping for. Non-zero means part of the text is
+    # structurally present but unreadable, which is why the source is
+    # escalated to the multimodal reader.
+    "cid_glyphs",
     "extracted_from", "table_index", "row_count",
     "db_table", "is_snapshot", "extraction_sha",
     # Multimodal-upgrade flag (vault extractions): pypdf failed sanity
