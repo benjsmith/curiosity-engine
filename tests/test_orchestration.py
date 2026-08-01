@@ -238,6 +238,146 @@ class EvolveGuardStaleSnapshot(unittest.TestCase):
         self.assertIn("DRIFT", out.stdout)
 
 
+class NumericReviewCorrections(unittest.TestCase):
+    """`apply-numeric-review`'s `wrong` path mutates transcribed data, and
+    every resolution failure used to `continue` silently while the caller
+    still returned `ok: true`, wrote a backup, stamped `verdict: wrong` and
+    appended "Auto-overwrite applied" — so the page asserted a correction
+    that never happened.
+
+    Observed twice in one production run: a 0-indexed caller no-op'd one fix
+    by writing onto a cell that already held the value, and overwrote a
+    correct row's scores with the pair intended for the row below it.
+    """
+
+    HEADERS = ["Model", "Artistic", "Scientific"]
+    ROWS = [["Pretrained models", "", ""],
+            ["Llama 2 Chat 7B", "0.537", "0.332"],
+            ["Llama 2 Chat 13B", "0.601", "0.410"]]
+
+    def test_off_by_one_is_refused_by_the_row_anchor(self):
+        """The corruption case: row_idx points at a valid but wrong row, so
+        only the label anchor can catch it."""
+        rows, problems, _ = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"row_idx": 2, "row_label": "Llama 2 Chat 13B",
+              "header": "Artistic", "suggested": "0.611"}])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("row_label does not match", problems[0]["error"])
+        self.assertEqual(rows[1], self.ROWS[1], "bystander row was mutated")
+
+    def test_out_of_range_row_is_a_problem_not_a_silent_skip(self):
+        _, problems, _ = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"row_idx": 99, "header": "Artistic", "suggested": "1.0"}])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("out of range", problems[0]["error"])
+
+    def test_unknown_header_is_a_problem(self):
+        _, problems, _ = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"row_idx": 2, "header": "Nope", "suggested": "1.0"}])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("header not found", problems[0]["error"])
+
+    def test_non_integer_row_idx_is_a_problem(self):
+        _, problems, _ = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"header": "Artistic", "suggested": "1.0"}])
+        self.assertEqual(len(problems), 1)
+
+    def test_correct_anchored_correction_applies(self):
+        rows, problems, warnings = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"row_idx": 2, "row_label": "Llama 2 Chat 7B",
+              "header": "Artistic", "suggested": "0.999"}])
+        self.assertEqual(problems, [])
+        self.assertEqual(warnings, [])
+        self.assertEqual(rows[1][1], "0.999")
+
+    def test_anchor_match_tolerates_whitespace_and_case(self):
+        rows, problems, _ = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"row_idx": 2, "row_label": "  llama 2   chat 7B ",
+              "header": "Artistic", "suggested": "0.999"}])
+        self.assertEqual(problems, [])
+        self.assertEqual(rows[1][1], "0.999")
+
+    def test_missing_anchor_applies_but_warns(self):
+        """Not a hard failure — that would break existing callers — but the
+        gap must be visible, since an off-by-one is undetectable without it."""
+        rows, problems, warnings = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"row_idx": 2, "header": "Artistic", "suggested": "0.888"}])
+        self.assertEqual(problems, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(rows[1][1], "0.888")
+
+    def test_one_bad_cell_fails_the_whole_verdict(self):
+        """Partial application would leave the page claiming a correction
+        set it did not receive."""
+        rows, problems, _ = sweep._apply_corrections(
+            self.HEADERS, self.ROWS,
+            [{"row_idx": 2, "row_label": "Llama 2 Chat 7B",
+              "header": "Artistic", "suggested": "0.999"},
+             {"row_idx": 99, "header": "Scientific", "suggested": "0.1"}])
+        self.assertEqual(len(problems), 1)
+        # The caller refuses the write wholesale on any problem; assert the
+        # signal it keys on rather than the partially-built row set.
+        self.assertTrue(problems)
+
+
+class NumericReviewQueueIgnoresVerbOrder(unittest.TestCase):
+    """`promote-extracted-tables` copies `extraction_method` onto each page
+    at mint time, and `mark-multimodal-extracted` is what sets it to
+    `multimodal-sonnet`. Promote-before-mark therefore stamped every page
+    with the deterministic method, and `pending-numeric-review` skipped the
+    lot — 85 multimodal tables silently exempted from review in one run,
+    with a queue depth of 0 as the only symptom.
+    """
+
+    def _ws(self, root, page_method, src_fm):
+        (root / "vault").mkdir(exist_ok=True)
+        (root / "wiki" / "tables").mkdir(parents=True, exist_ok=True)
+        (root / "vault" / "s.pdf.extracted.md").write_text(
+            f"---\nsource_path: vault/s.pdf\nsha256: a\n{src_fm}\n---\n\nprose\n")
+        (root / "wiki" / "tables" / "tab-s-t1.md").write_text(
+            f"---\ntitle: \"[tab] T\"\ntype: extracted-table\n"
+            f"extracted_from: s-2026\nsources: [s.pdf.extracted.md]\n"
+            f"{page_method}\n---\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            sweep.cmd_pending_numeric_review(root / "wiki")
+        return json.loads(buf.getvalue())
+
+    def test_stale_page_method_still_queues_via_source_timestamp(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            got = self._ws(root,
+                            page_method="extraction_method: pypdf+pdfplumber",
+                            src_fm="multimodal_extracted: 2026-08-01T00:00:00Z")
+            self.assertEqual(got["count"], 1,
+                             "multimodal page skipped because promote ran first")
+
+    def test_deterministic_extraction_still_skips_the_queue(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            got = self._ws(root,
+                            page_method="extraction_method: pypdf+pdfplumber",
+                            src_fm="extraction_method: pypdf+pdfplumber")
+            self.assertEqual(got["count"], 0)
+
+    def test_already_reviewed_page_skips(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            got = self._ws(
+                root,
+                page_method=("extraction_method: multimodal-sonnet\n"
+                              "numeric_review_done: 2026-08-01T00:00:00Z"),
+                src_fm="multimodal_extracted: 2026-08-01T00:00:00Z")
+            self.assertEqual(got["count"], 0)
+
+
 class MultimodalEscalationTriggers(unittest.TestCase):
     """Two ways a source that needs the multimodal reader failed to reach it.
 

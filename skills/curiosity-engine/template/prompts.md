@@ -643,12 +643,23 @@ the proposal call. Receives the proposal list and judges each candidate.
 >    wrong. Use `med` when the source is readable but ambiguous.
 >    Use `low` when you're guessing from context.
 >
+> 6. **Row addressing.** `row_idx` is **1-indexed**: the first data row
+>    of the rendered table is `1`. Section-header rows (e.g. "Pretrained
+>    models", "Instruct (aligned)") occupy indices too — count them.
+>    Always include `row_label`, the row's **first-column value** exactly
+>    as it appears. It is verified against `row_idx` before anything is
+>    written, and it is the only check that catches an off-by-one — which
+>    would otherwise silently overwrite a correct neighbouring row rather
+>    than the one you meant. You already know the row's name; you quote it
+>    in `reason`.
+>
 > Return exactly one JSON object (no prose, no markdown fences):
 > ```
 > {"page": "<TAB_PAGE_PATH>",
 >  "verdict": "ok" | "suspect" | "wrong",
 >  "flagged_cells": [{
 >    "row_idx": 2,
+>    "row_label": "HEPES",
 >    "header": "MW (g/mol)",
 >    "claimed": "238.31",
 >    "suggested": "238.30",

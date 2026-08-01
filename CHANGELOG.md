@@ -2,6 +2,32 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-01 — v1.0.3 — numeric-review corrections fail loudly; review queue ignores verb order
+
+Two silent-failure bugs from a full curate run over 15 PDF sources (150 extracted table pages, each numeric-reviewed against its source page image).
+
+**Migration:** none. **Breaking:** none — `row_label` is optional, and its absence warns rather than fails. **Recommended:** update `.curator/prompts.md` from the template so reviewers emit `row_label` (see below); `setup.sh` offers the refresh.
+
+### `apply-numeric-review` silently mis-applied a mis-indexed correction
+
+`row_idx` is 1-indexed, nothing validated the caller's indexing, and both failure modes were silent. An out-of-range index or an unknown header hit a bare `continue` — no cell written, no warning. An off-by-one landed the correction on **a different, previously correct row**. In every case the verb still returned `{"ok": true}`, wrote a backup, stamped `verdict: wrong`, and appended a body block reading *"Auto-overwrite applied"*. The page then asserted a correction that either never happened or had damaged a bystander.
+
+Observed twice in one run from a 0-indexed caller: one fix no-op'd by writing a value onto a cell that already held it, and one that overwrote **Llama 2 Chat 7B**'s scores with the pair intended for the row below. Caught only by re-reading the rendered table.
+
+Three changes:
+
+- **Failures are hard.** Any flagged cell that cannot be resolved to a write fails the whole verdict — `ok: false`, with each problem named and *nothing written*. A correction that silently does nothing is strictly worse than an error, because the page then claims it was applied. Resolution now happens **before** the backup is taken, so a refused verdict leaves no backup litter either.
+- **Optional `row_label` anchor**, the row's first-column value, verified against the row at `row_idx` before writing. This is the only check that catches an off-by-one, since an off-by-one lands on a valid row; matching is whitespace- and case-insensitive. Supplied but mismatched is a hard failure naming both labels. Absent, the correction still applies but the response carries a `warnings` array and the rewind command, because the gap is real and should be visible. Left optional deliberately — making it required would break existing callers, and the fail-loud change already removes the no-op class.
+- **The 1-indexing is documented** in `--verdict-json`'s help and in the `numeric_transcription_review` template, which now emits `row_label` and states that section-header rows ("Pretrained models", "Instruct (aligned)") occupy indices. Hand-counting from a rendered table is error-prone by construction; the anchor removes the need to count at all.
+
+`tables.py restore-backup` reversed both real incidents perfectly and is unchanged.
+
+### Ordering trap: `promote` before `mark-multimodal-extracted`
+
+`promote-extracted-tables` copies `extraction_method` onto each new `[tab]` page at mint time, and `mark-multimodal-extracted` is what sets that field to `multimodal-sonnet`. Run in the wrong order, every page inherited `pypdf+pdfplumber` — and `pending-numeric-review`, which correctly skips deterministic extractions, skipped all of them. That silently exempted **85 multimodal-derived tables** from review while marking them as needing none, with a review-queue depth of 0 as the only symptom.
+
+`pending-numeric-review` now resolves provenance from the **source**, accepting a `multimodal_extracted` timestamp as well as either copy of `extraction_method`, so verb order can no longer change what gets reviewed. `promote-extracted-tables` additionally emits `ordering_warnings` when it promotes from an extraction with `multimodal_recommended: true` and no `multimodal_extracted` — that combination is always the wrong order — and SKILL.md now states the required sequence (splice → mark → promote), which it previously did not.
+
 ## 2026-08-01 — v1.0.2 — `--reembed` works on a vault with no existing vectors
 
 **Migration:** none. **Breaking:** none.

@@ -3055,13 +3055,17 @@ def cmd_pending_numeric_review(wiki_dir: Path,
                                  limit: Optional[int] = None) -> None:
     """List `[tab]` pages awaiting the numeric-review wave.
 
-    Filter rules: `extraction_method: multimodal-sonnet` set on the
-    page (or on the source extraction it points at, for back-compat
-    with pages minted before the field landed in `[tab]` fm), and no
+    Filter rules: the page is multimodal-derived — `extraction_method:
+    multimodal-sonnet` on the page, or on the source extraction, or the
+    source carries a `multimodal_extracted` timestamp — and it has no
     `numeric_review_done` timestamp yet. PDFs/XLSX/CSV/PPTX extracted
     deterministically (pdfplumber, openpyxl, csv, pptx) skip the
     queue: their fidelity is mechanical and doesn't need an LLM
     review pass.
+
+    Provenance is resolved from the source rather than the page's own
+    copied field so that the order of `promote-extracted-tables` and
+    `mark-multimodal-extracted` cannot change what gets reviewed.
 
     Returns one queue entry per page with its absolute path, source
     PNG paths (resolved via `extracted_from` and the page's
@@ -3079,21 +3083,36 @@ def cmd_pending_numeric_review(wiki_dir: Path,
             fm, body = read_frontmatter(page.read_text())
         except Exception:
             continue
+        # Resolve multimodal provenance from the SOURCE, not from the copy
+        # `promote-extracted-tables` froze onto this page. `promote` copies
+        # `extraction_method` at mint time, and it is
+        # `mark-multimodal-extracted` that sets it to `multimodal-sonnet` —
+        # so promoting before marking stamped every page
+        # `pypdf+pdfplumber` and silently exempted the whole batch from
+        # review (85 tables in one observed run, with a queue depth of 0 as
+        # the only symptom). Checking the source's `multimodal_extracted`
+        # timestamp makes the verb order irrelevant.
         method = fm.get("extraction_method", "")
-        if not method:
-            # Fall back to the source extraction's fm.
-            sources = fm.get("sources", "")
-            if isinstance(sources, list) and sources:
-                src_extraction = sources[0]
-            else:
-                m = re.search(r"[\w./-]+\.extracted\.md", str(sources))
-                src_extraction = m.group(0) if m else ""
-            if src_extraction:
+        src_fm = {}
+        sources = fm.get("sources", "")
+        if isinstance(sources, list) and sources:
+            src_extraction = sources[0]
+        else:
+            m = re.search(r"[\w./-]+\.extracted\.md", str(sources))
+            src_extraction = m.group(0) if m else ""
+        if src_extraction:
+            try:
                 src_fm, _ = read_frontmatter(
                     (wiki_dir.parent / "vault" / src_extraction).read_text()
                 )
-                method = src_fm.get("extraction_method", "")
-        if method != "multimodal-sonnet":
+            except OSError:
+                src_fm = {}
+        multimodal = (
+            method == "multimodal-sonnet"
+            or src_fm.get("extraction_method", "") == "multimodal-sonnet"
+            or bool(src_fm.get("multimodal_extracted"))
+        )
+        if not multimodal:
             continue
         if fm.get("numeric_review_done"):
             continue
@@ -3315,6 +3334,7 @@ def cmd_apply_numeric_review(tab_page_path: Path,
     new_fm["verdict"] = verdict
     new_body = body
     backup_id = ""
+    unanchored = []   # flagged cells applied without a row_label anchor
 
     if verdict == "ok":
         # Clear any prior review_required / flagged_cells_count from
@@ -3347,11 +3367,29 @@ def cmd_apply_numeric_review(tab_page_path: Path,
                            f"refusing to overwrite without a backup base"),
             }))
             return 1
+        # Resolve every correction BEFORE taking a backup or writing, so a
+        # refused verdict leaves no backup litter and no half-applied state.
+        # A cell that resolves to no write is a hard failure: the page would
+        # otherwise carry "Auto-overwrite applied" for a correction that
+        # never landed, which is strictly worse than an error.
+        new_rows, problems, unanchored = _apply_corrections(
+            headers, current_rows, flagged_cells)
+        if problems:
+            print(json.dumps({
+                "ok": False,
+                "error": (f"{len(problems)} flagged cell(s) could not be "
+                           f"resolved to a write; nothing was changed. "
+                           f"row_idx is 1-indexed and section-header rows "
+                           f"occupy indices."),
+                "table": table_stem,
+                "problems": problems,
+                "headers": headers,
+                "row_count": len(current_rows),
+            }, indent=2))
+            return 1
         backup_id = "bk-" + secrets.token_hex(4)
         n_backed_up = _backup_extracted_rows(wiki_dir, table_stem,
                                                 backup_id)
-        new_rows = _apply_corrections(headers, current_rows,
-                                        flagged_cells)
         _rewrite_extracted_rows(wiki_dir, table_stem, source_stub,
                                   src_extraction, headers, new_rows,
                                   extraction_sha)
@@ -3398,14 +3436,22 @@ def cmd_apply_numeric_review(tab_page_path: Path,
 
     # Reassemble the page text.
     page.write_text(_assemble_page(new_fm, new_body))
-    print(json.dumps({
+    out = {
         "ok": True,
         "tab_page": str(page),
         "verdict": verdict,
         "numeric_review_done": ts,
         "flagged_cells": len(flagged_cells),
         "backup_id": backup_id,
-    }))
+    }
+    # Surfaced rather than swallowed: a `wrong` verdict applied without row
+    # anchors did land, but an off-by-one in it is undetectable. The caller
+    # should re-read the rewritten row.
+    if unanchored:
+        out["warnings"] = unanchored
+        out["rewind"] = (f"tables.py restore-backup {table_stem} {backup_id}"
+                          if backup_id else None)
+    print(json.dumps(out, indent=2))
     return 0
 
 
@@ -3481,25 +3527,75 @@ def _read_extracted_rows(wiki_dir: Path,
 
 
 def _apply_corrections(headers: list, rows: list,
-                         flagged_cells: list) -> list:
+                         flagged_cells: list) -> tuple:
     """Apply each flagged_cell's `suggested` to the cell at
-    (row_idx, header). row_idx is 1-indexed (rows[i] corresponds to
-    row_idx == i+1).
+    (row_idx, header). Returns (new_rows, problems, warnings).
+
+    **`row_idx` is 1-indexed** — `rows[i]` corresponds to `row_idx == i+1`.
+    Section-header rows ("Pretrained models", "Instruct (aligned)") occupy
+    indices too, so hand-counting from a rendered table is error-prone by
+    construction.
+
+    Every resolution failure used to `continue` silently while the caller
+    still returned `ok: true`, wrote a backup, stamped `verdict: wrong` and
+    appended "Auto-overwrite applied" — so the page asserted a correction
+    that never happened. Failures are now returned so the caller can refuse
+    the whole write.
+
+    An optional `row_label` (the row's first-column value) is verified
+    against the row at `row_idx` before writing. That is the only check
+    that catches an off-by-one, because an off-by-one lands on a valid row
+    and silently overwrites a bystander — observed overwriting a correct
+    model's scores with the pair intended for the row below it.
     """
     new_rows = [list(r) for r in rows]
     header_idx = {h: i for i, h in enumerate(headers)}
-    for fc in flagged_cells:
+    problems, warnings = [], []
+
+    def _norm(v):
+        return re.sub(r"\s+", " ", str(v or "")).strip().casefold()
+
+    for n, fc in enumerate(flagged_cells, 1):
+        raw_idx = fc.get("row_idx", None)
         try:
-            ri = int(fc.get("row_idx", 0)) - 1
+            ri = int(raw_idx) - 1
         except (TypeError, ValueError):
+            problems.append({"cell": n, "row_idx": raw_idx,
+                              "error": "row_idx missing or not an integer"})
             continue
         if ri < 0 or ri >= len(new_rows):
+            problems.append({
+                "cell": n, "row_idx": raw_idx,
+                "error": f"row_idx out of range (table has {len(new_rows)} "
+                          f"rows; row_idx is 1-indexed)"})
             continue
-        ci = header_idx.get(fc.get("header", ""))
+        header = fc.get("header", "")
+        ci = header_idx.get(header)
         if ci is None:
+            problems.append({"cell": n, "header": header,
+                              "error": "header not found in table",
+                              "known_headers": headers})
             continue
+
+        label = fc.get("row_label")
+        actual = new_rows[ri][0] if new_rows[ri] else ""
+        if label is not None:
+            if _norm(label) != _norm(actual):
+                problems.append({
+                    "cell": n, "row_idx": raw_idx, "row_label": label,
+                    "actual_row_label": actual,
+                    "error": "row_label does not match the row at row_idx — "
+                              "refusing to write (likely off-by-one; row_idx "
+                              "is 1-indexed and section headers occupy rows)"})
+                continue
+        else:
+            warnings.append({
+                "cell": n, "row_idx": raw_idx, "row_at_index": actual,
+                "warning": "no row_label anchor supplied, so an off-by-one "
+                            "cannot be detected; verify the rewritten row"})
+
         new_rows[ri][ci] = str(fc.get("suggested", ""))
-    return new_rows
+    return new_rows, problems, warnings
 
 
 def _rewrite_body_gfm(body: str, headers: list, rows: list,
@@ -3987,6 +4083,7 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
 
     created, updated, skipped = [], [], 0
     no_stub = []
+    ordering_warnings = []
 
     for extraction in sorted(vault_dir.glob("*.extracted.md")):
         try:
@@ -4022,6 +4119,23 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
             continue
 
         extraction_sha = fm.get("sha256", "") or ""
+
+        # `multimodal_recommended: true` with no `multimodal_extracted`
+        # timestamp means the multimodal pass has not run yet, so promoting
+        # now mints pages stamped with the deterministic extraction_method.
+        # `pending-numeric-review` no longer keys on that copy, so this is
+        # no longer silent data loss — but it still signals the verbs were
+        # run out of order (splice -> mark -> promote), which is worth
+        # saying out loud.
+        if (str(fm.get("multimodal_recommended", "")).lower() == "true"
+                and not fm.get("multimodal_extracted")):
+            ordering_warnings.append({
+                "extraction": extraction.name,
+                "warning": "promoted before mark-multimodal-extracted ran; "
+                            "expected order is write-extracted-tables -> "
+                            "mark-multimodal-extracted -> "
+                            "promote-extracted-tables",
+            })
 
         for ti, tbl in enumerate(tables, 1):
             headers = tbl["headers"]
@@ -4199,7 +4313,7 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                 headers, rows, extraction_sha,
             )
 
-    print(json.dumps({
+    result = {
         "created": len(created),
         "updated": len(updated),
         "skipped_unchanged": skipped,
@@ -4207,7 +4321,10 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
         "row_threshold": row_threshold,
         "created_paths": created,
         "updated_paths": updated,
-    }, indent=2))
+    }
+    if ordering_warnings:
+        result["ordering_warnings"] = ordering_warnings
+    print(json.dumps(result, indent=2))
 
 
 def cmd_concept_candidates(wiki_dir: Path, min_inbound: int = 3,
@@ -4778,7 +4895,17 @@ def main():
     ap.add_argument("--verdict-json", default=None,
                     help="apply-numeric-review: JSON string from the "
                          "numeric_transcription_review template "
-                         "({page, verdict, flagged_cells, notes})")
+                         "({page, verdict, flagged_cells, notes}). Each "
+                         "flagged cell is {row_idx, header, observed, "
+                         "suggested, row_label?}. **row_idx is 1-INDEXED** "
+                         "and section-header rows occupy indices, so count "
+                         "them. Supply row_label (the row's first-column "
+                         "value) on verdict=wrong: it is verified before any "
+                         "write and is the only thing that catches an "
+                         "off-by-one, which would otherwise overwrite a "
+                         "correct neighbouring row. Any cell that cannot be "
+                         "resolved fails the whole verdict; nothing is "
+                         "written.")
     ap.add_argument("--target", choices=["obsidian", "vscode"],
                     default="obsidian",
                     help="convert-image-embeds: target syntax form")
