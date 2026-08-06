@@ -58,8 +58,12 @@ function bridgeSpan(g: GraphIndex, id: string, selected: ReadonlySet<string>): s
   return [];
 }
 
+/** Curated links only — a derived co-citation edge is a discovery
+ * signal, not a reason to suppress the contrast class. */
 function directlyLinked(g: GraphIndex, a: string, b: string): boolean {
-  return g.neighbours(a).some((n) => n.id === b);
+  return g
+    .neighbours(a)
+    .some((n) => n.id === b && n.type !== "co-cited" && n.type !== "provisional");
 }
 
 export function computeHorizon(
@@ -216,14 +220,21 @@ export function computeHorizon(
   const totalMix = present.reduce((s, c) => s + (mix[c] ?? 0), 0) || 1;
   const groups: HorizonGroup[] = [];
   const taken = new Set<string>();
+  let remaining = reserve; // HARD cap: the reserve is the whole budget
   for (const cls of present) {
+    if (remaining <= 0) {
+      const list = (pools.get(cls) ?? []).filter((c) => !taken.has(c.id));
+      if (list.length) groups.push({ cls, candidates: [], omittedCount: list.length });
+      continue;
+    }
     const list = (pools.get(cls) ?? [])
       .filter((c) => !taken.has(c.id))
       .sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
-    const quota = Math.max(1, Math.round((reserve * (mix[cls] ?? 0)) / totalMix));
+    const quota = Math.min(remaining, Math.max(1, Math.round((reserve * (mix[cls] ?? 0)) / totalMix)));
     const chosen = list.slice(0, quota);
+    remaining -= chosen.length;
     for (const c of chosen) taken.add(c.id);
-    if (chosen.length) {
+    if (chosen.length || list.length) {
       groups.push({ cls, candidates: chosen, omittedCount: list.length - chosen.length });
     }
   }

@@ -110,8 +110,8 @@ export function workspaceSmallData(seed = 42): CEData {
     }
     return entities;
   };
-  perCluster("ml", { ent: 25, fact: 40, evi: 30, ana: 20 });
-  perCluster("bio", { ent: 25, fact: 40, evi: 30, ana: 20 });
+  perCluster("ml", { ent: 25, fact: 55, evi: 38, ana: 20 });
+  perCluster("bio", { ent: 25, fact: 55, evi: 38, ana: 20 });
 
   // Planted contradiction: two analyses over the same sources, marked.
   const contraA = add("analyses", "scaling-helps", "scaling always helps", "analysis", "ana",
