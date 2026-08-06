@@ -5,16 +5,16 @@
   "description": "Embeddable knowledge-atlas viewer engine: framework-independent core, Canvas renderer, React adapter, Curiosity Engine data adapter.",
   "license": "MIT",
   "type": "module",
-  "main": "./dist/knowledge-atlas.mjs",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/knowledge-atlas.js",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/knowledge-atlas.mjs"
+      "types": "./src/index.ts",
+      "import": "./dist/knowledge-atlas.js"
     },
     "./react": {
-      "types": "./dist/react.d.ts",
-      "import": "./dist/knowledge-atlas-react.mjs"
+      "types": "./src/react.ts",
+      "import": "./dist/knowledge-atlas-react.js"
     }
   },
   "files": [

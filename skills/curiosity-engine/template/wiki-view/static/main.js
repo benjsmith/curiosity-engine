@@ -20,7 +20,19 @@
   Sidebar.init(data);
   Subgraph.init(data);
   Modal.init(data);
-  Graph.init(data);
+  /* Experimental Knowledge Atlas viewer (flag-gated, off by default):
+   * when enabled it takes over the #graph pane and returns a
+   * Graph-compatible facade; every other module is untouched. See
+   * static/atlas.js for the flag and packages/knowledge-atlas for the
+   * engine source. */
+  let graphApi = Graph;
+  if (window.AtlasViewer && AtlasViewer.enabled() && window.KnowledgeAtlas) {
+    const atlas = AtlasViewer.init(data);
+    if (atlas) graphApi = atlas;
+    else Graph.init(data);
+  } else {
+    Graph.init(data);
+  }
   _maybeShowScanStaleBanner(data);
 
   /* refetchData — called after the Edit module saves a page. Pulls a
@@ -97,17 +109,17 @@
       const ok = Modal.open(pageId);
       if (ok) {
         Sidebar.setActive(pageId);
-        Graph.focus(pageId);
+        graphApi.focus(pageId);
       }
     } else {
       Modal.close();
-      if (Graph.clearFocus) Graph.clearFocus();
+      if (graphApi.clearFocus) graphApi.clearFocus();
     }
   }
   // Modal's close paths (X button, backdrop click, ESC) replaceState
   // and don't fire hashchange — let the modal tell us so we can
   // un-focus the graph.
-  Modal.setOnClose(() => { if (Graph.clearFocus) Graph.clearFocus(); });
+  Modal.setOnClose(() => { if (graphApi.clearFocus) graphApi.clearFocus(); });
   window.addEventListener('hashchange', applyHash);
   applyHash();
 })();
