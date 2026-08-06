@@ -226,6 +226,14 @@ describe("scaled source (P4)", () => {
     await expect(p).rejects.toThrow();
   });
 
+  it("every generated id is a valid corpus path (no negative indices)", async () => {
+    const s = new ScaledDataSource({ seed: 42 });
+    const scene = await s.getScene(req("s:7.42.13"));
+    for (const n of scene.nodes) {
+      expect(await s.getItem(n.id), n.id).not.toBeNull();
+    }
+  });
+
   it("deterministic neighbourhoods", async () => {
     const a = await new ScaledDataSource({ seed: 9 }).getScene(req("s:3.14.15"));
     const b = await new ScaledDataSource({ seed: 9 }).getScene(req("s:3.14.15"));

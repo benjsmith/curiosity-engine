@@ -14,6 +14,13 @@ export default defineConfig({
     baseURL: "http://localhost:5199",
     viewport: { width: 1280, height: 800 },
     trace: "off",
+    // Use a pre-installed Chromium when the environment provides one
+    // (e.g. Claude Code remote sets PLAYWRIGHT_CHROMIUM_PATH-style
+    // wrappers under /opt/pw-browsers); fall back to the managed
+    // download otherwise.
+    launchOptions: process.env.PW_CHROMIUM_PATH
+      ? { executablePath: process.env.PW_CHROMIUM_PATH }
+      : {},
   },
   webServer: {
     command: "pnpm dev",

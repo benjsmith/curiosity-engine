@@ -125,10 +125,12 @@ export class ScaledDataSource implements AtlasDataSource {
       const h = hashString(`${this.seed}:x:${id}`);
       const linkCount = h % 3;
       for (let k = 0; k < linkCount; k++) {
+        // Unsigned shifts — a signed >> flips the sign bit into the
+        // modulo and mints impossible negative path indices.
         const target: ParsedId = [
-          (h >> (4 + k)) % LEVEL_SIZES[0],
-          (h >> (9 + k)) % LEVEL_SIZES[1],
-          (h >> (14 + k)) % LEVEL_SIZES[2],
+          (h >>> (4 + k)) % LEVEL_SIZES[0],
+          (h >>> (9 + k)) % LEVEL_SIZES[1],
+          (h >>> (14 + k)) % LEVEL_SIZES[2],
         ];
         const tid = addNode(target);
         g.addEdge(id, tid, "co-cited", 0.5 + 0.5 * rng());

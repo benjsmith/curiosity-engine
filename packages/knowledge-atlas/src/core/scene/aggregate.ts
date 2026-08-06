@@ -18,6 +18,7 @@ export const MEMBER_SAMPLE = 8;
 const PLURAL: Record<string, string> = {
   analysis: "analyses",
   evidence: "evidence",
+  entity: "entities",
   "todo-list": "todos",
 };
 

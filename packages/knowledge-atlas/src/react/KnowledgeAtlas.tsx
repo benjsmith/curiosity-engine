@@ -5,7 +5,7 @@
  * no global state. StrictMode-safe (idempotent mount/destroy).
  */
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useRef } from "react";
 import { AtlasEngine } from "../core/engine.ts";
 import { CanvasRenderer } from "../renderer/canvas.ts";
 import { resolveTheme } from "../renderer/theme.ts";
@@ -24,8 +24,6 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
     const liveRef = useRef<HTMLDivElement>(null);
     const engineRef = useRef<AtlasEngine | null>(null);
 
-    useImperativeHandle(ref, () => engineRef.current as AtlasController, []);
-
     // Recreate the engine when the data source changes (workspace swap).
     useEffect(() => {
       const host = hostRef.current;
@@ -34,6 +32,11 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
 
       const engine = new AtlasEngine(props.dataSource, props.config);
       engineRef.current = engine;
+      // Populate the forwarded controller ref here rather than via
+      // useImperativeHandle: that hook is a LAYOUT effect and would run
+      // before this passive effect, capturing null.
+      if (typeof ref === "function") ref(engine);
+      else if (ref) ref.current = engine;
       const renderer = new CanvasRenderer();
       renderer.mount(canvas);
 
@@ -243,6 +246,8 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         renderer.destroy();
         engine.destroy();
         engineRef.current = null;
+        if (typeof ref === "function") ref(null);
+        else if (ref) ref.current = null;
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.dataSource, props.config?.layout, props.config?.seed]);

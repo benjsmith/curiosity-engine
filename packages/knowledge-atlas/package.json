@@ -8,10 +8,20 @@
   "main": "./dist/knowledge-atlas.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/knowledge-atlas.mjs" },
-    "./react": { "types": "./dist/react.d.ts", "import": "./dist/knowledge-atlas-react.mjs" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/knowledge-atlas.mjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/knowledge-atlas-react.mjs"
+    }
   },
-  "files": ["dist", "src", "README.md"],
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && vite build --config vite.iife.config.ts",
@@ -20,7 +30,9 @@
     "e2e": "playwright test"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "dependencies": {
     "d3-force": "^3.0.0"
@@ -29,11 +41,14 @@
     "react": ">=18"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true }
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",
     "@types/d3-force": "^3.0.10",
+    "@types/node": "^22.20.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
