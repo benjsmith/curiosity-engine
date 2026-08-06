@@ -88,6 +88,18 @@ KNOWN_TYPES = frozenset({
     "todo", "todo-list", "project", "projects",
 })
 
+# Real frontmatter `type:` values (see template/schema.md) whose viewer
+# type is a different canonical bucket. Applied before the KNOWN_TYPES
+# check, so `summary-table` / `extracted-table` pages render as tables
+# instead of falling into `unclassified`. Emitting the canonical value
+# (rather than adding these to KNOWN_TYPES + PALETTE) keeps every
+# downstream lookup working — graph.js/subgraph.js fill colours and the
+# sidebar `.dot-<type>` CSS classes all key on the emitted string.
+TYPE_ALIASES = {
+    "summary-table": "table",
+    "extracted-table": "table",
+}
+
 
 def _output_root() -> Path:
     return Path.home() / ".cache" / "curiosity-engine" / "wiki-view"
@@ -386,7 +398,6 @@ def _build_graph(wiki_dir: Path, page_paths: set[str]) -> tuple[list[dict], list
     kuzu_path = wiki_dir.parent / ".curator" / "graph.kuzu"
     nodes: list[dict] = []
     edges: list[dict] = []
-    degree: dict[str, int] = {}
 
     try:
         import kuzu  # type: ignore
@@ -416,8 +427,6 @@ def _build_graph(wiki_dir: Path, page_paths: set[str]) -> tuple[list[dict], list
                 src_id = src[:-3] if src.endswith(".md") else src
                 dst_id = dst[:-3] if dst.endswith(".md") else dst
                 edges.append({"source": src_id, "target": dst_id, "type": edge_kind})
-                degree[src_id] = degree.get(src_id, 0) + 1
-                degree[dst_id] = degree.get(dst_id, 0) + 1
     except Exception as e:
         print(f"  warn: graph query failed ({e}); rendering nodes-only view",
               file=sys.stderr)
@@ -430,9 +439,9 @@ def _build_graph(wiki_dir: Path, page_paths: set[str]) -> tuple[list[dict], list
                 "title": path,
             })
 
-    for n in nodes:
-        n["degree"] = degree.get(n["id"], 0)
-
+    # Degree is NOT set here — cmd_build recomputes it from the final
+    # edge set after drift-filtering, so counts always match the edges
+    # actually shipped in data.json.
     return nodes, edges
 
 
@@ -456,6 +465,7 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
         # Normalise unknown / missing types into a single Unclassified
         # bucket so the viewer surfaces them for human review instead
         # of letting them sink into the silent `default` grey.
+        raw_type = TYPE_ALIASES.get(raw_type, raw_type)
         ptype = raw_type if raw_type in KNOWN_TYPES else "unclassified"
         page_id = rel[:-3] if rel.endswith(".md") else rel
         # Frontmatter property table for the modal header. Skip keys
@@ -491,7 +501,31 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
             n["type"] = fresh["type"]
             n["title"] = fresh["title"]
     surviving = {n["id"] for n in nodes}
+    # The reverse drift: a page on disk that kuzu doesn't know yet (written
+    # after the last graph rebuild) previously got a `pages` entry but no
+    # node — making it invisible to the graph, the sidebar, and search,
+    # all of which index nodes. Synthesise a degree-0 node so every
+    # on-disk page is reachable; the next graph rebuild supplies edges.
+    for page_id in sorted(page_ids - surviving):
+        fresh = page_data[page_id]
+        nodes.append({
+            "id": page_id,
+            "path": fresh["path"],
+            "type": fresh["type"],
+            "title": fresh["title"],
+        })
+    surviving = page_ids
     edges = [e for e in edges if e["source"] in surviving and e["target"] in surviving]
+
+    # Recompute degree from the edges that survived both filters — the
+    # count taken while reading kuzu included edges dropped above, so it
+    # could exceed a node's actual incident-edge count in data.json.
+    degree: dict[str, int] = {}
+    for e in edges:
+        degree[e["source"]] = degree.get(e["source"], 0) + 1
+        degree[e["target"]] = degree.get(e["target"], 0) + 1
+    for n in nodes:
+        n["degree"] = degree.get(n["id"], 0)
 
     workspace_name = wiki_dir.parent.name
 

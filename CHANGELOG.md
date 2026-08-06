@@ -2,6 +2,39 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-06 — v1.2.1 — viewer payload: table types classified, drifted pages reachable, honest degrees
+
+**Migration:** none — re-run `viewer.sh build` (or just open the viewer; the
+server rebuilds on next edit).
+**Breaking:** none. Payload schema is unchanged; only values are corrected.
+
+Three `wiki_render.py` fixes surfaced by a close read of the data.json
+contract during the Knowledge Atlas planning work:
+
+**`summary-table` / `extracted-table` pages no longer render as
+Unclassified.** Both are real frontmatter `type:` values per `schema.md`, but
+neither was in `KNOWN_TYPES`, so every `[tab]`/`[tbl]` page fell into the
+white unclassified bucket — while the frontend's `TYPE_CANONICAL` maps (which
+map both to `table`) sat unreachable behind the server-side bucketing. A new
+render-time `TYPE_ALIASES` map emits them as `table`, so palette fills,
+sidebar grouping and `.dot-<type>` swatches all resolve. On-disk frontmatter
+is untouched, as ever.
+
+**Pages missing from kuzu get a synthesised node.** A page written after the
+last graph rebuild got a `pages` entry but no node — invisible in the graph,
+the sidebar, and search, all of which index `nodes`. The build now synthesises
+a degree-0 node for any on-disk page absent from the graph; the next rebuild
+supplies its edges. (The long-standing no-kuzu fallback already behaved this
+way; partial drift now matches it.)
+
+**`degree` is recomputed after drift-filtering.** It was counted while
+reading kuzu, before nodes/edges absent from disk were dropped, so a node's
+degree could exceed its actual incident edges in the payload (degree drives
+node radius). Degrees now come from the exact edge set shipped.
+
+New `tests/test_wiki_render.py` locks all three down — the first coverage of
+the viewer payload contract.
+
 ## 2026-08-01 — v1.2.0 — table backlinks: extracted tables are no longer born orphans
 
 **Migration:** run `sweep.py backfill-table-backlinks wiki` once per workspace.
