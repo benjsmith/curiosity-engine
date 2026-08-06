@@ -21,3 +21,9 @@ ce-*-note.md
 /charter.md
 /work-plan.md
 /log.md
+
+# JS package workspaces (packages/*)
+packages/*/node_modules/
+packages/*/dist/
+packages/*/test-results/
+packages/*/e2e/shots/

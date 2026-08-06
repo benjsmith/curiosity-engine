@@ -1,0 +1,46 @@
+{
+  "name": "@curiosity/knowledge-atlas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Embeddable knowledge-atlas viewer engine: framework-independent core, Canvas renderer, React adapter, Curiosity Engine data adapter.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/knowledge-atlas.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/knowledge-atlas.mjs" },
+    "./react": { "types": "./dist/react.d.ts", "import": "./dist/knowledge-atlas-react.mjs" }
+  },
+  "files": ["dist", "src", "README.md"],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && vite build --config vite.iife.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "dependencies": {
+    "d3-force": "^3.0.0"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "@types/d3-force": "^3.0.10",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2",
+    "vitest": "^2.1.9"
+  }
+}
