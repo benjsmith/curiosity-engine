@@ -12,7 +12,7 @@ export { clampScale, nextBand } from "./core/zoom.ts";
 export { focusLayout } from "./core/layout/focus.ts";
 export { forceLayout } from "./core/layout/force.ts";
 export { hyperbolicLayout } from "./core/layout/hyperbolic.ts";
-export { hybridLayout, coreRadius, CORE_SHARE } from "./core/layout/hybrid.ts";
+export { hybridLayout, coreRadius, rimRadiusAt, CORE_SHARE } from "./core/layout/hybrid.ts";
 export { adaptiveLayout, classifyTopology } from "./core/layout/adaptive.ts";
 export type { LayoutAdapter, LayoutContext } from "./core/layout/types.ts";
 export { CanvasRenderer } from "./renderer/canvas.ts";

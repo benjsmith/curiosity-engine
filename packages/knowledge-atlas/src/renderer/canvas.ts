@@ -8,6 +8,7 @@
  */
 
 import { typeColour } from "./theme.ts";
+import { rimRadiusAt } from "../core/geometry.ts";
 import type { DiscoveryClass, LayoutPoint } from "../core/types.ts";
 import type { Frame, SceneRenderer } from "./types.ts";
 
@@ -31,6 +32,15 @@ export class CanvasRenderer implements SceneRenderer {
   mount(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
+  }
+
+  private measure(ctx: CanvasRenderingContext2D, text: string): number {
+    let w = this.measureCache.get(text);
+    if (w === undefined) {
+      w = ctx.measureText(text).width;
+      this.measureCache.set(text, w);
+    }
+    return w;
   }
 
   destroy(): void {
@@ -109,12 +119,24 @@ export class CanvasRenderer implements SceneRenderer {
 
     // ── horizon band ────────────────────────────────────────────────
     if (frame.showHorizonRing && frame.scene.horizon.length) {
-      const R = Math.min(width, height) * 0.485;
+      const circleR = Math.min(width, height) * 0.485;
+      // Hybrid mode: the rim is a squircle reaching into the corners;
+      // other modes keep the inscribed circle.
+      const boundaryAt = (angle: number) =>
+        frame.coreRadius ? rimRadiusAt(angle, frame.viewport) : circleR;
       ctx.strokeStyle = T.line;
       ctx.globalAlpha = 0.35;
       ctx.setLineDash([2, 6]);
       ctx.beginPath();
-      ctx.arc(0, 0, R, 0, Math.PI * 2);
+      const STEPS = 96;
+      for (let i = 0; i <= STEPS; i++) {
+        const th = (i / STEPS) * 2 * Math.PI;
+        const r = boundaryAt(th);
+        const x = Math.cos(th) * r;
+        const y = Math.sin(th) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -122,12 +144,13 @@ export class CanvasRenderer implements SceneRenderer {
       ctx.font = "10px system-ui, sans-serif";
       ctx.textAlign = "center";
       const arc = (2 * Math.PI) / CLASS_ORDER.length;
-      // Captions sit just INSIDE the ring — outside clips at the canvas
-      // edge on narrow (portrait/phone) viewports where R ≈ width/2.
+      // Captions sit just INSIDE the boundary — outside clips at the
+      // canvas edge on narrow (portrait/phone) viewports.
       for (const grp of frame.scene.horizon) {
         const angle = CLASS_ORDER.indexOf(grp.cls) * arc + arc / 2 - Math.PI / 2;
-        const lx = Math.cos(angle) * (R - 16);
-        const ly = Math.sin(angle) * (R - 16);
+        const r = boundaryAt(angle) - 16;
+        const lx = Math.cos(angle) * r;
+        const ly = Math.sin(angle) * r;
         const omitted = grp.omittedCount > 0 ? ` (+${grp.omittedCount})` : "";
         ctx.fillText(`${CLASS_LABEL[grp.cls]}${omitted}`, lx, ly);
       }
@@ -246,31 +269,26 @@ export class CanvasRenderer implements SceneRenderer {
       const p = positions.get(n.id);
       if (!p) continue;
       const text = truncate(n.item.title, 28);
-      const key = text;
-      let w = this.measureCache.get(key);
-      if (w === undefined) {
-        w = ctx.measureText(text).width;
-        this.measureCache.set(key, w);
-      }
-      const lx = p.x + p.r + 4;
+      const w = this.measure(ctx, text);
+      // Flip to the node's left when the label would clip the right
+      // wall (rim shelves sit close to the viewport edge).
+      const prefixW = n.item.meta.titlePrefix ? this.measure(ctx, n.item.meta.titlePrefix) + 3 : 0;
+      const total = w + prefixW;
+      const flip = p.x + p.r + 4 + total > width / 2 - 6;
+      const lx = flip ? p.x - p.r - 4 - total : p.x + p.r + 4;
       const ly = p.y;
-      const box: PlacedLabel = { x: lx - 2, y: ly - 8, w: w + 4, h: 16 };
+      const box: PlacedLabel = { x: lx - 2, y: ly - 8, w: total + 4, h: 16 };
       if (placed.some((q) => overlaps(q, box))) continue;
       placed.push(box);
       labelCount++;
-      ctx.fillStyle = n.role === "focus" ? T.text : T.textMuted;
+      // Prefix + title on one line reads better on canvas than the
+      // SVG two-liner; keep it simple.
       if (n.item.meta.titlePrefix) {
         ctx.fillStyle = T.textMuted;
-        ctx.fillText(n.item.meta.titlePrefix, lx, ly - (n.role === "focus" ? 7 : 0) - (n.role === "focus" ? 0 : 0));
-        // Prefix + title on one line reads better on canvas than the
-        // SVG two-liner; keep it simple.
-        const pw = ctx.measureText(n.item.meta.titlePrefix).width;
-        ctx.fillStyle = n.role === "focus" ? T.text : T.textMuted;
-        ctx.fillText(text, lx + pw + 3, ly);
-        box.w += pw + 3;
-      } else {
-        ctx.fillText(text, lx, ly);
+        ctx.fillText(n.item.meta.titlePrefix, lx, ly);
       }
+      ctx.fillStyle = n.role === "focus" ? T.text : T.textMuted;
+      ctx.fillText(text, lx + prefixW, ly);
     }
 
     // ── aggregate labels ────────────────────────────────────────────

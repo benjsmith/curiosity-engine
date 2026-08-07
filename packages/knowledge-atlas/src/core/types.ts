@@ -341,11 +341,11 @@ export type LayoutResult = {
 };
 
 export const DEFAULT_BUDGET: SceneBudget = {
-  maxNodes: 60,
+  maxNodes: 72,
   maxAggregates: 12,
-  maxEdges: 120,
+  maxEdges: 140,
   maxBundles: 16,
-  maxLabels: 40,
+  maxLabels: 46,
 };
 
 export const DEFAULT_LENS: AtlasLens = { id: "default" };

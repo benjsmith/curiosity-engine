@@ -128,8 +128,28 @@ and the changes that followed, all landed behind `layout: "hybrid"`:
 
 Open questions for the next round: should the lens pull be continuous
 with the wheel delta (currently stepped at 0.34/notch with visual
-feedback between steps), and should the core's 67% share be
+feedback between steps), and should the core's share be
 lens-adjustable?
+
+### Iteration 3 (same day)
+
+Further feedback on hybrid: broaden the graph zone with more nodes in
+it, and use the screen corners — with a **gridlike** rim arrangement.
+Changes ([img/04-layout-hybrid.png](img/04-layout-hybrid.png)):
+
+- core radius 0.26 → 0.32 of the short viewport side; `CORE_SHARE`
+  0.67 → 0.82; default node budget 60 → 72. The uniform clamp that
+  shrank the whole force cloud was replaced with a per-node radial
+  clamp, so the interior keeps natural spacing and actually fills the
+  broadened zone.
+- the rim boundary is now a superellipse ("squircle",
+  `core/geometry.ts:rimRadiusAt`) inscribed in the viewport instead of
+  the inscribed circle, and rim items are laid out as **gridlike
+  shelves per type sector** — ordered rows anchored against the outer
+  wall, stacking inward, highest-relevance row innermost — so the
+  corner areas fill with aligned rows.
+- labels near the right wall flip to the node's left instead of
+  clipping off-canvas.
 
 ## Recommendation for the next production iteration
 

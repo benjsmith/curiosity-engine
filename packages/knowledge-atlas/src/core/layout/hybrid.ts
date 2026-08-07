@@ -20,6 +20,7 @@ import {
   forceSimulation,
 } from "d3-force";
 import { anchorAngle } from "../scene/landmarks.ts";
+import { coreRadius, rimRadiusAt } from "../geometry.ts";
 import {
   aggregateRadius,
   meanDisplacement,
@@ -29,19 +30,13 @@ import {
 } from "./types.ts";
 import type { DiscoveryClass, LayoutPoint, LayoutResult, SceneData } from "../types.ts";
 
+export { coreRadius, rimRadiusAt } from "../geometry.ts";
+
 const CLASS_ORDER: DiscoveryClass[] = ["direct", "adjacent", "bridge", "contrast", "surprise", "unexplored"];
 
-/** Share of non-horizon, non-focus nodes kept in the force core. */
-export const CORE_SHARE = 0.67;
-
-/** Core-zone radius for a viewport (shared with the adapters' lens). */
-export function coreRadius(viewport: { width: number; height: number }): number {
-  return Math.min(viewport.width, viewport.height) * 0.26;
-}
-
-export function discRadius(viewport: { width: number; height: number }): number {
-  return Math.min(viewport.width, viewport.height) * 0.47;
-}
+/** Share of non-horizon, non-focus nodes kept in the force core
+ * (iteration-3: raised from 0.67). */
+export const CORE_SHARE = 0.82;
 
 type SimNode = { id: string; r: number; x?: number; y?: number };
 
@@ -49,8 +44,7 @@ export const hybridLayout: LayoutAdapter = {
   id: "hybrid",
   layout(scene: SceneData, ctx: LayoutContext): LayoutResult {
     const Rcore = coreRadius(ctx.viewport);
-    const R = discRadius(ctx.viewport);
-    const rimInner = Rcore * 1.22;
+    const rimInner = Rcore * 1.18;
     const positions = new Map<string, LayoutPoint>();
 
     const horizonIds = new Map<string, DiscoveryClass>();
@@ -83,12 +77,12 @@ export const hybridLayout: LayoutAdapter = {
         "link",
         forceLink(coreLinks as never[])
           .id((d) => (d as unknown as SimNode).id)
-          .distance(52)
-          .strength(0.6),
+          .distance(64)
+          .strength(0.55),
       )
-      .force("charge", forceManyBody().strength(-180).distanceMax(Rcore * 2))
-      .force("center", forceCenter(0, 0).strength(0.08))
-      .force("collide", forceCollide((d) => (d as unknown as SimNode).r + 6))
+      .force("charge", forceManyBody().strength(-340).distanceMax(Rcore * 2.2))
+      .force("center", forceCenter(0, 0).strength(0.06))
+      .force("collide", forceCollide((d) => (d as unknown as SimNode).r + 8))
       .stop();
     for (let i = 0; i < 300; i++) sim.tick();
 
@@ -96,16 +90,20 @@ export const hybridLayout: LayoutAdapter = {
     const focusSim = focus ? coreNodes.find((n) => n.id === focus.id) : undefined;
     const cx = focusSim?.x ?? 0;
     const cy = focusSim?.y ?? 0;
-    let maxR = 1;
+    // Per-node radial clamp: outliers are projected back onto the core
+    // boundary instead of shrinking the whole cloud uniformly — the
+    // interior keeps its natural spacing and the broadened zone is
+    // actually used.
+    const rMax = Rcore * 0.93;
     for (const sn of coreNodes) {
-      sn.x = (sn.x ?? 0) - cx;
-      sn.y = (sn.y ?? 0) - cy;
-      const d = Math.hypot(sn.x, sn.y);
-      if (d > maxR) maxR = d;
-    }
-    const clamp = Math.min(1, (Rcore * 0.92) / maxR);
-    for (const sn of coreNodes) {
-      positions.set(sn.id, { x: sn.x! * clamp, y: sn.y! * clamp, r: sn.r });
+      let x = (sn.x ?? 0) - cx;
+      let y = (sn.y ?? 0) - cy;
+      const d = Math.hypot(x, y);
+      if (d > rMax) {
+        x *= rMax / d;
+        y *= rMax / d;
+      }
+      positions.set(sn.id, { x, y, r: sn.r });
     }
 
     // ── rim: hyperbolic doc-type sectors ─────────────────────────────
@@ -138,26 +136,49 @@ export const hybridLayout: LayoutAdapter = {
       });
     }
 
+    // Gridlike shelves per sector (iteration-3 feedback): items fill
+    // ordered rows stacking OUTWARD from the core boundary toward the
+    // squircle rim, columns fanned tangentially. Highest-relevance row
+    // sits innermost; diagonal sectors have a deeper radial run, so
+    // the screen corners fill with aligned rows instead of staying
+    // empty. Grouped by sector only — the hop band now just biases the
+    // ordering so nearer material lands on inner rows.
+    const ROW_GAP = 34;
+    const COL_GAP = 34;
+    const SECTOR_ARC = 0.78; // max tangential fan per sector (radians)
     const groups = new Map<string, P[]>();
     for (const p of placements) {
-      const key = `${p.sector.toFixed(3)}|${p.band.toFixed(2)}`;
+      const key = p.sector.toFixed(3);
       (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
     }
     for (const list of groups.values()) {
-      list.sort((a, b) => b.order - a.order || (a.id < b.id ? -1 : 1));
-      const n = list.length;
-      const spread = Math.min(1.0, 0.17 * n);
-      for (let i = 0; i < n; i++) {
+      list.sort(
+        (a, b) => a.band - b.band || b.order - a.order || (a.id < b.id ? -1 : 1),
+      );
+      const sector = list[0].sector;
+      const Router = rimRadiusAt(sector, ctx.viewport);
+      // Shelf block anchored against the OUTER squircle wall so the
+      // rim content sits out in the corners; within the block, the
+      // innermost row holds the highest-relevance items (nearer stays
+      // nearer). Row capacity from the tangential arc at the wall.
+      const capacity = Math.max(1, Math.floor((SECTOR_ARC * (Router - 14)) / COL_GAP));
+      const rows = Math.ceil(list.length / capacity);
+      const innermostRho = Math.max(rimInner + 8, Router - 14 - (rows - 1) * ROW_GAP);
+      for (let i = 0; i < list.length; i++) {
         const p = list[i];
-        const offset = n === 1 ? 0 : (i / (n - 1) - 0.5) * spread;
-        // tanh compression from the core boundary out to the disc rim.
-        const t = Math.tanh(1.4 * (p.band + (i % 3) * 0.09));
-        const rho = rimInner + (R - rimInner) * t;
-        const shrink = 1 - 0.5 * (rho / R) ** 2;
-        const angle = p.sector + offset;
+        const row = Math.floor(i / capacity);
+        const rowItems = Math.min(capacity, list.length - row * capacity);
+        const c = i - row * capacity;
+        const rho = Math.min(Router - 14, innermostRho + row * ROW_GAP);
+        const offset =
+          rowItems === 1 ? 0 : (c - (rowItems - 1) / 2) * Math.min(COL_GAP / rho, SECTOR_ARC / rowItems);
+        const angle = sector + offset;
+        const RouterHere = rimRadiusAt(angle, ctx.viewport);
+        const clampedRho = Math.min(rho, RouterHere - 12);
+        const shrink = 1 - 0.45 * (clampedRho / Math.max(RouterHere, rimInner + 1)) ** 2;
         positions.set(p.id, {
-          x: Math.cos(angle) * rho,
-          y: Math.sin(angle) * rho,
+          x: Math.cos(angle) * clampedRho,
+          y: Math.sin(angle) * clampedRho,
           r: Math.max(2.5, p.r * shrink),
         });
       }
