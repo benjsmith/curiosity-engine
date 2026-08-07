@@ -98,6 +98,7 @@ export const hybridLayout: LayoutAdapter = {
     if (ctx.previous && prevRho <= Rcore) {
       // Grade 1 — core click: survivors pinned, newcomers settle in.
       settleCore(coreNodes, coreLinks, ctx, Rcore, positions, { dx: 0, dy: 0 }, prevFocusPos);
+      haloSizes(positions, coreSet, Rcore);
       placeShells(scene, coreSet, horizonIds, positions, ctx, Rcore, rimInner);
       return { positions, displacement: meanDisplacement(positions, ctx.previous) };
     }
@@ -110,16 +111,48 @@ export const hybridLayout: LayoutAdapter = {
       const dx = -Math.cos(focusAngle) * shift;
       const dy = -Math.sin(focusAngle) * shift;
       settleCore(coreNodes, coreLinks, ctx, Rcore, positions, { dx, dy }, prevFocusPos);
+      haloSizes(positions, coreSet, Rcore);
       placeShells(scene, coreSet, horizonIds, positions, ctx, Rcore, rimInner);
       return { positions, displacement: meanDisplacement(positions, ctx.previous) };
     }
 
     // Grade 3 — deep click / first layout: full mesh solve.
     fullCoreSolve(coreNodes, coreLinks, ctx, Rcore, positions);
+    haloSizes(positions, coreSet, Rcore);
     placeShells(scene, coreSet, horizonIds, positions, ctx, Rcore, rimInner);
     return { positions, displacement: meanDisplacement(positions, ctx.previous) };
   },
 };
+
+// ── lensing halo (iteration-9) ───────────────────────────────────────
+// A wide flat region in the middle of the core with slight compression
+// near the boundary — not a fully convex fisheye. Node size scales
+// with degree everywhere (classic radii), but overall scale eases down
+// as positions approach the squircle, giving a subtle halo at the rim.
+
+const HALO_FLAT = 0.62; // fraction of Rcore that stays undistorted
+
+/** 0 inside the flat region, easing 0→1 toward the core boundary. */
+function haloU(rho: number, Rcore: number): number {
+  const t = rho / Math.max(1, Rcore);
+  if (t <= HALO_FLAT) return 0;
+  return Math.min(1, (t - HALO_FLAT) / (1 - HALO_FLAT));
+}
+
+/** Size falloff — applied every layout (radii are rebuilt from degree
+ * each pass, so this is idempotent; positions are untouched here). */
+function haloSizes(
+  positions: Map<string, LayoutPoint>,
+  coreSet: ReadonlySet<string>,
+  Rcore: number,
+): void {
+  for (const id of coreSet) {
+    const p = positions.get(id);
+    if (!p) continue;
+    const u = haloU(Math.hypot(p.x, p.y), Rcore);
+    if (u > 0) positions.set(id, { x: p.x, y: p.y, r: p.r * (1 - 0.38 * u * u) });
+  }
+}
 
 // ── whole-wiki mode (≤ core capacity) ─────────────────────────────────
 
@@ -246,6 +279,17 @@ function fullCoreSolve(
   });
   relaxAnchored(anchored, 80);
   clampInto(anchored, rMax, positions);
+  // Halo position compression — fresh solves only, so survivor grades
+  // (which inherit these positions verbatim) never re-compress them.
+  for (const sn of coreNodes) {
+    const p = positions.get(sn.id);
+    if (!p) continue;
+    const u = haloU(Math.hypot(p.x, p.y), Rcore);
+    if (u > 0) {
+      const k = 1 - 0.12 * u * u;
+      positions.set(sn.id, { x: p.x * k, y: p.y * k, r: p.r });
+    }
+  }
 }
 
 /** Grades 1–2: survivors keep (optionally shifted) positions; only

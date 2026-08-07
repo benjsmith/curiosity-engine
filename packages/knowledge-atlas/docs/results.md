@@ -173,6 +173,42 @@ interaction/traversal.ts` + a motion overlay in the renderer).
   section in [performance.md](performance.md) for the 100M-doc
   switchbay-cloud analysis this iteration was sized against.
 
+### Iteration 9 (2026-08-07) — legible density, zoom as capacity, halo, classic shading
+
+Phone feedback: the core read too dense and circular, and a fixed 360
+made no sense across screen sizes.
+
+- **Core capacity now derives from screen density.** The classic 360
+  is one node per ~2850 px² on a 1280×800 desktop; `coreCapacityFor`
+  preserves that legible pitch everywhere — a phone gets ~50, a
+  desktop stays ~360, a 2560×1440 display gets 1300+ (clamped
+  40…1600). The budget scales with it.
+- **Zoom defined properly.** Wheel/pinch in the graph zone is the
+  classic geometric zoom — nodes get smaller — and the engine hears
+  about it (`setViewScale`): zooming out raises the effective capacity
+  (smaller nodes → more fit at the same density), so material streams
+  in from the boundary; zoom out far enough on a small wiki and the
+  whole corpus enters (full-graph mode). Zooming in reverses it.
+  Rebuilds fire only when the capacity moves ≥12%, and survivors keep
+  their positions (grade-1 stability).
+- **Lensing halo.** Node size scales with degree everywhere (the
+  classic radii), but overall node scale eases down approaching the
+  core boundary: a wide flat region covers the middle 62% of the core,
+  then a quadratic falloff to ~0.62× at the rim, with a slight
+  position compression on fresh solves only (so survivor stability
+  never accumulates drift — test-pinned as a pure function of final
+  position).
+- **Odometer scales to the wiki.** Flow is now capped at
+  min(250k/sec, everything-beyond-the-core per second), and streak
+  intensity normalises against that cap — a 4k wiki tops out around
+  ~3.6k docs/sec (it read an impossible "24k/sec" before), while cloud
+  corpora keep the absolute limit.
+- **Classic shading, outlined beyond.** Core nodes keep the exact CE
+  viewer palette as solid fills (unclassified stays white with a black
+  stroke); nodes beyond the boundary render as type-coloured outlines
+  with an 18%-alpha faded centre — same palette, visibly "not here
+  yet".
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:

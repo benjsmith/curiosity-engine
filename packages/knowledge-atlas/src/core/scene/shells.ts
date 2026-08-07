@@ -22,6 +22,33 @@ import type { RankedCandidate } from "./ranking.ts";
 
 export const DEFAULT_CORE_CAPACITY = 360;
 
+/**
+ * Legibility density (iteration-9): the classic viewer shows ~360
+ * nodes on a 1280×800 desktop — one node per ~2850 px² (≈53 px
+ * pitch). Capacity now derives from that density instead of being a
+ * fixed 360, so a phone gets ~50, a desktop stays ~360, and a big
+ * display shows many more — same legible pitch everywhere.
+ */
+export const TARGET_PX_PER_NODE = 2850;
+export const MIN_CORE_CAPACITY = 40;
+export const MAX_CORE_CAPACITY = 1600;
+
+/**
+ * Screen-scaled core capacity. `viewScale` is the geometric zoom:
+ * zooming OUT (scale < 1) shrinks nodes, so more corpus fits at the
+ * same legible density and material streams in from the boundary;
+ * zooming in shows fewer, larger nodes. The zoom's density effect is
+ * clamped so extreme zooms can't demand unbounded scenes.
+ */
+export function coreCapacityFor(
+  viewport: { width: number; height: number },
+  viewScale = 1,
+): number {
+  const s = Math.min(2, Math.max(0.66, viewScale));
+  const capacity = (viewport.width * viewport.height) / (TARGET_PX_PER_NODE * s * s);
+  return Math.round(Math.max(MIN_CORE_CAPACITY, Math.min(MAX_CORE_CAPACITY, capacity)));
+}
+
 /** Rank boundaries of the exponential layers (log₁₀ steps). */
 export function shellOfRank(rank: number, coreCapacity: number): number {
   if (rank < coreCapacity) return 0; // core

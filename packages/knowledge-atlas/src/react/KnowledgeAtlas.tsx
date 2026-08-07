@@ -254,6 +254,10 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
               const rCore = coreRadius(viewport);
               if (isFull() || inCoreZone(mx, my, viewport)) {
                 camera.scale = Math.max(0.5, Math.min(3, camera.scale * (zoomIn ? 1.12 : 1 / 1.12)));
+                // Zoom-out shrinks nodes → more corpus fits at the same
+                // density: the engine may raise the core capacity and
+                // stream more in from the boundary (iteration-9).
+                engine.setViewScale(camera.scale);
               } else if (zoomIn) {
                 lens.angle = Math.atan2(my, mx);
                 lens.pull = Math.min(1, lens.pull + LENS_STEP);
@@ -400,6 +404,10 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           if (isFull() || inCoreZone(p.x, p.y, viewport)) {
             const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
             camera.scale = Math.max(0.5, Math.min(3, camera.scale * factor));
+            // Classic-viewer zoom: nodes get smaller/larger — and the
+            // density-derived capacity follows (zoom-out streams more
+            // in from the boundary).
+            engine.setViewScale(camera.scale);
             draw(1);
             return;
           }

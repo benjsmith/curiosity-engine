@@ -341,6 +341,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       const rCore = coreRadius(viewport);
       if (isFull() || inCoreZone(p.x, p.y, viewport)) {
         camera.scale = Math.max(0.5, Math.min(3, camera.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
+        // Density-coupled zoom: smaller nodes → higher core capacity.
+        engine.setViewScale(camera.scale);
         draw(1);
         return;
       }

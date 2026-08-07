@@ -240,14 +240,27 @@ export class CanvasRenderer implements SceneRenderer {
       const p = positions.get(n.id);
       if (!p || p.r <= 0) continue;
       const colour = typeColour(n.item.type, frame.theme);
-      ctx.fillStyle = colour;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
-      if (n.item.type === "unclassified") {
-        ctx.strokeStyle = "#000";
-        ctx.lineWidth = 1.5;
+      if (n.shell) {
+        // Beyond the boundary (iteration-9): outlines with a faded
+        // centre, keyed to the same palette as the solid core nodes.
+        ctx.fillStyle = colour;
+        ctx.globalAlpha = 0.18;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = 1.4;
         ctx.stroke();
+      } else {
+        // Core nodes: solid fills, exactly the classic viewer's shading.
+        ctx.fillStyle = colour;
+        ctx.fill();
+        if (n.item.type === "unclassified") {
+          ctx.strokeStyle = "#000";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
       }
       const isFocus = n.role === "focus";
       const isSelected = frame.selection.has(n.id);

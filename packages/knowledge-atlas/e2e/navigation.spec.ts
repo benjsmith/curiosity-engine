@@ -198,6 +198,16 @@ test("remote-sim source drives the same viewer", async ({ page }) => {
   expect(Number(await page.getByTestId("hud-nodes").textContent())).toBeGreaterThan(5);
 });
 
+test("phone viewport scales the core to a legible density (~50)", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.goto("/");
+  await ready(page);
+  const nodes = Number(await page.getByTestId("hud-nodes").textContent());
+  expect(nodes).toBeGreaterThan(20);
+  expect(nodes).toBeLessThan(170); // core ≈40–70 + shell fringe + horizon
+  await page.screenshot({ path: `${SHOTS}/09-phone-density.png` });
+});
+
 test("lens-drag traversal from the boundary streams and settles", async ({ page }) => {
   await page.goto("/");
   await ready(page);

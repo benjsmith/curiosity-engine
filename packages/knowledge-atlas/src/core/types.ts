@@ -290,6 +290,14 @@ export interface AtlasController {
   back(): void;
   forward(): void;
   zoomTo(level: number): void;
+  /**
+   * Report the host's geometric zoom (camera scale). Zooming out makes
+   * nodes smaller, so more corpus fits at the same legible density —
+   * the effective core capacity rises and boundary material streams
+   * in; zooming in reverses it. No-op when `config.coreCapacity` pins
+   * the capacity explicitly.
+   */
+  setViewScale(scale: number): void;
   setLens(lens: AtlasLens): void;
   setLayout(layout: LayoutKind): void;
   pin(id: string): void;

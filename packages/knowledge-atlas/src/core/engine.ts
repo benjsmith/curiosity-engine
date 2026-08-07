@@ -14,6 +14,7 @@ import { hyperbolicLayout } from "./layout/hyperbolic.ts";
 import { HitTester } from "./hittest.ts";
 import { Trails } from "./trails.ts";
 import { clampScale, nextBand } from "./zoom.ts";
+import { coreCapacityFor } from "./scene/shells.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS } from "./types.ts";
 import type { LayoutAdapter } from "./layout/types.ts";
 import type {
@@ -64,6 +65,8 @@ export class AtlasEngine implements AtlasController {
   private selection: string[] = [];
   private trails = new Trails();
   private viewport = { width: 1200, height: 800 };
+  private viewScale = 1;
+  private lastRequestedCapacity = 0;
   private status: AtlasState["status"] = "idle";
   private errorMsg?: string;
 
@@ -100,14 +103,22 @@ export class AtlasEngine implements AtlasController {
 
   // ── scene lifecycle ───────────────────────────────────────────────
 
+  /** Screen-density core capacity (iteration-9), unless pinned by config. */
+  private effectiveCapacity(): number {
+    return this.config.coreCapacity ?? coreCapacityFor(this.viewport, this.viewScale);
+  }
+
   private effectiveBudget(): SceneBudget {
-    // Budgets scale mildly with viewport area (sqrt), clamped ×[0.5, 2].
+    // Budgets scale mildly with viewport area (sqrt), clamped ×[0.5, 2] —
+    // and always leave room for the density-derived core capacity plus
+    // the horizon reserve and shell quota.
     const ref = 1200 * 800;
     const k = Math.max(0.5, Math.min(2, Math.sqrt((this.viewport.width * this.viewport.height) / ref)));
+    const capacity = this.effectiveCapacity();
     return {
-      maxNodes: Math.round(this.budget.maxNodes * k),
+      maxNodes: Math.max(Math.round(this.budget.maxNodes * k), capacity + 110),
       maxAggregates: Math.round(this.budget.maxAggregates * k),
-      maxEdges: Math.round(this.budget.maxEdges * k),
+      maxEdges: Math.max(Math.round(this.budget.maxEdges * k), Math.round(capacity * 2.2)),
       maxBundles: this.budget.maxBundles,
       maxLabels: Math.round(this.budget.maxLabels * k),
     };
@@ -130,7 +141,7 @@ export class AtlasEngine implements AtlasController {
           semanticScale: this.band,
           history: this.trails.historyIds(),
           pinned: [...this.trails.pinned],
-          coreCapacity: this.config.coreCapacity,
+          coreCapacity: (this.lastRequestedCapacity = this.effectiveCapacity()),
           budget: this.effectiveBudget(),
         },
         ac.signal,
@@ -246,6 +257,17 @@ export class AtlasEngine implements AtlasController {
     this.band = newBand;
     this.emit({ kind: "zoom-changed", semanticScale: this.semanticScale, band: this.band });
     if (changed) this.requestScene();
+  }
+
+  setViewScale(scale: number): void {
+    if (!(scale > 0) || this.destroyed) return;
+    this.viewScale = scale;
+    if (this.config.coreCapacity !== undefined) return; // pinned
+    const next = this.effectiveCapacity();
+    // Rebuild only when the density band moves materially — a single
+    // wheel notch shouldn't thrash the scene pipeline.
+    const prev = this.lastRequestedCapacity || next;
+    if (this.scene && Math.abs(next - prev) / prev >= 0.12) this.requestScene();
   }
 
   setLens(lens: AtlasLens): void {

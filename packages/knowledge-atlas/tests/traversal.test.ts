@@ -12,6 +12,7 @@ import {
   LensTraversal,
   MAX_DOCS_PER_SECOND,
   docsPerPixel,
+  flowCapFor,
   shellTotalsFromScene,
 } from "../src/interaction/traversal.ts";
 import { coreRadius, rimRadiusAt } from "../src/core/geometry.ts";
@@ -172,6 +173,37 @@ describe("LensTraversal", () => {
     const f = t.tick(32, false);
     expect(f.active).toBe(false);
     expect(f.intensity).toBe(0);
+  });
+});
+
+describe("flowCapFor (corpus-scaled speed limit)", () => {
+  it("a sub-1k wiki can never read thousands of docs/sec", () => {
+    // ~640 docs beyond the core → the cap is the corpus itself.
+    expect(flowCapFor([0, 400, 240, 0, 0])).toBe(640);
+    expect(flowCapFor([0, 0, 0, 0, 0])).toBe(30); // floor
+  });
+
+  it("cloud corpora keep the absolute limit", () => {
+    expect(flowCapFor([0, 640, 6_400, 64_000, 640_000])).toBe(MAX_DOCS_PER_SECOND);
+  });
+
+  it("the traversal's flow respects the corpus cap", () => {
+    const { engine } = stubEngine();
+    const small = [0, 400, 240, 0, 0] as const; // 640-doc boundary
+    const t = new LensTraversal(engine, VIEW, () => small);
+    t.start(rhoAt(0.9), 0, 0);
+    let now = 0;
+    for (let i = 0; i < 40; i++) {
+      now += 16;
+      t.drag(-500, 0, 16); // absurd speed
+    }
+    const before = t.tick(now, false).odometer;
+    let after = before;
+    for (let i = 0; i < 10; i++) {
+      now += 100; // one full second of sustained max flow
+      after = t.tick(now, false).odometer;
+    }
+    expect(after - before).toBeLessThanOrEqual(640 + 1); // ≤ cap × 1s
   });
 });
 

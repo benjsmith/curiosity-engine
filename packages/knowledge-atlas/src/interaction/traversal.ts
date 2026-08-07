@@ -22,10 +22,23 @@ import { coreRadius, rimRadiusAt, type Viewport } from "../core/geometry.ts";
 import type { AtlasEngine } from "../core/engine.ts";
 
 /** Hard limits — the "scrolling speed limits". */
-export const MAX_DOCS_PER_SECOND = 250_000; // display-flow cap
+export const MAX_DOCS_PER_SECOND = 250_000; // absolute display-flow cap
 export const COMMIT_INTERVAL_MS = 400; // ≤2.5 real scene commits/sec
 export const FRICTION_PER_MS = 0.9965; // ≈0.81 per 60ms — iOS-ish decay
 export const STOP_VELOCITY = 0.02; // normalized flow below which we settle
+
+/**
+ * The flow can never exceed what the corpus could plausibly stream: a
+ * sub-1k wiki must not read "10k docs/sec". The cap is the smaller of
+ * the absolute limit and "sweep the whole remaining corpus in about a
+ * second" (iteration-9). Intensity normalizes against this same cap,
+ * so a small wiki still reaches full streaks at its own top speed.
+ */
+export function flowCapFor(shellTotals: readonly number[]): number {
+  let outside = 0;
+  for (const t of shellTotals) outside += t ?? 0;
+  return Math.max(30, Math.min(MAX_DOCS_PER_SECOND, outside));
+}
 
 export type TraversalFrame = {
   active: boolean;
@@ -93,6 +106,7 @@ export class LensTraversal {
   private active = false;
   private angle = 0;
   private dpp = 1; // docs per centerward pixel at gesture start
+  private flowCap = MAX_DOCS_PER_SECOND; // corpus-scaled at start()
   /** Current flow in docs/second (post-cap). */
   private flow = 0;
   private odometer = 0;
@@ -119,7 +133,9 @@ export class LensTraversal {
     this.active = true;
     this.released = false;
     this.angle = Math.atan2(y, x);
-    this.dpp = docsPerPixel(rho, this.angle, this.viewport, this.shellTotals());
+    const totals = this.shellTotals();
+    this.dpp = docsPerPixel(rho, this.angle, this.viewport, totals);
+    this.flowCap = flowCapFor(totals);
     this.flow = 0;
     this.odometer = 0;
     this.phase = 0;
@@ -135,8 +151,8 @@ export class LensTraversal {
     const centerward = -(dx * Math.cos(this.angle) + dy * Math.sin(this.angle));
     if (centerward <= 0 || dtMs <= 0) return;
     const rate = (centerward / dtMs) * 1000 * this.dpp; // docs/sec
-    // Blend toward the instantaneous rate; cap = the speed limit.
-    this.flow = Math.min(MAX_DOCS_PER_SECOND, this.flow * 0.6 + rate * 0.4);
+    // Blend toward the instantaneous rate; cap = the corpus-scaled limit.
+    this.flow = Math.min(this.flowCap, this.flow * 0.6 + rate * 0.4);
   }
 
   release(): void {
@@ -168,7 +184,7 @@ export class LensTraversal {
       commitLensTarget(this.engine, { pull: 1, angle: this.angle }, coreRadius(this.viewport));
     }
 
-    const normalized = this.flow / MAX_DOCS_PER_SECOND;
+    const normalized = this.flow / this.flowCap;
     if (this.released && normalized < STOP_VELOCITY) {
       this.active = false;
       this.flow = 0;
@@ -183,9 +199,10 @@ export class LensTraversal {
   }
 
   private intensityOf(flow: number): number {
-    // Log response so a 400-doc wiki and a 100M corpus both animate.
+    // Log response against the corpus-scaled cap so a 400-doc wiki and
+    // a 100M corpus both reach full streaks at their own top speed.
     if (flow <= 0) return 0;
-    return Math.min(1, Math.log10(1 + flow) / Math.log10(1 + MAX_DOCS_PER_SECOND));
+    return Math.min(1, Math.log10(1 + flow) / Math.log10(1 + this.flowCap));
   }
 }
 
