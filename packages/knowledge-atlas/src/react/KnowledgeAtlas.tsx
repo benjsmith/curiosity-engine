@@ -27,6 +27,20 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const liveRef = useRef<HTMLDivElement>(null);
     const engineRef = useRef<AtlasEngine | null>(null);
+    // Label policy is read at draw time via refs so changing it never
+    // recreates the engine; redrawRef lets the label effect repaint.
+    const labelRef = useRef<{ mode: "auto" | "on" | "off"; types: ReadonlySet<string> | null }>({
+      mode: "auto",
+      types: null,
+    });
+    labelRef.current = {
+      mode: props.labelMode ?? "auto",
+      types: props.labelTypes ? new Set(props.labelTypes) : null,
+    };
+    const redrawRef = useRef<(() => void) | null>(null);
+    useEffect(() => {
+      redrawRef.current?.();
+    }, [props.labelMode, props.labelTypes]);
 
     // Recreate the engine when the data source changes (workspace swap).
     useEffect(() => {
@@ -113,7 +127,14 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         if (!snap.scene || !snap.layout) return;
         const rCore = coreRadius(viewport);
         const full = isFullGraphScene(snap.scene);
-        const layout = isHybrid && !full ? applyLens(snap.layout, lens, rCore) : snap.layout;
+        // During a traversal, keep the field drifting continuously
+        // toward the drag between rate-limited commits — without this
+        // the graph only steps ~3×/sec and reads as a low frame rate.
+        const effLens: LensState =
+          motionFrame?.active && motionFrame.intensity > 0.02
+            ? { pull: Math.max(lens.pull, Math.min(0.45, motionFrame.intensity * 0.45)), angle: motionFrame.angle }
+            : lens;
+        const layout = isHybrid && !full ? applyLens(snap.layout, effLens, rCore) : snap.layout;
         renderer.render({
           scene: snap.scene,
           layout,
@@ -130,8 +151,11 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           showHorizonRing: (props.config?.layout ?? "focus") !== "force" && !full,
           coreRadius: isHybrid && !full ? coreRadius(viewport) : undefined,
           motion: motionFrame?.active ? motionFrame : undefined,
+          labelMode: labelRef.current.mode,
+          labelTypes: labelRef.current.types,
         });
       };
+      redrawRef.current = () => draw(1);
 
       const animate = () => {
         const t = Math.min(1, (performance.now() - animStart) / transitionMs);
@@ -506,6 +530,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         cancelAnimationFrame(raf);
         cancelAnimationFrame(motionRaf);
         trav.cancel();
+        redrawRef.current = null;
         ro.disconnect();
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointermove", onPointerMove);

@@ -23,13 +23,12 @@ import type { RankedCandidate } from "./ranking.ts";
 export const DEFAULT_CORE_CAPACITY = 360;
 
 /**
- * Legibility density (iteration-9): the classic viewer shows ~360
- * nodes on a 1280×800 desktop — one node per ~2850 px² (≈53 px
- * pitch). Capacity now derives from that density instead of being a
- * fixed 360, so a phone gets ~50, a desktop stays ~360, and a big
- * display shows many more — same legible pitch everywhere.
+ * Legibility density (iteration-9; loosened a notch in iteration-10):
+ * one node per ~3300 px² (≈57 px pitch). Capacity derives from this
+ * density instead of a fixed 360 — a phone gets ~50, a desktop ~310,
+ * a big display many more, same legible pitch everywhere.
  */
-export const TARGET_PX_PER_NODE = 2850;
+export const TARGET_PX_PER_NODE = 3300;
 export const MIN_CORE_CAPACITY = 40;
 export const MAX_CORE_CAPACITY = 1600;
 

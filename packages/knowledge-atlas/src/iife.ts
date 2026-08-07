@@ -20,12 +20,18 @@ export type MountOptions = {
   data: CEData;
   initialFocus?: string;
   config?: AtlasConfig;
+  /** Label policy (classic parity): auto (default) / on / off. */
+  labelMode?: "auto" | "on" | "off";
+  /** Types whose labels are eligible; null/undefined = all types. */
+  labelTypes?: readonly string[] | null;
   onOpenItem?: (id: string) => void;
   onEvent?: (event: AtlasEvent) => void;
 };
 
 export type MountHandle = {
   engine: AtlasEngine;
+  /** Update the label policy live (wired to the host's label picker). */
+  setLabels: (mode: "auto" | "on" | "off", types?: readonly string[] | null) => void;
   destroy: () => void;
 };
 
@@ -86,6 +92,11 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let motionRaf = 0;
   let lastMoveT = 0;
 
+  const labelState = {
+    mode: opts.labelMode ?? "auto",
+    types: opts.labelTypes ? new Set(opts.labelTypes) : null,
+  } as { mode: "auto" | "on" | "off"; types: ReadonlySet<string> | null };
+
   const isFull = () => {
     const sc = engine.snapshot().scene;
     return sc ? isFullGraphScene(sc) : false;
@@ -94,7 +105,12 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     const snap = engine.snapshot();
     if (!snap.scene || !snap.layout) return;
     const full = isFullGraphScene(snap.scene);
-    const layout = isHybrid && !full ? applyLens(snap.layout, lens, coreRadius(viewport)) : snap.layout;
+    // Continuous drift toward the drag between rate-limited commits.
+    const effLens: LensState =
+      motionFrame?.active && motionFrame.intensity > 0.02
+        ? { pull: Math.max(lens.pull, Math.min(0.45, motionFrame.intensity * 0.45)), angle: motionFrame.angle }
+        : lens;
+    const layout = isHybrid && !full ? applyLens(snap.layout, effLens, coreRadius(viewport)) : snap.layout;
     renderer.render({
       scene: snap.scene,
       layout,
@@ -111,6 +127,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       showHorizonRing: (opts.config?.layout ?? "focus") !== "force" && !full,
       coreRadius: isHybrid && !full ? coreRadius(viewport) : undefined,
       motion: motionFrame?.active ? motionFrame : undefined,
+      labelMode: labelState.mode,
+      labelTypes: labelState.types,
     });
   };
   const animate = () => {
@@ -381,6 +399,11 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
 
   return {
     engine,
+    setLabels: (mode, types) => {
+      labelState.mode = mode;
+      if (types !== undefined) labelState.types = types ? new Set(types) : null;
+      draw(1);
+    },
     destroy: () => {
       cancelAnimationFrame(raf);
       cancelAnimationFrame(motionRaf);

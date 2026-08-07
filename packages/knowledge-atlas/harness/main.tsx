@@ -40,10 +40,21 @@ function buildSources(): Fixture[] {
   return [...fixtures, megaCorpus(SEED), scaled, remote];
 }
 
+// Classic-viewer label defaults: concept + entity are the structural
+// hubs, note + todo are user input; the rest label only when picked.
+const ALL_LABEL_TYPES = [
+  "project", "analysis", "concept", "entity", "evidence", "fact",
+  "figure", "table", "source", "note", "todo-list", "unclassified",
+];
+const LABEL_TYPE_DEFAULTS = ["concept", "entity", "note", "todo-list"];
+
 function App() {
   const fixtures = useMemo(buildSources, []);
   const [fixtureIdx, setFixtureIdx] = useState(0);
   const [layout, setLayout] = useState<LayoutKind>("hybrid");
+  const [labelMode, setLabelMode] = useState<"auto" | "on" | "off">("auto");
+  const [labelTypes, setLabelTypes] = useState<string[]>(LABEL_TYPE_DEFAULTS);
+  const [showLabelPicker, setShowLabelPicker] = useState(false);
   const [stats, setStats] = useState<SceneStats | null>(null);
   const [horizon, setHorizon] = useState<HorizonGroup[]>([]);
   const [trail, setTrail] = useState<TrailState | null>(null);
@@ -123,6 +134,19 @@ function App() {
           data-testid="btn-zoom-in"
           onClick={() => controllerRef.current?.zoomTo((controllerRef.current?.getState().semanticScale ?? 2) + 1)}
         >zoom +</button>
+        <select
+          data-testid="label-mode"
+          value={labelMode}
+          onChange={(e) => setLabelMode(e.target.value as "auto" | "on" | "off")}
+          title="Label mode (classic viewer parity)"
+        >
+          <option value="auto">labels: auto</option>
+          <option value="on">labels: on</option>
+          <option value="off">labels: off</option>
+        </select>
+        <button data-testid="btn-label-types" onClick={() => setShowLabelPicker((v) => !v)}>
+          types…
+        </button>
         <div className="spacer" />
         <span data-testid="focus-title">{focusTitle}</span>
       </div>
@@ -134,9 +158,30 @@ function App() {
           dataSource={fixture.source}
           initialFocus={fixture.defaultFocus}
           config={config}
+          labelMode={labelMode}
+          labelTypes={labelTypes}
           onEvent={onEvent}
           onOpenItem={(id) => setOpened(id)}
         />
+        {showLabelPicker && (
+          <div className="explain" style={{ position: "absolute", top: 8, right: 8, maxWidth: 240 }} data-testid="label-picker">
+            <div style={{ marginBottom: 4, fontWeight: 600 }}>
+              label types <button style={{ float: "right" }} onClick={() => setShowLabelPicker(false)}>×</button>
+            </div>
+            {ALL_LABEL_TYPES.map((t) => (
+              <label key={t} style={{ display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={labelTypes.includes(t)}
+                  onChange={(e) =>
+                    setLabelTypes((prev) => (e.target.checked ? [...prev, t] : prev.filter((x) => x !== t)))
+                  }
+                />
+                {t}
+              </label>
+            ))}
+          </div>
+        )}
         {opened && (
           <div
             className="explain"

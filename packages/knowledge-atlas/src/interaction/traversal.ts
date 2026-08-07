@@ -23,9 +23,14 @@ import type { AtlasEngine } from "../core/engine.ts";
 
 /** Hard limits — the "scrolling speed limits". */
 export const MAX_DOCS_PER_SECOND = 250_000; // absolute display-flow cap
-export const COMMIT_INTERVAL_MS = 400; // ≤2.5 real scene commits/sec
-export const FRICTION_PER_MS = 0.9965; // ≈0.81 per 60ms — iOS-ish decay
-export const STOP_VELOCITY = 0.02; // normalized flow below which we settle
+export const COMMIT_INTERVAL_MS = 320; // ≈3 real scene commits/sec
+/**
+ * Momentum decay. Iteration-10 feedback: several seconds to stop felt
+ * unresponsive — this half-life (~115 ms) plus the raised stop
+ * threshold settles a full-speed flick in roughly half a second.
+ */
+export const FRICTION_PER_MS = 0.994;
+export const STOP_VELOCITY = 0.045; // normalized flow below which we settle
 
 /**
  * The flow can never exceed what the corpus could plausibly stream: a

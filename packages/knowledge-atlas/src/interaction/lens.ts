@@ -53,11 +53,39 @@ export function applyLens(layout: LayoutResult, lens: LensState, rCore: number):
   return { positions, displacement: layout.displacement };
 }
 
+/** Absorption gearing: per-commit boost toward a sector's type, and
+ * the cap that keeps a runaway lens from monopolising the ranking. */
+export const ABSORB_BOOST = 1.6;
+export const ABSORB_CAP = 8;
+export const ABSORB_DECAY = 0.85;
+
+/**
+ * Steer the ranking toward `type` (iteration-10): repeatedly pulling a
+ * sector inward should feel like approaching it — each commit boosts
+ * that type's lens weight (so more of it ranks into the core and its
+ * beyond-the-horizon count genuinely drops toward zero) while other
+ * boosted types decay back toward neutral.
+ */
+export function absorbTowardType(engine: AtlasEngine, type: string): void {
+  const lens = engine.getState().lens;
+  const weights: Record<string, number> = { ...(lens.typeWeights ?? {}) };
+  for (const k of Object.keys(weights)) {
+    if (k !== type && weights[k] > 1) {
+      const w = weights[k] * ABSORB_DECAY;
+      if (w <= 1.05) delete weights[k];
+      else weights[k] = w;
+    }
+  }
+  weights[type] = Math.min(ABSORB_CAP, Math.max(1, weights[type] ?? 1) * ABSORB_BOOST);
+  engine.setLens({ ...lens, typeWeights: weights });
+}
+
 /**
  * Commit a saturated pull: focus the dominant rim item in the lens
  * sector. Aggregates enter through their top-ranked member so the
- * unfold animation carries the region into the core. Returns true if
- * something was focused.
+ * unfold animation carries the region into the core — and steer the
+ * ranking toward their type so repeated pulls absorb the whole group.
+ * Returns true if the scene was retargeted.
  */
 export function commitLensTarget(engine: AtlasEngine, lens: LensState, rCore: number): boolean {
   const snap = engine.snapshot();
@@ -74,19 +102,21 @@ export function commitLensTarget(engine: AtlasEngine, lens: LensState, rCore: nu
     if (!best || w > best.weight) best = { id, weight: w, isAggregate };
   };
   for (const n of snap.scene.nodes) consider(n.id, Math.max(0.001, n.score), false);
-  for (const a of snap.scene.aggregates) {
-    if (a.memberIds.length === 0) continue; // far smears can't be entered
-    consider(a.id, a.count * 0.5, true);
-  }
+  // Far smears (empty memberIds) can't be focus-entered, but they CAN
+  // be absorbed via the type boost — so they are targets too.
+  for (const a of snap.scene.aggregates) consider(a.id, a.count * 0.5, true);
   const target = best as { id: string; weight: number; isAggregate: boolean } | null;
   if (!target) return false;
   if (target.isAggregate) {
     const agg = snap.scene.aggregates.find((a) => a.id === target.id);
-    const member = agg?.memberIds[0];
-    if (!member) return false;
-    engine.focus(member, "user");
-  } else {
-    engine.focus(target.id, "user");
+    if (!agg) return false;
+    // Boost first (its rebuild is superseded by the focus request when
+    // there is an enterable member — the engine drops stale scenes).
+    absorbTowardType(engine, agg.type);
+    const member = agg.memberIds[0];
+    if (member) engine.focus(member, "user");
+    return true;
   }
+  engine.focus(target.id, "user");
   return true;
 }

@@ -302,11 +302,25 @@ export class CanvasRenderer implements SceneRenderer {
     const byScore = [...frame.scene.nodes].sort((a, b) =>
       a.role === "focus" ? -1 : b.role === "focus" ? 1 : b.score - a.score || (a.id < b.id ? -1 : 1),
     );
+    // Label policy (iteration-10, classic-viewer parity): the focus is
+    // always labelled; other nodes pass the mode + type filter. Auto
+    // mode requires legible screen size and skips periphery nodes —
+    // their sector smears carry the captions out there.
+    const labelMode = frame.labelMode ?? "auto";
+    const MIN_LABEL_SCREEN_R = 6; // matches the classic viewer's constant
     let labelCount = 0;
     for (const n of byScore) {
       if (labelCount >= frame.maxLabels) break;
       const p = positions.get(n.id);
       if (!p) continue;
+      if (n.role !== "focus") {
+        if (labelMode === "off") continue;
+        if (frame.labelTypes && !frame.labelTypes.has(n.item.type)) continue;
+        if (labelMode === "auto") {
+          if (n.shell) continue;
+          if (p.r * frame.camera.scale < MIN_LABEL_SCREEN_R) continue;
+        }
+      }
       const text = truncate(n.item.title, 28);
       const w = this.measure(ctx, text);
       // Flip to the node's left when the label would clip the right

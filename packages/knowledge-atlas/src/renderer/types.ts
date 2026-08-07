@@ -48,6 +48,15 @@ export type Frame = {
   coreRadius?: number;
   /** Active lens-traversal motion abstraction (drawn over the scene). */
   motion?: MotionOverlay;
+  /**
+   * Label policy, mirroring the classic viewer (iteration-10):
+   * "auto" (default) labels only nodes big enough on screen and inside
+   * the core zone; "on" labels everything the collision pass admits;
+   * "off" labels only the focus.
+   */
+  labelMode?: "auto" | "on" | "off";
+  /** Types whose labels are eligible (null/undefined = all types). */
+  labelTypes?: ReadonlySet<string> | null;
 };
 
 export interface SceneRenderer {

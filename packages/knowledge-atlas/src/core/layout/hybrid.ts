@@ -393,7 +393,7 @@ function placeShells(
   rimInner: number,
 ): void {
   void Rcore;
-  type P = { id: string; sector: number; shell: number; r: number; order: number };
+  type P = { id: string; sector: number; shell: number; r: number; order: number; isAgg: boolean };
   const placements: P[] = [];
   for (const n of scene.nodes) {
     if (coreSet.has(n.id)) continue;
@@ -402,7 +402,7 @@ function placeShells(
     const sector = cls
       ? CLASS_ORDER.indexOf(cls) * ((2 * Math.PI) / CLASS_ORDER.length) + Math.PI / CLASS_ORDER.length - Math.PI / 2
       : anchorAngle(`type:${n.item.type}`);
-    placements.push({ id: n.id, sector, shell, r: nodeRadius(n.item.meta.degree), order: n.score });
+    placements.push({ id: n.id, sector, shell, r: nodeRadius(n.item.meta.degree), order: n.score, isAgg: false });
   }
   for (const a of scene.aggregates) {
     placements.push({
@@ -411,6 +411,7 @@ function placeShells(
       shell: Math.max(1, Math.min(4, a.shell ?? 1)),
       r: aggregateRadius(a.count),
       order: a.count,
+      isAgg: true,
     });
   }
 
@@ -421,6 +422,8 @@ function placeShells(
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
   }
   const SECTOR_ARC = 0.78;
+  type Placed = { id: string; angle: number; rho: number; r: number; isAgg: boolean; shell: number };
+  const placed: Placed[] = [];
   for (const list of groups.values()) {
     list.sort((a, b) => b.order - a.order || (a.id < b.id ? -1 : 1));
     const { sector, shell } = list[0];
@@ -445,11 +448,60 @@ function placeShells(
       const clampedRho = Math.min(rho, wallHere - 10);
       // Sizes shrink with shell — granular → smeared.
       const shrink = 1 - 0.18 * (shell - 1) - 0.25 * (clampedRho / Math.max(wallHere, 1)) ** 2;
-      positions.set(p.id, {
-        x: Math.cos(angle) * clampedRho,
-        y: Math.sin(angle) * clampedRho,
+      placed.push({
+        id: p.id,
+        angle,
+        rho: clampedRho,
         r: Math.max(2, p.r * Math.max(0.35, shrink)),
+        isAgg: p.isAgg,
+        shell,
       });
+    }
+  }
+  relaxShellBands(placed);
+  for (const q of placed) {
+    const wallHere = rimRadiusAt(q.angle, ctx.viewport);
+    const rho = Math.min(q.rho, wallHere - 10);
+    positions.set(q.id, { x: Math.cos(q.angle) * rho, y: Math.sin(q.angle) * rho, r: q.r });
+  }
+}
+
+/**
+ * Periphery de-overlap (iteration-10): different type sectors and the
+ * smear ellipses were piling onto each other. Within each shell band,
+ * push radially-close items apart tangentially — packing may be much
+ * tighter than the core (2 px pad), but not on top of one another.
+ * Extents mirror the renderer: aggregates stretch tangentially by
+ * (1 + 0.9·shell) and squash radially; nodes are circles.
+ */
+function relaxShellBands(
+  placed: Array<{ angle: number; rho: number; r: number; isAgg: boolean; shell: number }>,
+): void {
+  const PAD = 2;
+  const tang = (q: { r: number; isAgg: boolean; shell: number }) =>
+    q.r * (q.isAgg ? 1 + q.shell * 0.9 : 1) + PAD;
+  const radial = (q: { r: number; isAgg: boolean; shell: number }) =>
+    q.r * (q.isAgg ? Math.max(0.4, 1 - q.shell * 0.16) : 1) + PAD;
+  for (let k = 1; k <= 4; k++) {
+    const band = placed.filter((q) => q.shell === k);
+    if (band.length < 2) continue;
+    for (let pass = 0; pass < 4; pass++) {
+      band.sort((a, b) => a.angle - b.angle);
+      for (let i = 0; i < band.length; i++) {
+        for (let w = 1; w <= 3 && w < band.length; w++) {
+          const a = band[i];
+          const b = band[(i + w) % band.length];
+          let dAng = b.angle - a.angle;
+          while (dAng < 0) dAng += 2 * Math.PI;
+          while (dAng >= 2 * Math.PI) dAng -= 2 * Math.PI;
+          if (Math.abs(a.rho - b.rho) >= radial(a) + radial(b)) continue; // different rows
+          const need = (tang(a) + tang(b)) / Math.max(1, (a.rho + b.rho) / 2);
+          if (dAng >= need) continue;
+          const push = (need - dAng) / 2;
+          a.angle -= push;
+          b.angle += push;
+        }
+      }
     }
   }
 }

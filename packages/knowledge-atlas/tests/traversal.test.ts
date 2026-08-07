@@ -142,9 +142,11 @@ describe("LensTraversal", () => {
     }
     expect(f.active).toBe(false); // came to rest, not the frame cap
     expect(frames).toBeGreaterThan(10); // …but not instantly
-    // Sanity: the chosen constant halves flow roughly every ~200ms.
-    expect(Math.pow(FRICTION_PER_MS, 200)).toBeGreaterThan(0.4);
-    expect(Math.pow(FRICTION_PER_MS, 200)).toBeLessThan(0.6);
+    // Feels responsive (iteration-10): a full-speed flick settles in
+    // well under a second, and the half-life is ~115ms.
+    expect(frames * 16).toBeLessThan(1000);
+    expect(Math.pow(FRICTION_PER_MS, 115)).toBeGreaterThan(0.45);
+    expect(Math.pow(FRICTION_PER_MS, 115)).toBeLessThan(0.55);
   });
 
   it("rate-limits real scene commits to COMMIT_INTERVAL_MS", () => {

@@ -209,6 +209,41 @@ made no sense across screen sizes.
   with an 18%-alpha faded centre — same palette, visibly "not here
   yet".
 
+### Iteration 10 (2026-08-07) — responsive momentum, sector absorption, classic labels, tidy periphery
+
+Phone feedback (IMG_1909): momentum too floaty, commits read as ~1 fps,
+the "54 facts" smear felt unreachable, density still a notch high,
+labels regressed vs the classic viewer, periphery overlapped.
+
+- **Momentum feels like iOS now.** Friction half-life 200 → ~115 ms
+  and a raised stop threshold: a full-speed flick settles in ~½ s
+  (test-pinned < 1 s) instead of several seconds.
+- **Continuous motion between commits.** Real scene commits now run at
+  ≤ ~3/sec (320 ms interval) AND the field drifts continuously toward
+  the drag via a live lens displacement scaled by flow intensity — the
+  graph no longer "steps" between rebuilds.
+- **Dragging toward a sector absorbs it.** Each commit toward a typed
+  aggregate boosts that type's lens weight (×1.6/commit, capped 8×,
+  others decay back to neutral), and strongly boosted types pull even
+  their beyond-harvest members into the ranking pool. Repeated drags
+  toward "54 facts beyond the horizon" now visibly drain it — more
+  facts in the core each pull, the count falling to zero once the type
+  is fully inside. Steering toward a different sector releases the
+  boost. (Verified live: the facts smears were gone after two drags.)
+- **Density loosened a notch**: one node per ~3300 px² (phone ~50,
+  desktop ~310).
+- **Classic label rules.** `labelMode` auto/on/off + a label-type
+  filter, exactly the classic viewer's model: auto (default) labels
+  only nodes ≥ 6 px screen radius inside the core, the filter defaults
+  to concept/entity/note/todo, and the harness toolbar now carries the
+  mode select + a types… picker so it's testable in the artifact. CE
+  wiki-view/Switchbay will wire their existing pickers straight into
+  `setLabels` / the React props.
+- **Periphery de-overlap.** A tangential relaxation pass per shell
+  band pushes radially-close items apart (smears counted at their
+  stretched width, 2 px pad — much tighter packing than the core, but
+  nothing on top of anything). Test asserts zero overlapping pairs.
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:

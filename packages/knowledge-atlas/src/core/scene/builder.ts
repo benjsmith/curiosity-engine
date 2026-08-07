@@ -7,7 +7,7 @@
 import { buildAggregates } from "./aggregate.ts";
 import { computeHorizon } from "./discovery.ts";
 import { buildLandmarks } from "./landmarks.ts";
-import { rankHarvest, selectDiverse } from "./ranking.ts";
+import { hubPenalty, rankHarvest, selectDiverse } from "./ranking.ts";
 import { buildShells, DEFAULT_CORE_CAPACITY } from "./shells.ts";
 import type { GraphIndex } from "../graphindex.ts";
 import type {
@@ -69,6 +69,32 @@ export function buildScene(
 
   // 2. rank
   const ranked = rankHarvest(g, harvest, req.lens, history);
+
+  // 2b. absorption (iteration-10): a type the lens strongly boosts
+  // (> 2×, i.e. the user is steering toward its sector) pulls its
+  // un-harvested members into the pool too — repeated pulls should be
+  // able to absorb the WHOLE type into the core, not just the part
+  // within harvest range. Score grows with the boost, so the harder
+  // the pull, the more of the type ranks in. Local indexes only; a
+  // cloud source implements the same rule server-side.
+  const boostedTypes = Object.entries(req.lens.typeWeights ?? {}).filter(([, w]) => w > 2);
+  if (boostedTypes.length) {
+    const have = new Set(ranked.map((r) => r.id));
+    for (const [t, w] of boostedTypes) {
+      for (const item of g.items.values()) {
+        if (item.type !== t || have.has(item.id) || item.id === focusId) continue;
+        ranked.push({
+          id: item.id,
+          hop: 3,
+          via: "wikilink",
+          parent: focusId,
+          confidence: 0.6,
+          score: 0.25 * w * hubPenalty(g.degree(item.id)),
+        });
+      }
+    }
+    ranked.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
+  }
 
   // 3. select the central graph (MMR diversity at small budgets; plain
   //    rank order at CE-viewer scale, where MMR is O(n²) and the local
