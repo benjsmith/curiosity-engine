@@ -46,7 +46,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let hoverId: string | null = null;
   const camera: Camera = { x: 0, y: 0, scale: 1 };
   let viewport = { width: container.clientWidth || 800, height: container.clientHeight || 600 };
-  const isHybrid = (opts.config?.layout ?? "focus") === "hybrid";
+  const layoutKind = opts.config?.layout ?? "focus";
+  const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
   const lens: LensState = { pull: 0, angle: 0 };
 
   const draw = (progress: number) => {

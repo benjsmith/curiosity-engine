@@ -151,6 +151,20 @@ Changes ([img/04-layout-hybrid.png](img/04-layout-hybrid.png)):
 - labels near the right wall flip to the node's left instead of
   clipping off-canvas.
 
+### Iteration 4 (same day) — adaptive hybrid (P7)
+
+The maintainer liked the gridlike columnar view the adaptive P5 mode
+produced under some topologies and asked for it inside the hybrid
+frame. New `layout: "adaptive-hybrid"`
+([img/07-adaptive-hybrid-tree.png](img/07-adaptive-hybrid-tree.png)):
+identical core/rim partition, squircle shelves and lens as hybrid, but
+the CORE's internal arrangement adapts — when the core subgraph
+classifies as star/chain/tree/bipartite, it renders as typed columns
+(focus left, hop-1 fan, one gridlike hop-2+ column grouped by type);
+dense meshes keep the force cloud (verified byte-identical to plain
+hybrid on the workspace fixture). Both hybrids share
+`partitionCore()`, so lens and aggregate-unfold behave identically.
+
 ## Recommendation for the next production iteration
 
 1. **Adopt the P1 focus atlas as the production default**, force kept

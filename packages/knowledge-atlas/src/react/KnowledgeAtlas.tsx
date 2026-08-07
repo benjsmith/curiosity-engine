@@ -65,7 +65,8 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       let hoverId: string | null = null;
       const camera: Camera = { x: 0, y: 0, scale: 1 };
       let viewport = { width: host.clientWidth || 800, height: host.clientHeight || 600 };
-      const isHybrid = (props.config?.layout ?? "focus") === "hybrid";
+      const layoutKind = props.config?.layout ?? "focus";
+      const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
       const lens: LensState = { pull: 0, angle: 0 };
 
       const draw = (progress: number) => {

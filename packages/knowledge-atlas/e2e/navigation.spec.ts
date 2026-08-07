@@ -134,7 +134,7 @@ test("keyboard: arrows + Enter navigate, Backspace goes back", async ({ page }) 
 test("layout modes render on identical scene data", async ({ page }) => {
   await page.goto("/");
   await ready(page);
-  for (const mode of ["hybrid", "focus", "hyperbolic", "force", "adaptive"] as const) {
+  for (const mode of ["hybrid", "adaptive-hybrid", "focus", "hyperbolic", "force", "adaptive"] as const) {
     await page.getByTestId("layout-select").selectOption(mode);
     await ready(page);
     const nodes = Number(await page.getByTestId("hud-nodes").textContent());

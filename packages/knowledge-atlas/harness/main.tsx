@@ -102,6 +102,7 @@ function App() {
           onChange={(e) => setLayout(e.target.value as LayoutKind)}
         >
           <option value="hybrid">hybrid (P6: force core + type rim)</option>
+          <option value="adaptive-hybrid">adaptive hybrid (P7: gridlike core when it fits)</option>
           <option value="focus">focus (P1)</option>
           <option value="force">force (P0 baseline)</option>
           <option value="hyperbolic">hyperbolic (P3)</option>

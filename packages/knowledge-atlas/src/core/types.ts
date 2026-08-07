@@ -298,7 +298,13 @@ export interface AtlasController {
 
 // ── config & theme ──────────────────────────────────────────────────
 
-export type LayoutKind = "force" | "focus" | "hybrid" | "hyperbolic" | "adaptive";
+export type LayoutKind =
+  | "force"
+  | "focus"
+  | "hybrid"
+  | "adaptive-hybrid"
+  | "hyperbolic"
+  | "adaptive";
 
 export type AtlasConfig = {
   /** Seed for every stochastic step (PLAN AD-7). Default 42. */

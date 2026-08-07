@@ -178,6 +178,48 @@ describe("hybrid layout (P6)", () => {
   });
 });
 
+describe("adaptive-hybrid layout (P7)", () => {
+  const ctx = { viewport: { width: 1200, height: 800 }, seed: 42 };
+
+  it("tree-like core becomes columnar (gridlike): few distinct x values", async () => {
+    const { adaptiveHybridLayout } = await import("../src/core/layout/adaptiveHybrid.ts");
+    const { partitionCore } = await import("../src/core/layout/hybrid.ts");
+    const f = ontologyTree();
+    const scene = await f.source.getScene(req(f.defaultFocus));
+    const l = adaptiveHybridLayout.layout(scene, ctx);
+    const coreSet = partitionCore(scene);
+    const xs = new Set(
+      [...coreSet]
+        .map((id) => l.positions.get(id))
+        .filter((p): p is NonNullable<typeof p> => !!p)
+        .map((p) => Math.round(p.x)),
+    );
+    // Columns: focus + ≤3 hop bands => at most 4 distinct x positions.
+    expect(xs.size).toBeLessThanOrEqual(4);
+    // Every scene item is still placed (rim included).
+    for (const n of scene.nodes) expect(l.positions.has(n.id), n.id).toBe(true);
+    for (const a of scene.aggregates) expect(l.positions.has(a.id), a.id).toBe(true);
+  });
+
+  it("meshy core falls back to the hybrid force cloud", async () => {
+    const { adaptiveHybridLayout } = await import("../src/core/layout/adaptiveHybrid.ts");
+    const { hybridLayout } = await import("../src/core/layout/hybrid.ts");
+    const scene = buildScene(g, req("concepts/attention"), 42);
+    const a = adaptiveHybridLayout.layout(scene, ctx);
+    const b = hybridLayout.layout(scene, ctx);
+    expect(JSON.stringify([...a.positions])).toBe(JSON.stringify([...b.positions]));
+  });
+
+  it("is deterministic", async () => {
+    const { adaptiveHybridLayout } = await import("../src/core/layout/adaptiveHybrid.ts");
+    const f = ontologyTree();
+    const scene = await f.source.getScene(req(f.defaultFocus));
+    const a = adaptiveHybridLayout.layout(scene, ctx);
+    const b = adaptiveHybridLayout.layout(scene, ctx);
+    expect(JSON.stringify([...a.positions])).toBe(JSON.stringify([...b.positions]));
+  });
+});
+
 describe("lens", () => {
   it("pull moves only the targeted rim sector inward; commit focuses its dominant item", async () => {
     const { hybridLayout, coreRadius } = await import("../src/core/layout/hybrid.ts");

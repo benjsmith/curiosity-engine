@@ -14,6 +14,7 @@ export { forceLayout } from "./core/layout/force.ts";
 export { hyperbolicLayout } from "./core/layout/hyperbolic.ts";
 export { hybridLayout, coreRadius, rimRadiusAt, CORE_SHARE } from "./core/layout/hybrid.ts";
 export { adaptiveLayout, classifyTopology } from "./core/layout/adaptive.ts";
+export { adaptiveHybridLayout } from "./core/layout/adaptiveHybrid.ts";
 export type { LayoutAdapter, LayoutContext } from "./core/layout/types.ts";
 export { CanvasRenderer } from "./renderer/canvas.ts";
 export { resolveTheme, typeColour } from "./renderer/theme.ts";

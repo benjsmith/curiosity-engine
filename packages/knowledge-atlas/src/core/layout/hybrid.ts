@@ -38,6 +38,18 @@ const CLASS_ORDER: DiscoveryClass[] = ["direct", "adjacent", "bridge", "contrast
  * (iteration-3: raised from 0.67). */
 export const CORE_SHARE = 0.82;
 
+/** Core membership — shared with the adaptive-hybrid variant so both
+ * modes agree on who is core and who is rim. */
+export function partitionCore(scene: SceneData): Set<string> {
+  const horizonIds = new Set(scene.horizon.flatMap((g) => g.candidates.map((c) => c.id)));
+  const focus = scene.nodes.find((n) => n.role === "focus");
+  const candidates = scene.nodes.filter((n) => n.role !== "focus" && !horizonIds.has(n.id));
+  const sorted = [...candidates].sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
+  const coreSet = new Set(sorted.slice(0, Math.ceil(sorted.length * CORE_SHARE)).map((n) => n.id));
+  if (focus) coreSet.add(focus.id);
+  return coreSet;
+}
+
 type SimNode = { id: string; r: number; x?: number; y?: number };
 
 export const hybridLayout: LayoutAdapter = {
@@ -52,11 +64,7 @@ export const hybridLayout: LayoutAdapter = {
 
     // ── partition ────────────────────────────────────────────────────
     const focus = scene.nodes.find((n) => n.role === "focus");
-    const candidates = scene.nodes.filter((n) => n.role !== "focus" && !horizonIds.has(n.id));
-    const sorted = [...candidates].sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
-    const coreCount = Math.ceil(sorted.length * CORE_SHARE);
-    const coreSet = new Set(sorted.slice(0, coreCount).map((n) => n.id));
-    if (focus) coreSet.add(focus.id);
+    const coreSet = partitionCore(scene);
 
     // ── core: force-directed, then clamped into the core disc ───────
     const coreNodes: SimNode[] = scene.nodes
