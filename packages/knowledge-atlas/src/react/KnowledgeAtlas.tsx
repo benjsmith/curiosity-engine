@@ -9,7 +9,6 @@ import { forwardRef, useEffect, useRef } from "react";
 import { AtlasEngine } from "../core/engine.ts";
 import { CanvasRenderer } from "../renderer/canvas.ts";
 import { resolveTheme } from "../renderer/theme.ts";
-import { CuriosityDataSource } from "../datasources/curiosity.ts";
 import { coreRadius, isFullGraphScene } from "../core/layout/hybrid.ts";
 import { inCoreZone } from "../core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
@@ -50,8 +49,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         (typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches);
       const transitionMs = reducedMotion ? REDUCED_MS : TRANSITION_MS;
 
-      const dataPalette =
-        props.dataSource instanceof CuriosityDataSource ? props.dataSource.palette : undefined;
+      // Palette comes through the AtlasDataSource contract, not a
+      // concrete source class — any source can bring its own colours.
+      const dataPalette = props.dataSource.palette;
       const mode =
         typeof document !== "undefined" &&
         (document.documentElement.dataset.theme === "light" ||

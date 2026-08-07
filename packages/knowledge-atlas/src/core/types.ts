@@ -202,6 +202,12 @@ export interface AtlasDataSource {
   getScene(request: SceneRequest, signal?: AbortSignal): Promise<SceneData>;
   getItem(id: string): Promise<KnowledgeItem | null>;
   getExplanation(request: ExplanationRequest): Promise<Explanation>;
+  /**
+   * Optional category → colour map supplied by the data itself (the
+   * CE payload ships one). Adapters merge it under theme overrides so
+   * any source — not just the CE one — can bring its own palette.
+   */
+  readonly palette?: Readonly<Record<string, string>>;
 }
 
 // ── trails (PLAN §12) ───────────────────────────────────────────────
