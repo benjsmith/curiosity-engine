@@ -54,6 +54,19 @@
       destroy: function () {
         handle.destroy();
       },
+      /* Chrome-free info surface: the engine renders no panels — host
+       * chrome (the future telemetry bar, discovery shelf UI, Switch
+       * Bay's rail/tab) subscribes here. subscribe(cb) receives every
+       * AtlasEvent (scene-ready stats, discovery-engaged, trail-changed,
+       * telemetry…); getSnapshot() returns {scene, layout, state, stats}
+       * for pull-style rendering. */
+      subscribe: function (cb) {
+        return handle.engine.on(cb);
+      },
+      getSnapshot: function () {
+        return handle.engine.snapshot();
+      },
+      controller: handle.engine,
     };
   }
 

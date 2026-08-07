@@ -12,7 +12,7 @@ Run through this before tagging a new release. Items marked **(security)** must 
       |------|---------|--------|--------|
       | `d3.min.js` | 7.9.0 | `f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539` | `https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js` |
       | `fuse.min.js` | 7.0.0 | `e3621b53cb77b4ec306dec41ed95511e6dd80d17fae5a04f3e346d214b9f8f92` | `https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js` |
-      | `knowledge-atlas.js` | 0.1.0 (in-repo) | `0d05359ca861387af185d91dba086b32ba2a68183ff8c23235ae8d40be457f0c` | built in-repo: `cd packages/knowledge-atlas && pnpm run build`, then copy `dist/knowledge-atlas.iife.js` here (no CDN — first-party code; refresh the hash on every rebuild) |
+      | `knowledge-atlas.js` | 0.1.0 (in-repo) | `1132fc76ca389a05f15a5d226edf04ec7c43bf981773eb3de193103d962e962c` | built in-repo: `cd packages/knowledge-atlas && pnpm run build`, then copy `dist/knowledge-atlas.iife.js` here (no CDN — first-party code; refresh the hash on every rebuild) |
 
       To refresh:
 

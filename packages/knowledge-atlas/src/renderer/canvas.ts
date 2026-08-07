@@ -8,7 +8,7 @@
  */
 
 import { typeColour } from "./theme.ts";
-import { rimRadiusAt } from "../core/geometry.ts";
+import { coreRadiusAt, rimRadiusAt } from "../core/geometry.ts";
 import type { DiscoveryClass, LayoutPoint } from "../core/types.ts";
 import type { Frame, SceneRenderer } from "./types.ts";
 
@@ -108,11 +108,21 @@ export class CanvasRenderer implements SceneRenderer {
     }
 
     // ── hybrid core boundary (lens zone hint) ───────────────────────
+    // Same squircle family as the rim — a circle here read as a
+    // mismatch against the squircle wall (iteration-6 feedback).
     if (frame.coreRadius) {
       ctx.strokeStyle = T.line;
       ctx.globalAlpha = 0.3;
       ctx.beginPath();
-      ctx.arc(0, 0, frame.coreRadius, 0, Math.PI * 2);
+      const STEPS = 72;
+      for (let i = 0; i <= STEPS; i++) {
+        const th = (i / STEPS) * 2 * Math.PI;
+        const r = coreRadiusAt(th, frame.viewport);
+        const x = Math.cos(th) * r;
+        const y = Math.sin(th) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
       ctx.stroke();
       ctx.globalAlpha = 1;
     }

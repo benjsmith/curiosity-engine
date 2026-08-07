@@ -9,6 +9,7 @@ import { CanvasRenderer } from "./renderer/canvas.ts";
 import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
 import { coreRadius } from "./core/layout/hybrid.ts";
+import { inCoreZone } from "./core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
 import type { AtlasConfig, AtlasEvent, LayoutResult } from "./core/types.ts";
@@ -33,7 +34,9 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const renderer = new CanvasRenderer();
 
   const canvas = document.createElement("canvas");
-  canvas.style.cssText = "display:block;width:100%;height:100%;outline:none;touch-action:none;";
+  canvas.style.cssText =
+    "display:block;width:100%;height:100%;outline:none;touch-action:none;" +
+    "user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;";
   canvas.tabIndex = 0;
   container.appendChild(canvas);
   renderer.mount(canvas);
@@ -41,7 +44,16 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const mode = document.documentElement.dataset.theme === "light" ? "light" : "dark";
   const theme = resolveTheme(undefined, source.palette, mode);
   if (getComputedStyle(container).position === "static") container.style.position = "relative";
-  const tooltip = new AggregateTooltip(container, theme);
+  const tooltip = new AggregateTooltip(container, theme, (aggId) => {
+    const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === aggId);
+    const member = agg?.memberIds[0];
+    tooltip.hide();
+    if (member) {
+      camera.x = 0;
+      camera.y = 0;
+      engine.focus(member, "user");
+    }
+  });
   let longPressTimer = 0;
   let longPressFired = false;
   const maybeShowTooltip = (id: string | null, clientX: number, clientY: number) => {
@@ -265,7 +277,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     if (isHybrid) {
       const p = toScene(ev);
       const rCore = coreRadius(viewport);
-      if (Math.hypot(p.x, p.y) <= rCore) {
+      if (inCoreZone(p.x, p.y, viewport)) {
         camera.scale = Math.max(0.5, Math.min(3, camera.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
         draw(1);
         return;

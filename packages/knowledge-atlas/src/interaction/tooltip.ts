@@ -14,15 +14,20 @@ export const LONG_PRESS_MS = 500;
 
 export class AggregateTooltip {
   private el: HTMLDivElement;
+  private currentAggId: string | null = null;
 
-  constructor(host: HTMLElement, theme: ResolvedTheme) {
+  constructor(host: HTMLElement, theme: ResolvedTheme, onActivate?: (aggId: string) => void) {
     this.el = document.createElement("div");
     this.el.dataset.testid = "aggregate-tooltip";
     this.el.style.cssText = [
       "position:absolute",
       "z-index:30",
       "max-width:260px",
-      "pointer-events:none",
+      "pointer-events:auto",
+      "cursor:pointer",
+      "user-select:none",
+      "-webkit-user-select:none",
+      "-webkit-touch-callout:none",
       "display:none",
       "padding:8px 10px",
       "border-radius:8px",
@@ -33,9 +38,18 @@ export class AggregateTooltip {
       "box-shadow:0 4px 14px rgba(0,0,0,0.35)",
     ].join(";");
     host.appendChild(this.el);
+    if (onActivate) {
+      this.el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (this.currentAggId) onActivate(this.currentAggId);
+      });
+    }
   }
 
   show(agg: RenderAggregate, x: number, y: number, hostRect: { width: number; height: number }): void {
+    this.currentAggId = agg.id;
+    // Haptic tick where supported (Android); silently absent elsewhere.
+    (navigator as { vibrate?: (ms: number) => void }).vibrate?.(10);
     const titles = (agg.memberTitles ?? agg.memberIds).slice(0, 5);
     const more = agg.count - titles.length;
     const rows = titles
@@ -45,7 +59,7 @@ export class AggregateTooltip {
       `<div style="font-weight:600;margin-bottom:4px">${escapeHtml(agg.label)}</div>` +
       rows +
       (more > 0 ? `<div style="opacity:.6;margin-top:2px">…and ${more} more ${escapeHtml(agg.type)}${more === 1 ? "" : "s"}</div>` : "") +
-      `<div style="opacity:.6;margin-top:6px;font-style:italic">click to pull this group into the graph</div>`;
+      `<div style="opacity:.6;margin-top:6px;font-style:italic">tap here to bring this group into the graph</div>`;
     this.el.style.display = "block";
     // Keep inside the host: flip left/up near the far edges.
     const w = 260;
@@ -57,6 +71,7 @@ export class AggregateTooltip {
   }
 
   hide(): void {
+    this.currentAggId = null;
     this.el.style.display = "none";
   }
 

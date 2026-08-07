@@ -79,6 +79,49 @@ corpus; aggregate-anchored sectors can place two aggregates near each
 other; no edge bundling curves yet (bundles render as straight
 weighted lines).
 
+### Iteration 6 (2026-08-09) — stable core, faithful squircles, tooltip polish, chrome-free API
+
+- **Stability gradient**: refocusing on a node that was already inside
+  the core no longer reorganises the graph zone — survivors keep their
+  positions verbatim and only newcomers settle in around them (collide
+  + weak anchors); a focus arriving from the rim/off-screen does the
+  full re-layout, since that click asked for a different portion of
+  the graph. Test-locked (< 20 px mean survivor movement).
+- **Squircle fidelity**: the core boundary is now drawn (and hit-
+  tested) as the same superellipse family as the rim — no circles
+  left in hybrid modes.
+- **Tooltip**: text-selection/callout gesture clash killed
+  (`user-select`/`touch-callout` none on canvas, host and tooltip);
+  haptic tick via `navigator.vibrate` where supported (web has no
+  force-click API); **clicking the tooltip centres the community**;
+  tapping anywhere else collapses it.
+- **Chrome-free engine**: confirmed no panel chrome renders from the
+  engine/adapters (the tooltip is viewer interaction, not chrome). The
+  CE glue facade now exposes `subscribe(cb)` / `getSnapshot()` /
+  `controller` so host chrome renders telemetry from the API.
+
+## Next iteration (P8) — host integration spec
+
+Agreed direction for the next session:
+
+1. **Curiosity Engine wiki-view**: atlas replaces the D3 force graph
+   as the graph pane (flag default flips to atlas; classic kept as
+   fallback flag), all other viewer functionality unchanged (sidebar,
+   modal, subgraph navigator, editing, hash routing). Add a
+   **collapsible telemetry bar** rendered by wiki-view chrome (not the
+   engine) fed from `AtlasViewer.subscribe`: docked right on
+   landscape/large screens, bottom on portrait/phones; shows scene
+   stats + discovery shelves + trail, collapsible to a slim toggle.
+2. **Switch Bay power mode**: telemetry panel mounts in the rail slot
+   with a toggle button switching between the chat rail and the atlas
+   telemetry panel (host-side component consuming `AtlasEvent`s from
+   the React adapter's `onEvent`).
+3. **Switch Bay Zen mode**: telemetry becomes a registered tab surface
+   placeable on the right-hand side.
+
+The engine API is ready for all three (events + snapshot + controller);
+the work is host chrome only.
+
 ## Definition-of-done check (PLAN §19)
 
 - CE swaps its graph canvas via a small adapter: ✅ flag-gated

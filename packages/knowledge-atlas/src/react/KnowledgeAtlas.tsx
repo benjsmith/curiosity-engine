@@ -11,6 +11,7 @@ import { CanvasRenderer } from "../renderer/canvas.ts";
 import { resolveTheme } from "../renderer/theme.ts";
 import { CuriosityDataSource } from "../datasources/curiosity.ts";
 import { coreRadius } from "../core/layout/hybrid.ts";
+import { inCoreZone } from "../core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "../interaction/tooltip.ts";
 import type { AtlasController, AtlasEvent, LayoutResult } from "../core/types.ts";
@@ -59,7 +60,17 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           ? "light"
           : "dark";
       const theme = resolveTheme(props.theme, dataPalette, mode);
-      const tooltip = new AggregateTooltip(host, theme);
+      const tooltip = new AggregateTooltip(host, theme, (aggId) => {
+        // Clicking the tooltip centres the community (iteration-6).
+        const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === aggId);
+        const member = agg?.memberIds[0];
+        tooltip.hide();
+        if (member) {
+          camera.x = 0;
+          camera.y = 0;
+          engine.focus(member, "user");
+        }
+      });
       let longPressTimer = 0;
       let longPressFired = false;
 
@@ -196,7 +207,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
               const mx = ((a.x + b.x) / 2 - rect.left - viewport.width / 2 - camera.x) / camera.scale;
               const my = ((a.y + b.y) / 2 - rect.top - viewport.height / 2 - camera.y) / camera.scale;
               const rCore = coreRadius(viewport);
-              if (Math.hypot(mx, my) <= rCore) {
+              if (inCoreZone(mx, my, viewport)) {
                 camera.scale = Math.max(0.5, Math.min(3, camera.scale * (zoomIn ? 1.12 : 1 / 1.12)));
               } else if (zoomIn) {
                 lens.angle = Math.atan2(my, mx);
@@ -319,7 +330,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           // over the rim it pulls that sector inward until it commits.
           const p = toScene(ev);
           const rCore = coreRadius(viewport);
-          if (Math.hypot(p.x, p.y) <= rCore) {
+          if (inCoreZone(p.x, p.y, viewport)) {
             const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
             camera.scale = Math.max(0.5, Math.min(3, camera.scale * factor));
             draw(1);
@@ -434,7 +445,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
     }, [props.dataSource, props.config?.layout, props.config?.seed]);
 
     return (
-      <div ref={hostRef} style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div ref={hostRef} style={{ position: "relative", width: "100%", height: "100%", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" } as React.CSSProperties}>
         <canvas
           ref={canvasRef}
           data-testid="atlas-canvas"

@@ -178,6 +178,43 @@ describe("hybrid layout (P6)", () => {
     const b = hybridLayout.layout(scene, ctx);
     expect(JSON.stringify([...a.positions])).toBe(JSON.stringify([...b.positions]));
   });
+
+  it("stability gradient: core-click keeps survivors put, rim-click reorganises", async () => {
+    const { hybridLayout, coreRadius } = await import("../src/core/layout/hybrid.ts");
+    const rCore = coreRadius(ctx.viewport);
+    const first = hybridLayout.layout(scene, ctx);
+
+    // Pick a node that sits INSIDE the core of the first layout and
+    // build the scene focused on it (a graph-zone click).
+    const coreNodeId = scene.nodes.find((n) => {
+      const p = first.positions.get(n.id);
+      return n.role !== "focus" && p && Math.hypot(p.x, p.y) <= rCore * 0.8;
+    })!.id;
+    const coreScene = buildScene(g, req(coreNodeId), 42);
+    const second = hybridLayout.layout(coreScene, { ...ctx, previous: first });
+    // Survivors (in both cores) barely move.
+    let moved = 0;
+    let count = 0;
+    for (const [id, p] of second.positions) {
+      const q = first.positions.get(id);
+      if (!q) continue;
+      if (Math.hypot(q.x, q.y) > rCore || Math.hypot(p.x, p.y) > rCore) continue;
+      moved += Math.hypot(p.x - q.x, p.y - q.y);
+      count++;
+    }
+    expect(count).toBeGreaterThan(5);
+    expect(moved / count).toBeLessThan(20); // px — stable, not reorganised
+
+    // A focus arriving from the RIM does a full re-layout (no such bound).
+    const rimNodeId = [...first.positions.entries()].find(([id, p]) => {
+      return Math.hypot(p.x, p.y) > rCore * 1.2 && g.items.has(id);
+    })?.[0];
+    if (rimNodeId) {
+      const rimScene = buildScene(g, req(rimNodeId), 42);
+      const third = hybridLayout.layout(rimScene, { ...ctx, previous: first });
+      expect(third.positions.size).toBeGreaterThan(0); // full path ran without error
+    }
+  });
 });
 
 describe("adaptive-hybrid layout (P7)", () => {

@@ -23,6 +23,25 @@ const SQUIRCLE_N = 4.6;
 export function rimRadiusAt(angle: number, viewport: Viewport): number {
   const a = Math.max(60, viewport.width / 2 - RIM_MARGIN);
   const b = Math.max(60, viewport.height / 2 - RIM_MARGIN);
+  return superellipseRadius(angle, a, b);
+}
+
+/**
+ * Core boundary radius at an angle: the same squircle family as the
+ * rim (a = b = coreRadius), so the inner boundary reads as a squircle
+ * too, not a circle (iteration-6 feedback).
+ */
+export function coreRadiusAt(angle: number, viewport: Viewport): number {
+  const r = coreRadius(viewport);
+  return superellipseRadius(angle, r, r);
+}
+
+/** Is a layout-space point inside the (squircle) core zone? */
+export function inCoreZone(x: number, y: number, viewport: Viewport): boolean {
+  return Math.hypot(x, y) <= coreRadiusAt(Math.atan2(y, x), viewport);
+}
+
+function superellipseRadius(angle: number, a: number, b: number): number {
   const c = Math.abs(Math.cos(angle));
   const s = Math.abs(Math.sin(angle));
   return 1 / Math.pow(Math.pow(c / a, SQUIRCLE_N) + Math.pow(s / b, SQUIRCLE_N), 1 / SQUIRCLE_N);

@@ -81,6 +81,71 @@ export const hybridLayout: LayoutAdapter = {
     const coreLinks = scene.edges
       .filter((e) => coreSet.has(e.source) && coreSet.has(e.target))
       .map((e) => ({ source: e.source, target: e.target }));
+
+    // ── stability gradient (iteration-6 feedback) ────────────────────
+    // Refocusing on a node that was already INSIDE the core must not
+    // reorganise the whole graph zone: surviving nodes keep their
+    // positions and only newcomers settle in around them. A focus that
+    // came from the rim/off-screen legitimately re-organises — that
+    // click asked to bring a different portion of the graph in.
+    const focusNode = scene.nodes.find((n) => n.role === "focus");
+    const prevFocusPos = focusNode ? ctx.previous?.positions.get(focusNode.id) : undefined;
+    const stable =
+      !!prevFocusPos && Math.hypot(prevFocusPos.x, prevFocusPos.y) <= Rcore;
+    if (stable && ctx.previous) {
+      type StableNode = SimNode & { x0: number; y0: number; survivor: boolean };
+      const rMaxS = Rcore * 0.93;
+      const nodes: StableNode[] = coreNodes.map((sn) => {
+        const prev = ctx.previous!.positions.get(sn.id);
+        if (prev && Math.hypot(prev.x, prev.y) <= Rcore) {
+          return { ...sn, x: prev.x, y: prev.y, x0: prev.x, y0: prev.y, survivor: true };
+        }
+        // Newcomer (or arrived from the rim): seed near the mean of its
+        // already-placed neighbours, else near the focus.
+        let sx = 0;
+        let sy = 0;
+        let k = 0;
+        for (const e of coreLinks) {
+          const other = e.source === sn.id ? e.target : e.target === sn.id ? e.source : null;
+          if (!other) continue;
+          const p = ctx.previous!.positions.get(other);
+          if (p && Math.hypot(p.x, p.y) <= Rcore) {
+            sx += p.x;
+            sy += p.y;
+            k++;
+          }
+        }
+        if (k === 0 && prevFocusPos) {
+          sx = prevFocusPos.x;
+          sy = prevFocusPos.y;
+          k = 1;
+        }
+        const jitter = 18 + (sn.r ?? 6);
+        const seed = {
+          x: (k ? sx / k : 0) + Math.cos(hash01(sn.id) * 2 * Math.PI) * jitter,
+          y: (k ? sy / k : 0) + Math.sin(hash01(sn.id) * 2 * Math.PI) * jitter,
+        };
+        return { ...sn, x: seed.x, y: seed.y, x0: seed.x, y0: seed.y, survivor: false };
+      });
+      const settle = forceSimulation(nodes as never[])
+        .force("collide", forceCollide((d) => (d as unknown as StableNode).r + 6).strength(1))
+        .force("x", forceX((d: unknown) => (d as StableNode).x0).strength((d: unknown) => ((d as StableNode).survivor ? 0.55 : 0.08)))
+        .force("y", forceY((d: unknown) => (d as StableNode).y0).strength((d: unknown) => ((d as StableNode).survivor ? 0.55 : 0.08)))
+        .stop();
+      for (let i = 0; i < 120; i++) settle.tick();
+      for (const fn of nodes) {
+        let x = fn.x ?? 0;
+        let y = fn.y ?? 0;
+        const d = Math.hypot(x, y);
+        if (d > rMaxS) {
+          x *= rMaxS / d;
+          y *= rMaxS / d;
+        }
+        positions.set(fn.id, { x, y, r: fn.r });
+      }
+      placeRim(scene, coreSet, horizonIds, positions, ctx, rimInner);
+      return { positions, displacement: meanDisplacement(positions, ctx.previous) };
+    }
     // Classic-viewer character (mesh, not star: focus NOT pinned — its
     // accent ring identifies it), but with distances scaled to the
     // zone: running the raw −420/110 constants and then shrinking to
@@ -152,84 +217,95 @@ export const hybridLayout: LayoutAdapter = {
       positions.set(fn.id, { x, y, r: fn.r });
     }
 
-    // ── rim: hyperbolic doc-type sectors ─────────────────────────────
-    type P = { id: string; sector: number; band: number; r: number; order: number };
-    const placements: P[] = [];
-    for (const n of scene.nodes) {
-      if (coreSet.has(n.id)) continue;
-      const cls = horizonIds.get(n.id);
-      if (cls) {
-        const arc = (2 * Math.PI) / CLASS_ORDER.length;
-        const sector = CLASS_ORDER.indexOf(cls) * arc + arc / 2 - Math.PI / 2;
-        placements.push({ id: n.id, sector, band: 1, r: nodeRadius(n.item.meta.degree), order: n.score });
-        continue;
-      }
-      placements.push({
-        id: n.id,
-        sector: anchorAngle(`type:${n.item.type}`),
-        band: Math.min(1, Math.max(0, ((n.ring ?? 2) - 1) / 2.4)),
-        r: nodeRadius(n.item.meta.degree),
-        order: n.score,
-      });
-    }
-    for (const a of scene.aggregates) {
-      placements.push({
-        id: a.id,
-        sector: anchorAngle(`type:${a.type}`),
-        band: 0.55,
-        r: aggregateRadius(a.count),
-        order: a.count,
-      });
-    }
-
-    // Gridlike shelves per sector (iteration-3 feedback): items fill
-    // ordered rows stacking OUTWARD from the core boundary toward the
-    // squircle rim, columns fanned tangentially. Highest-relevance row
-    // sits innermost; diagonal sectors have a deeper radial run, so
-    // the screen corners fill with aligned rows instead of staying
-    // empty. Grouped by sector only — the hop band now just biases the
-    // ordering so nearer material lands on inner rows.
-    const ROW_GAP = 34;
-    const COL_GAP = 34;
-    const SECTOR_ARC = 0.78; // max tangential fan per sector (radians)
-    const groups = new Map<string, P[]>();
-    for (const p of placements) {
-      const key = p.sector.toFixed(3);
-      (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
-    }
-    for (const list of groups.values()) {
-      list.sort(
-        (a, b) => a.band - b.band || b.order - a.order || (a.id < b.id ? -1 : 1),
-      );
-      const sector = list[0].sector;
-      const Router = rimRadiusAt(sector, ctx.viewport);
-      // Shelf block anchored against the OUTER squircle wall so the
-      // rim content sits out in the corners; within the block, the
-      // innermost row holds the highest-relevance items (nearer stays
-      // nearer). Row capacity from the tangential arc at the wall.
-      const capacity = Math.max(1, Math.floor((SECTOR_ARC * (Router - 14)) / COL_GAP));
-      const rows = Math.ceil(list.length / capacity);
-      const innermostRho = Math.max(rimInner + 8, Router - 14 - (rows - 1) * ROW_GAP);
-      for (let i = 0; i < list.length; i++) {
-        const p = list[i];
-        const row = Math.floor(i / capacity);
-        const rowItems = Math.min(capacity, list.length - row * capacity);
-        const c = i - row * capacity;
-        const rho = Math.min(Router - 14, innermostRho + row * ROW_GAP);
-        const offset =
-          rowItems === 1 ? 0 : (c - (rowItems - 1) / 2) * Math.min(COL_GAP / rho, SECTOR_ARC / rowItems);
-        const angle = sector + offset;
-        const RouterHere = rimRadiusAt(angle, ctx.viewport);
-        const clampedRho = Math.min(rho, RouterHere - 12);
-        const shrink = 1 - 0.45 * (clampedRho / Math.max(RouterHere, rimInner + 1)) ** 2;
-        positions.set(p.id, {
-          x: Math.cos(angle) * clampedRho,
-          y: Math.sin(angle) * clampedRho,
-          r: Math.max(2.5, p.r * shrink),
-        });
-      }
-    }
-
+    placeRim(scene, coreSet, horizonIds, positions, ctx, rimInner);
     return { positions, displacement: meanDisplacement(positions, ctx.previous) };
   },
 };
+
+/** Deterministic per-id 0..1 (newcomer seed jitter). */
+function hash01(id: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Rim shelves (shared by the full and the stable/incremental core
+ * paths): gridlike rows per doc-type sector, anchored against the
+ * squircle wall so the corners fill (iteration-3).
+ */
+function placeRim(
+  scene: SceneData,
+  coreSet: ReadonlySet<string>,
+  horizonIds: ReadonlyMap<string, DiscoveryClass>,
+  positions: Map<string, LayoutPoint>,
+  ctx: LayoutContext,
+  rimInner: number,
+): void {
+  type P = { id: string; sector: number; band: number; r: number; order: number };
+  const placements: P[] = [];
+  for (const n of scene.nodes) {
+    if (coreSet.has(n.id)) continue;
+    const cls = horizonIds.get(n.id);
+    if (cls) {
+      const arc = (2 * Math.PI) / CLASS_ORDER.length;
+      const sector = CLASS_ORDER.indexOf(cls) * arc + arc / 2 - Math.PI / 2;
+      placements.push({ id: n.id, sector, band: 1, r: nodeRadius(n.item.meta.degree), order: n.score });
+      continue;
+    }
+    placements.push({
+      id: n.id,
+      sector: anchorAngle(`type:${n.item.type}`),
+      band: Math.min(1, Math.max(0, ((n.ring ?? 2) - 1) / 2.4)),
+      r: nodeRadius(n.item.meta.degree),
+      order: n.score,
+    });
+  }
+  for (const a of scene.aggregates) {
+    placements.push({
+      id: a.id,
+      sector: anchorAngle(`type:${a.type}`),
+      band: 0.55,
+      r: aggregateRadius(a.count),
+      order: a.count,
+    });
+  }
+
+  const ROW_GAP = 34;
+  const COL_GAP = 34;
+  const SECTOR_ARC = 0.78; // max tangential fan per sector (radians)
+  const groups = new Map<string, P[]>();
+  for (const p of placements) {
+    const key = p.sector.toFixed(3);
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.band - b.band || b.order - a.order || (a.id < b.id ? -1 : 1));
+    const sector = list[0].sector;
+    const Router = rimRadiusAt(sector, ctx.viewport);
+    const capacity = Math.max(1, Math.floor((SECTOR_ARC * (Router - 14)) / COL_GAP));
+    const rows = Math.ceil(list.length / capacity);
+    const innermostRho = Math.max(rimInner + 8, Router - 14 - (rows - 1) * ROW_GAP);
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      const row = Math.floor(i / capacity);
+      const rowItems = Math.min(capacity, list.length - row * capacity);
+      const c = i - row * capacity;
+      const rho = Math.min(Router - 14, innermostRho + row * ROW_GAP);
+      const offset =
+        rowItems === 1 ? 0 : (c - (rowItems - 1) / 2) * Math.min(COL_GAP / rho, SECTOR_ARC / rowItems);
+      const angle = sector + offset;
+      const RouterHere = rimRadiusAt(angle, ctx.viewport);
+      const clampedRho = Math.min(rho, RouterHere - 12);
+      const shrink = 1 - 0.45 * (clampedRho / Math.max(RouterHere, rimInner + 1)) ** 2;
+      positions.set(p.id, {
+        x: Math.cos(angle) * clampedRho,
+        y: Math.sin(angle) * clampedRho,
+        r: Math.max(2.5, p.r * shrink),
+      });
+    }
+  }
+}
