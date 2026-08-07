@@ -215,12 +215,14 @@ function overviewScene(g: GraphIndex, req: SceneRequest, budget: SceneBudget): S
   const nodes: RenderNode[] = [];
   const types = [...g.byType.entries()].sort((a, b) => b[1].length - a[1].length);
   for (const [type, ids] of types.slice(0, budget.maxAggregates)) {
+    const sample = ids.slice(0, 8);
     aggregates.push({
       id: `agg:${type}:*`,
       label: `${ids.length} ${type}${ids.length === 1 ? "" : "s"}`,
       type,
       count: ids.length,
-      memberIds: ids.slice(0, 8),
+      memberIds: sample,
+      memberTitles: sample.map((id) => g.items.get(id)?.title ?? id),
       residual: Math.max(0, ids.length - 8),
     });
   }

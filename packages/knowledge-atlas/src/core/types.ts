@@ -82,6 +82,8 @@ export type RenderAggregate = {
   count: number;
   /** Capped member sample; full size in `count`. */
   memberIds: string[];
+  /** Display titles for the member sample (tooltips/annotation). */
+  memberTitles?: string[];
   /** Members beyond the sample. */
   residual?: number;
   /** Nearest selected node this aggregate clusters around, if any. */
@@ -347,11 +349,11 @@ export type LayoutResult = {
 };
 
 export const DEFAULT_BUDGET: SceneBudget = {
-  maxNodes: 72,
+  maxNodes: 90,
   maxAggregates: 12,
-  maxEdges: 140,
+  maxEdges: 170,
   maxBundles: 16,
-  maxLabels: 46,
+  maxLabels: 54,
 };
 
 export const DEFAULT_LENS: AtlasLens = { id: "default" };

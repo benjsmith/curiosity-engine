@@ -12,6 +12,7 @@ import { resolveTheme } from "../renderer/theme.ts";
 import { CuriosityDataSource } from "../datasources/curiosity.ts";
 import { coreRadius } from "../core/layout/hybrid.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
+import { AggregateTooltip, LONG_PRESS_MS } from "../interaction/tooltip.ts";
 import type { AtlasController, AtlasEvent, LayoutResult } from "../core/types.ts";
 import type { KnowledgeAtlasProps } from "./props.ts";
 import type { Camera } from "../renderer/types.ts";
@@ -58,6 +59,19 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           ? "light"
           : "dark";
       const theme = resolveTheme(props.theme, dataPalette, mode);
+      const tooltip = new AggregateTooltip(host, theme);
+      let longPressTimer = 0;
+      let longPressFired = false;
+
+      const maybeShowTooltip = (id: string | null, clientX: number, clientY: number) => {
+        const agg = id ? engine.snapshot().scene?.aggregates.find((a) => a.id === id) : undefined;
+        if (agg) {
+          const rect = host.getBoundingClientRect();
+          tooltip.show(agg, clientX - rect.left, clientY - rect.top, rect);
+        } else {
+          tooltip.hide();
+        }
+      };
 
       let prevLayout: LayoutResult | undefined;
       let animStart = 0;
@@ -131,6 +145,10 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       let pinchDist = 0;
       let pinched = false;
       let lastTap = { t: 0, x: 0, y: 0 };
+      // A click-focus makes the layout shift under the cursor, so the
+      // second click of a double-click can land on empty canvas. Track
+      // the last click-focused node and let dblclick fall back to it.
+      let lastClickFocus = { id: "", t: 0 };
       const onPointerDown = (ev: PointerEvent) => {
         pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
         if (pointers.size === 2) {
@@ -144,6 +162,21 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         dragMoved = false;
         last = { x: ev.clientX, y: ev.clientY };
         canvas.setPointerCapture(ev.pointerId);
+        // Touch-and-hold on a grouping bubble shows its annotation.
+        if (ev.pointerType === "touch") {
+          tooltip.hide(); // a new tap dismisses any held-open tooltip
+          const p = toScene(ev);
+          const hit = engine.hitTester.pointAt(p.x, p.y, 12);
+          if (hit?.kind === "aggregate") {
+            const { clientX, clientY } = ev;
+            longPressTimer = window.setTimeout(() => {
+              if (!dragMoved && !pinched) {
+                maybeShowTooltip(hit.id, clientX, clientY);
+                longPressFired = true; // the hold consumed this gesture
+              }
+            }, LONG_PRESS_MS);
+          }
+        }
       };
       const onPointerMove = (ev: PointerEvent) => {
         if (pointers.has(ev.pointerId)) {
@@ -201,11 +234,23 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           hoverId = id;
           engine.hover(id);
           canvas.style.cursor = id ? "pointer" : "default";
+          // Grouping bubbles annotate themselves on hover.
+          if (ev.pointerType !== "touch") {
+            maybeShowTooltip(hit?.kind === "aggregate" ? id : null, ev.clientX, ev.clientY);
+          }
           draw(1);
         }
       };
       const onPointerUp = (ev: PointerEvent) => {
+        clearTimeout(longPressTimer);
         pointers.delete(ev.pointerId);
+        if (longPressFired) {
+          // The hold already showed the tooltip; the release is not a tap.
+          longPressFired = false;
+          dragging = false;
+          dragMoved = false;
+          return;
+        }
         if (pointers.size === 0 && pinched) {
           // A pinch just ended — its final lift must not count as a tap.
           pinched = false;
@@ -230,6 +275,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           lastTap = { t: now, x: ev.clientX, y: ev.clientY };
           if (isDouble) {
             if (hit?.kind === "node") engine.openItem(hit.id);
+            else if (performance.now() - lastClickFocus.t < 700 && lastClickFocus.id) {
+              engine.openItem(lastClickFocus.id);
+            }
             return;
           }
         }
@@ -237,6 +285,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         if (hit.kind === "node") {
           camera.x = 0;
           camera.y = 0;
+          lastClickFocus = { id: hit.id, t: performance.now() };
           engine.focus(hit.id, "user");
         } else {
           // Aggregates are selectable (iteration-2 feedback): clicking
@@ -258,6 +307,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         const p = toScene(ev);
         const hit = engine.hitTester.pointAt(p.x, p.y);
         if (hit?.kind === "node") engine.openItem(hit.id);
+        else if (performance.now() - lastClickFocus.t < 600 && lastClickFocus.id) {
+          engine.openItem(lastClickFocus.id);
+        }
       };
       const onWheel = (ev: WheelEvent) => {
         ev.preventDefault();
@@ -369,6 +421,8 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         canvas.removeEventListener("dblclick", onDblClick);
         canvas.removeEventListener("wheel", onWheel);
         canvas.removeEventListener("keydown", onKeyDown);
+        clearTimeout(longPressTimer);
+        tooltip.destroy();
         off();
         renderer.destroy();
         engine.destroy();

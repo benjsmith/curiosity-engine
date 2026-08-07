@@ -12,7 +12,7 @@ export function coreRadius(viewport: Viewport): number {
 }
 
 const RIM_MARGIN = 34;
-const SQUIRCLE_N = 3.2;
+const SQUIRCLE_N = 4.6;
 
 /**
  * Rim boundary radius at an angle: a superellipse ("squircle")

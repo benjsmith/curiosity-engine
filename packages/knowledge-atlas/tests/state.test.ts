@@ -142,12 +142,14 @@ describe("hybrid layout (P6)", () => {
   const scene = buildScene(g, req("concepts/attention"), 42);
   const ctx = { viewport: { width: 1200, height: 800 }, seed: 42 };
 
-  it("places focus at centre, ~67% of plain nodes in the force core, rest on the rim", async () => {
+  it("keeps focus inside the core, CORE_SHARE of plain nodes in it, rest on the rim", async () => {
     const { hybridLayout, coreRadius, CORE_SHARE } = await import("../src/core/layout/hybrid.ts");
     const l = hybridLayout.layout(scene, ctx);
     const rCore = coreRadius(ctx.viewport);
+    // The focus is no longer pinned at the origin (network look, not a
+    // radial star) but must stay inside the core zone.
     const focusP = l.positions.get("concepts/attention")!;
-    expect(Math.hypot(focusP.x, focusP.y)).toBeLessThan(1);
+    expect(Math.hypot(focusP.x, focusP.y)).toBeLessThan(rCore);
 
     const horizonIds = new Set(scene.horizon.flatMap((h) => h.candidates.map((c) => c.id)));
     const plain = scene.nodes.filter((n) => n.role !== "focus" && !horizonIds.has(n.id));

@@ -165,6 +165,34 @@ dense meshes keep the force cloud (verified byte-identical to plain
 hybrid on the workspace fixture). Both hybrids share
 `partitionCore()`, so lens and aggregate-unfold behave identically.
 
+### Iteration 5 (2026-08-09) — network core, squarer rim, self-explaining bubbles
+
+Feedback with phone screenshots (dense-smallworld, hybrid + adaptive-
+hybrid) and the classic viewer-graph reference:
+
+- **Squircle exponent raised** (3.2 → 4.6): the rim boundary now reads
+  as a rounded rectangle hugging the viewport, not an ellipse.
+- **More nodes in the graph zone**: default budget 72 → 90 nodes,
+  CORE_SHARE 0.82 → 0.9.
+- **Network look, not radial**: the focus is no longer pinned at the
+  core centre (its accent ring identifies it); force distances are
+  sized from the zone and node count so the mesh fills the core at
+  natural spacing; a collide-only relaxation pass de-overlaps nodes in
+  screen space; fit uses the 92nd-percentile radius. Known remaining
+  gap vs the reference: the mesh still clusters somewhat rather than
+  filling the zone wall-to-wall — candidate next knob is a weak radial
+  outward force.
+- **Aggregate bubbles explain themselves**: RenderAggregate now
+  carries `memberTitles`; hovering a bubble (or touch-and-hold ~500 ms)
+  shows a tooltip with the group label, five member titles, the
+  residual count, and what a click does. Clicking still focuses the
+  top member — the confusion ("a similar bubble with a similar number
+  is still there") is expected behaviour, now annotated: the new scene
+  re-aggregates the *new* fold.
+- **Double-click reliability**: the first click of a double-click
+  refocuses and shifts the layout under the cursor, so dblclick/
+  double-tap now falls back to opening the just-clicked node.
+
 ## Recommendation for the next production iteration
 
 1. **Adopt the P1 focus atlas as the production default**, force kept

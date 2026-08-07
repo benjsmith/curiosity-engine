@@ -10,6 +10,7 @@ import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
 import { coreRadius } from "./core/layout/hybrid.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
+import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
 import type { AtlasConfig, AtlasEvent, LayoutResult } from "./core/types.ts";
 import type { Camera } from "./renderer/types.ts";
 
@@ -39,6 +40,19 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
 
   const mode = document.documentElement.dataset.theme === "light" ? "light" : "dark";
   const theme = resolveTheme(undefined, source.palette, mode);
+  if (getComputedStyle(container).position === "static") container.style.position = "relative";
+  const tooltip = new AggregateTooltip(container, theme);
+  let longPressTimer = 0;
+  let longPressFired = false;
+  const maybeShowTooltip = (id: string | null, clientX: number, clientY: number) => {
+    const agg = id ? engine.snapshot().scene?.aggregates.find((a) => a.id === id) : undefined;
+    if (agg) {
+      const rect = container.getBoundingClientRect();
+      tooltip.show(agg, clientX - rect.left, clientY - rect.top, rect);
+    } else {
+      tooltip.hide();
+    }
+  };
 
   let prevLayout: LayoutResult | undefined;
   let animStart = 0;
@@ -104,6 +118,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let pinchDist = 0;
   let pinched = false;
   let lastTap = { t: 0, x: 0, y: 0 };
+  let lastClickFocus = { id: "", t: 0 };
   const onDown = (ev: PointerEvent) => {
     pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (pointers.size === 2) {
@@ -116,6 +131,20 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     dragging = true;
     dragMoved = false;
     last = { x: ev.clientX, y: ev.clientY };
+    if (ev.pointerType === "touch") {
+      tooltip.hide();
+      const p = toScene(ev);
+      const hit = engine.hitTester.pointAt(p.x, p.y, 12);
+      if (hit?.kind === "aggregate") {
+        const { clientX, clientY } = ev;
+        longPressTimer = window.setTimeout(() => {
+          if (!dragMoved && !pinched) {
+            maybeShowTooltip(hit.id, clientX, clientY);
+            longPressFired = true;
+          }
+        }, LONG_PRESS_MS);
+      }
+    }
   };
   const onMove = (ev: PointerEvent) => {
     if (pointers.has(ev.pointerId)) {
@@ -147,15 +176,26 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       return;
     }
     const p = toScene(ev);
-    const id = engine.hitTester.pointAt(p.x, p.y)?.id ?? null;
+    const hit = engine.hitTester.pointAt(p.x, p.y);
+    const id = hit?.id ?? null;
     if (id !== hoverId) {
       hoverId = id;
       canvas.style.cursor = id ? "pointer" : "default";
+      if (ev.pointerType !== "touch") {
+        maybeShowTooltip(hit?.kind === "aggregate" ? id : null, ev.clientX, ev.clientY);
+      }
       draw(1);
     }
   };
   const onUp = (ev: PointerEvent) => {
+    clearTimeout(longPressTimer);
     pointers.delete(ev.pointerId);
+    if (longPressFired) {
+      longPressFired = false;
+      dragging = false;
+      dragMoved = false;
+      return;
+    }
     if (pointers.size === 0 && pinched) {
       pinched = false;
       pinchDist = 0;
@@ -177,6 +217,9 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       lastTap = { t: now, x: ev.clientX, y: ev.clientY };
       if (isDouble) {
         if (hit?.kind === "node") engine.openItem(hit.id);
+        else if (performance.now() - lastClickFocus.t < 700 && lastClickFocus.id) {
+          engine.openItem(lastClickFocus.id);
+        }
         return;
       }
     }
@@ -184,6 +227,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     if (hit.kind === "node") {
       camera.x = 0;
       camera.y = 0;
+      lastClickFocus = { id: hit.id, t: performance.now() };
       engine.focus(hit.id, "user");
     } else {
       // Aggregates are selectable: click focuses the top member so the
@@ -212,6 +256,9 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     const p = toScene(ev);
     const hit = engine.hitTester.pointAt(p.x, p.y);
     if (hit?.kind === "node") engine.openItem(hit.id);
+    else if (performance.now() - lastClickFocus.t < 600 && lastClickFocus.id) {
+      engine.openItem(lastClickFocus.id);
+    }
   };
   const onWheel = (ev: WheelEvent) => {
     ev.preventDefault();
@@ -259,6 +306,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     engine,
     destroy: () => {
       cancelAnimationFrame(raf);
+      clearTimeout(longPressTimer);
+      tooltip.destroy();
       ro.disconnect();
       off();
       renderer.destroy();

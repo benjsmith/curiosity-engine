@@ -18,6 +18,8 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
+  forceX,
+  forceY,
 } from "d3-force";
 import { anchorAngle } from "../scene/landmarks.ts";
 import { coreRadius, rimRadiusAt } from "../geometry.ts";
@@ -36,7 +38,7 @@ const CLASS_ORDER: DiscoveryClass[] = ["direct", "adjacent", "bridge", "contrast
 
 /** Share of non-horizon, non-focus nodes kept in the force core
  * (iteration-3: raised from 0.67). */
-export const CORE_SHARE = 0.82;
+export const CORE_SHARE = 0.9;
 
 /** Core membership — shared with the adaptive-hybrid variant so both
  * modes agree on who is core and who is rim. */
@@ -63,7 +65,6 @@ export const hybridLayout: LayoutAdapter = {
     for (const grp of scene.horizon) for (const c of grp.candidates) horizonIds.set(c.id, grp.cls);
 
     // ── partition ────────────────────────────────────────────────────
-    const focus = scene.nodes.find((n) => n.role === "focus");
     const coreSet = partitionCore(scene);
 
     // ── core: force-directed, then clamped into the core disc ───────
@@ -80,38 +81,75 @@ export const hybridLayout: LayoutAdapter = {
     const coreLinks = scene.edges
       .filter((e) => coreSet.has(e.source) && coreSet.has(e.target))
       .map((e) => ({ source: e.source, target: e.target }));
+    // Classic-viewer character (mesh, not star: focus NOT pinned — its
+    // accent ring identifies it), but with distances scaled to the
+    // zone: running the raw −420/110 constants and then shrinking to
+    // fit visually crushed node spacing. Sizing link/charge from Rcore
+    // and node count keeps the natural extent ≈ the zone, so the fit
+    // factor stays near 1 and collide spacing survives on screen.
+    const n = Math.max(1, coreNodes.length);
+    const linkDist = Math.max(34, (Rcore * 2.2) / Math.sqrt(n));
     const sim = forceSimulation(coreNodes as never[])
       .force(
         "link",
         forceLink(coreLinks as never[])
           .id((d) => (d as unknown as SimNode).id)
-          .distance(64)
+          .distance(linkDist)
           .strength(0.55),
       )
-      .force("charge", forceManyBody().strength(-340).distanceMax(Rcore * 2.2))
-      .force("center", forceCenter(0, 0).strength(0.06))
+      .force("charge", forceManyBody().strength(-Rcore * 1.15).distanceMax(Rcore * 2))
+      .force("center", forceCenter(0, 0).strength(0.05))
       .force("collide", forceCollide((d) => (d as unknown as SimNode).r + 8))
       .stop();
-    for (let i = 0; i < 300; i++) sim.tick();
+    for (let i = 0; i < 350; i++) sim.tick();
 
-    // Pin the focus at the exact centre, shift the cloud accordingly.
-    const focusSim = focus ? coreNodes.find((n) => n.id === focus.id) : undefined;
-    const cx = focusSim?.x ?? 0;
-    const cy = focusSim?.y ?? 0;
-    // Per-node radial clamp: outliers are projected back onto the core
-    // boundary instead of shrinking the whole cloud uniformly — the
-    // interior keeps its natural spacing and the broadened zone is
-    // actually used.
-    const rMax = Rcore * 0.93;
+    // Centre on the cloud's centroid, then FIT: uniform scale (up or
+    // down) against the 92nd-percentile radius preserves the natural
+    // mesh shape and fills the zone; the few stragglers beyond it are
+    // projected onto the boundary.
+    let cx = 0;
+    let cy = 0;
     for (const sn of coreNodes) {
-      let x = (sn.x ?? 0) - cx;
-      let y = (sn.y ?? 0) - cy;
+      cx += sn.x ?? 0;
+      cy += sn.y ?? 0;
+    }
+    cx /= Math.max(1, coreNodes.length);
+    cy /= Math.max(1, coreNodes.length);
+    const radii = coreNodes
+      .map((sn) => Math.hypot((sn.x ?? 0) - cx, (sn.y ?? 0) - cy))
+      .sort((a, b) => a - b);
+    const p92 = radii[Math.min(radii.length - 1, Math.floor(radii.length * 0.92))] || 1;
+    const rMax = Rcore * 0.93;
+    const fit = rMax / p92;
+    type FitNode = SimNode & { x0: number; y0: number };
+    const fitted: FitNode[] = coreNodes.map((sn) => {
+      let x = ((sn.x ?? 0) - cx) * fit;
+      let y = ((sn.y ?? 0) - cy) * fit;
       const d = Math.hypot(x, y);
       if (d > rMax) {
         x *= rMax / d;
         y *= rMax / d;
       }
-      positions.set(sn.id, { x, y, r: sn.r });
+      return { id: sn.id, r: sn.r, x, y, x0: x, y0: y };
+    });
+    // Screen-space de-overlap: collide-only relaxation with weak
+    // anchors back to the fitted positions — resolves touching nodes
+    // without changing the mesh's global shape.
+    const relax = forceSimulation(fitted as never[])
+      .force("collide", forceCollide((d) => (d as unknown as FitNode).r + 6).strength(1))
+      .force("x", forceX((d: unknown) => (d as FitNode).x0).strength(0.25))
+      .force("y", forceY((d: unknown) => (d as FitNode).y0).strength(0.25))
+      .stop();
+    for (let i = 0; i < 80; i++) relax.tick();
+    for (const fn of fitted) {
+      let x = fn.x ?? 0;
+      let y = fn.y ?? 0;
+      const d = Math.hypot(x, y);
+      if (d > rMax) {
+        x *= rMax / d;
+        y *= rMax / d;
+      }
+      positions.set(fn.id, { x, y, r: fn.r });
     }
 
     // ── rim: hyperbolic doc-type sectors ─────────────────────────────

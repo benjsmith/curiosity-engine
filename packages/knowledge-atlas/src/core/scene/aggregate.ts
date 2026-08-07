@@ -69,6 +69,7 @@ export function buildAggregates(
       type: grp.type,
       count: grp.members.length,
       memberIds: sampleIds,
+      memberTitles: sampleIds.map((id) => g.items.get(id)?.title ?? id),
       residual: Math.max(0, grp.members.length - sampleIds.length),
       anchorId: grp.anchorId,
     });

@@ -58,6 +58,7 @@ test("navigation loop: candidate focus → back → forward", async ({ page }) =
 });
 
 test("canvas click focuses a node; double-click opens it", async ({ page }) => {
+  test.setTimeout(90_000); // dense scenes need more grid probing
   await page.goto("/");
   await ready(page);
   const canvas = page.getByTestId("atlas-canvas");
@@ -86,9 +87,25 @@ test("canvas click focuses a node; double-click opens it", async ({ page }) => {
   }
   expect(focused, "a canvas click re-focused the atlas").toBe(true);
 
-  // Double-click the (new) focus at centre → open event.
-  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(page.getByTestId("opened-item")).toBeVisible();
+  // Double-click any node (the focus is not pinned at centre) → open.
+  let opened = false;
+  outer2: for (let dx = -0.3; dx <= 0.3; dx += 0.06) {
+    for (let dy = -0.3; dy <= 0.3; dy += 0.06) {
+      const x = box.x + box.width / 2 + dx * box.width;
+      const y = box.y + box.height / 2 + dy * box.height;
+      await page.mouse.move(x, y);
+      await page.waitForTimeout(16);
+      const cursor = await canvas.evaluate((el) => getComputedStyle(el).cursor);
+      if (cursor !== "pointer") continue;
+      await page.mouse.dblclick(x, y);
+      if (await page.getByTestId("opened-item").isVisible({ timeout: 1500 }).catch(() => false)) {
+        opened = true;
+        break outer2;
+      }
+      await ready(page); // the first click of the dblclick may have re-focused
+    }
+  }
+  expect(opened, "double-click opened an item").toBe(true);
 });
 
 test("pin focus survives navigation", async ({ page }) => {
