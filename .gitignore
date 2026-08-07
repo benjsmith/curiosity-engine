@@ -27,3 +27,4 @@ packages/*/node_modules/
 packages/*/dist/
 packages/*/test-results/
 packages/*/e2e/shots/
+packages/*/dist-harness/
