@@ -1,0 +1,195 @@
+/**
+ * Lens-traversal physics (iteration-8): docs-per-pixel shell scaling,
+ * the hard flow speed limit, rate-limited scene commits, iOS-flick
+ * momentum decay, and odometer monotonicity. Pure-physics tests — the
+ * engine is a counting stub where a commit target is needed.
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+  COMMIT_INTERVAL_MS,
+  FRICTION_PER_MS,
+  LensTraversal,
+  MAX_DOCS_PER_SECOND,
+  docsPerPixel,
+  shellTotalsFromScene,
+} from "../src/interaction/traversal.ts";
+import { coreRadius, rimRadiusAt } from "../src/core/geometry.ts";
+import type { AtlasEngine } from "../src/core/engine.ts";
+
+const VIEW = { width: 1200, height: 800 };
+// Exponential corpus: shell k holds ~10× shell k−1 (640/6.4k/64k/640k).
+const TOTALS = [0, 640, 6_400, 64_000, 640_000] as const;
+
+/** Radius fraction f of the way from the core edge to the wall at angle. */
+function rhoAt(f: number, angle = 0): number {
+  const rc = coreRadius(VIEW) * 1.12;
+  return rc + f * (rimRadiusAt(angle, VIEW) - rc);
+}
+
+/** Engine stub: one committable node far out in the +x sector. */
+function stubEngine(): { engine: AtlasEngine; commits: () => number } {
+  let count = 0;
+  const layout = {
+    positions: new Map([["n1", { x: rhoAt(0.4), y: 0, r: 4 }]]),
+    displacement: 0,
+  };
+  const scene = {
+    nodes: [{ id: "n1", score: 1 }],
+    aggregates: [],
+  };
+  const engine = {
+    snapshot: () => ({ scene, layout }),
+    focus: () => {
+      count += 1;
+    },
+  } as unknown as AtlasEngine;
+  return { engine, commits: () => count };
+}
+
+describe("docsPerPixel", () => {
+  it("grows with start depth — deeper shells pack more corpus per pixel", () => {
+    const shallow = docsPerPixel(rhoAt(0.1), 0, VIEW, TOTALS);
+    const mid = docsPerPixel(rhoAt(0.65), 0, VIEW, TOTALS);
+    const deep = docsPerPixel(rhoAt(0.99), 0, VIEW, TOTALS);
+    expect(mid).toBeGreaterThan(shallow);
+    expect(deep).toBeGreaterThan(mid);
+    // Band depth also SHRINKS with shell, so the growth outpaces the
+    // raw 10× totals — the "visible universe" compression.
+    expect(deep / shallow).toBeGreaterThan(100);
+  });
+
+  it("empty outer bands gear like the deepest populated shell", () => {
+    // A 4k-doc corpus only fills shells 1–2; dragging from the wall
+    // must not free-spin over the empty bands 3–4.
+    const small = [0, 640, 3_000, 0, 0] as const;
+    const fromWall = docsPerPixel(rhoAt(0.99), 0, VIEW, small);
+    const fromShell2 = docsPerPixel(rhoAt(0.65), 0, VIEW, small);
+    expect(fromWall).toBe(fromShell2);
+    expect(fromWall).toBeGreaterThan(1);
+  });
+
+  it("is corner-aware: gentler density diagonally than on the short axis", () => {
+    // The squircle wall sits farther out on the diagonal than on the
+    // short (vertical) axis, so each band is deeper in pixels there →
+    // fewer docs per pixel; edges compress harder than corners.
+    const shortAxis = docsPerPixel(rhoAt(0.65, Math.PI / 2), Math.PI / 2, VIEW, TOTALS);
+    const diagonal = docsPerPixel(rhoAt(0.65, Math.PI / 4), Math.PI / 4, VIEW, TOTALS);
+    expect(diagonal).toBeLessThan(shortAxis);
+  });
+});
+
+describe("LensTraversal", () => {
+  it("does not start inside the core (those drags stay camera pans)", () => {
+    const { engine } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    expect(t.start(10, 10, 0)).toBe(false);
+    expect(t.start(coreRadius(VIEW) * 0.9, 0, 0)).toBe(false);
+    expect(t.start(rhoAt(0.5), 0, 0)).toBe(true);
+  });
+
+  it("enforces the speed limit no matter how violent the drag", () => {
+    const { engine } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    t.start(rhoAt(0.99), 0, 0); // deepest shell → extreme docs/px
+    let now = 0;
+    for (let i = 0; i < 60; i++) {
+      now += 16;
+      t.drag(-400, 0, 16); // 25k px/sec centerward — absurd
+    }
+    const frame = t.tick(now, false);
+    // Flow is capped: one tick's odometer gain can't exceed the limit.
+    const before = frame.odometer;
+    const after = t.tick(now + 100, false).odometer;
+    expect(after - before).toBeLessThanOrEqual((MAX_DOCS_PER_SECOND * 100) / 1000 + 1);
+    expect(frame.intensity).toBeLessThanOrEqual(1);
+  });
+
+  it("outward drags do not build flow", () => {
+    const { engine } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    t.start(rhoAt(0.5), 0, 0);
+    t.drag(+300, 0, 16); // away from center
+    const f = t.tick(16, false);
+    expect(f.intensity).toBe(0);
+  });
+
+  it("release decays with friction until it settles (iOS flick)", () => {
+    const { engine } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    t.start(rhoAt(0.8), 0, 0);
+    let now = 0;
+    for (let i = 0; i < 10; i++) {
+      now += 16;
+      t.drag(-60, 0, 16);
+    }
+    const atRelease = t.tick(now, false);
+    expect(atRelease.intensity).toBeGreaterThan(0.3);
+    t.release();
+    let frames = 0;
+    let prevIntensity = atRelease.intensity;
+    let prevOdometer = atRelease.odometer;
+    let f = atRelease;
+    while (f.active && frames < 2000) {
+      now += 16;
+      f = t.tick(now, false);
+      expect(f.intensity).toBeLessThanOrEqual(prevIntensity + 1e-9);
+      expect(f.odometer).toBeGreaterThanOrEqual(prevOdometer); // monotonic
+      prevIntensity = f.intensity;
+      prevOdometer = f.odometer;
+      frames++;
+    }
+    expect(f.active).toBe(false); // came to rest, not the frame cap
+    expect(frames).toBeGreaterThan(10); // …but not instantly
+    // Sanity: the chosen constant halves flow roughly every ~200ms.
+    expect(Math.pow(FRICTION_PER_MS, 200)).toBeGreaterThan(0.4);
+    expect(Math.pow(FRICTION_PER_MS, 200)).toBeLessThan(0.6);
+  });
+
+  it("rate-limits real scene commits to COMMIT_INTERVAL_MS", () => {
+    const { engine, commits } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    t.start(rhoAt(0.5), 0, 0);
+    let now = 0;
+    // Two seconds of sustained fast drag, ticking at 60fps.
+    for (let i = 0; i < 125; i++) {
+      now += 16;
+      t.drag(-80, 0, 16);
+      t.tick(now);
+    }
+    const expected = Math.floor(2000 / COMMIT_INTERVAL_MS);
+    expect(commits()).toBeGreaterThan(0);
+    expect(commits()).toBeLessThanOrEqual(expected + 1);
+    t.cancel();
+  });
+
+  it("cancel stops everything dead", () => {
+    const { engine } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    t.start(rhoAt(0.5), 0, 0);
+    t.drag(-100, 0, 16);
+    t.cancel();
+    const f = t.tick(32, false);
+    expect(f.active).toBe(false);
+    expect(f.intensity).toBe(0);
+  });
+});
+
+describe("shellTotalsFromScene", () => {
+  it("sums shell nodes and aggregate counts per shell", () => {
+    const totals = shellTotalsFromScene({
+      nodes: [{ shell: 1 }, { shell: 1 }, {}, { shell: 2 }],
+      aggregates: [
+        { shell: 1, count: 10 },
+        { shell: 3, count: 5_000 },
+        { shell: 7, count: 9 }, // clamps into the outermost band
+        { count: 99 }, // core aggregate — not a shell
+      ],
+    });
+    expect(totals[1]).toBe(12);
+    expect(totals[2]).toBe(1);
+    expect(totals[3]).toBe(5_000);
+    expect(totals[4]).toBe(9);
+    expect(shellTotalsFromScene(null)).toEqual([0, 0, 0, 0, 0]);
+  });
+});

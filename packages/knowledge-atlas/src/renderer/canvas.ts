@@ -332,7 +332,76 @@ export class CanvasRenderer implements SceneRenderer {
     }
 
     ctx.restore();
+
+    // ── lens-traversal motion abstraction (iteration-8) ─────────────
+    // When the corpus streams through the lens faster than real
+    // subgraphs can be drawn, dim the scene and overlay directional
+    // streaks + a docs odometer. Streak state is derived purely from
+    // the gesture (phase advances with flow), so frames are
+    // deterministic — no wall clock, no Math.random.
+    if (frame.motion && frame.motion.intensity > 0.01) {
+      this.drawMotion(ctx, frame);
+    }
   }
+
+  private drawMotion(ctx: CanvasRenderingContext2D, frame: Frame): void {
+    const m = frame.motion!;
+    const { width, height } = frame.viewport;
+    const T = frame.theme.tokens;
+    ctx.save();
+    ctx.translate(width / 2, height / 2);
+    // Dim the underlying scene in proportion to flow.
+    ctx.fillStyle = T.bg;
+    ctx.globalAlpha = 0.5 * m.intensity;
+    ctx.fillRect(-width / 2, -height / 2, width, height);
+    // Streaks travel along the traversal axis: in from the drag sector,
+    // through the core, out the far side.
+    const ux = Math.cos(m.angle);
+    const uy = Math.sin(m.angle);
+    const nx = -uy;
+    const ny = ux;
+    const span = Math.hypot(width, height) / 2;
+    const count = Math.round(12 + 72 * m.intensity);
+    ctx.lineCap = "round";
+    for (let i = 0; i < count; i++) {
+      const lane = (hash01(i * 7 + 1) - 0.5) * Math.min(width, height) * 0.92;
+      const speed = 0.35 + hash01(i * 13 + 5) * 0.9;
+      const s = (hash01(i * 29 + 11) + m.phase * speed * 0.22) % 1;
+      const pos = span - s * 2 * span; // +span (drag side) → −span
+      const len = (16 + 64 * m.intensity) * speed;
+      ctx.strokeStyle = i % 5 === 0 ? T.accent : T.textMuted;
+      ctx.lineWidth = i % 5 === 0 ? 1.6 : 1;
+      ctx.globalAlpha = (0.14 + 0.5 * m.intensity) * (0.4 + 0.6 * hash01(i * 3 + 2));
+      ctx.beginPath();
+      ctx.moveTo(ux * pos + nx * lane, uy * pos + ny * lane);
+      ctx.lineTo(ux * (pos - len) + nx * lane, uy * (pos - len) + ny * lane);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    if (m.odometer >= 1) {
+      ctx.fillStyle = T.text;
+      ctx.font = "600 12px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(`≈ ${formatDocs(m.odometer)} docs streaming past`, 0, height / 2 - 18);
+    }
+    ctx.restore();
+  }
+}
+
+/** Deterministic 0..1 hash for streak lanes/speeds (splitmix-ish). */
+function hash01(i: number): number {
+  let h = (i + 0x9e3779b9) | 0;
+  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+function formatDocs(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e4) return `${Math.round(n / 1000)}k`;
+  return String(Math.round(n));
 }
 
 function truncate(s: string, n: number): string {

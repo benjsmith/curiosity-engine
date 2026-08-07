@@ -133,6 +133,46 @@ Full redesign of the hybrid's scale model per feedback
   absorbs the whole neighbourhood; the first full-graph solve costs
   ~400 ms at 304 nodes (one-time; refocuses are ~0 ms).
 
+### Iteration 8 (2026-08-07) — lens-drag traversal with momentum
+
+Closes iteration 7's first gap: **dragging centerward from outside the
+squircle now moves the graph through the viewing lens** (`src/
+interaction/traversal.ts` + a motion overlay in the renderer).
+
+- **Depth = gearing.** The start point of the drag fixes its
+  docs-per-pixel ratio from the shell band it lands in: shell k holds
+  ~10× shell k−1 in an exponentially thinner pixel band, so a drag
+  from the wall moves orders of magnitude more corpus per pixel than
+  one from just outside the boundary (`docsPerPixel`, test-locked to
+  > 100× between the fringe and the outermost band, and corner-aware —
+  the squircle gap is deeper diagonally, so edges gear harder than
+  corners).
+- **Speed limits.** Drag velocity × gearing gives a docs/second flow,
+  hard-capped at `MAX_DOCS_PER_SECOND` (250k) — the "scrolling speed
+  limit" that keeps the machine (and a cloud backend) ahead of the
+  gesture no matter how violently one flicks from the extremes. Real
+  scene commits are separately rate-limited to one per 400 ms
+  (`COMMIT_INTERVAL_MS`, ≤ 2.5 scene builds/sec), each stepping the
+  lens one commit into the drag sector.
+- **Motion abstraction.** Between commits the renderer does NOT try to
+  animate hundreds of thousands of subgraphs: above a small flow
+  threshold it dims the scene and overlays deterministic directional
+  streaks along the traversal axis plus a docs odometer ("≈ 45k docs
+  streaming past"). Streak count/length/opacity scale with
+  log-normalised flow so a 400-doc wiki and a 100M corpus both read.
+- **Momentum.** Release keeps the flow decaying under exponential
+  friction (`FRICTION_PER_MS`, half-life ≈ 200 ms — the iOS flick
+  feel); commits continue at the limited rate until flow drops below
+  the stop threshold and the final scene resolves. Taps (no movement)
+  cancel cleanly and fall through to normal click handling; pinches
+  and pointer-cancel abort the traversal.
+- Inside-core drags stay camera pans; full-graph (≤ 360) scenes have
+  no boundary and are untouched. Both adapters (React + IIFE) share
+  the same wiring. 9 new physics unit tests (61 total).
+- **Compute at cloud scale**: see the new "Traversal at cloud scale"
+  section in [performance.md](performance.md) for the 100M-doc
+  switchbay-cloud analysis this iteration was sized against.
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:

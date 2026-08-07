@@ -198,6 +198,33 @@ test("remote-sim source drives the same viewer", async ({ page }) => {
   expect(Number(await page.getByTestId("hud-nodes").textContent())).toBeGreaterThan(5);
 });
 
+test("lens-drag traversal from the boundary streams and settles", async ({ page }) => {
+  await page.goto("/");
+  await ready(page);
+  // mega-4k has populated shells (4k docs ≫ the 360-node core).
+  await page.getByTestId("fixture-select").selectOption({ label: "mega-4k" });
+  await ready(page);
+  const canvas = page.getByTestId("atlas-canvas");
+  const box = (await canvas.boundingBox())!;
+  const cy = box.y + box.height / 2;
+  const startX = box.x + box.width * 0.96; // deep in the boundary
+  await page.mouse.move(startX, cy);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) {
+    await page.mouse.move(startX - i * box.width * 0.035, cy, { steps: 1 });
+    await page.waitForTimeout(16);
+  }
+  await page.mouse.up();
+  // Momentum keeps the motion abstraction live briefly after release.
+  await page.screenshot({ path: `${SHOTS}/07-traversal-momentum.png` });
+  await page.waitForTimeout(2500); // friction settles, commits land
+  await ready(page);
+  const nodes = Number(await page.getByTestId("hud-nodes").textContent());
+  expect(nodes).toBeGreaterThan(5);
+  expect(nodes).toBeLessThanOrEqual(470);
+  await page.screenshot({ path: `${SHOTS}/08-traversal-settled.png` });
+});
+
 test("other fixtures render across layouts", async ({ page }) => {
   await page.goto("/");
   await ready(page);

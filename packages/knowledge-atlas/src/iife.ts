@@ -11,6 +11,7 @@ import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
 import { coreRadius, isFullGraphScene } from "./core/layout/hybrid.ts";
 import { inCoreZone } from "./core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
+import { LensTraversal, shellTotalsFromScene, type TraversalFrame } from "./interaction/traversal.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
 import type { AtlasConfig, AtlasEvent, LayoutResult } from "./core/types.ts";
 import type { Camera } from "./renderer/types.ts";
@@ -75,6 +76,15 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const layoutKind = opts.config?.layout ?? "focus";
   const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
   const lens: LensState = { pull: 0, angle: 0 };
+  // Lens traversal (iteration-8): drags starting outside the squircle
+  // move the graph through the lens instead of panning the camera.
+  const trav = new LensTraversal(engine, viewport, () =>
+    shellTotalsFromScene(engine.snapshot().scene ?? null),
+  );
+  let travActive = false;
+  let motionFrame: TraversalFrame | null = null;
+  let motionRaf = 0;
+  let lastMoveT = 0;
 
   const isFull = () => {
     const sc = engine.snapshot().scene;
@@ -100,6 +110,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       maxLabels: opts.config?.budget?.maxLabels ?? 60,
       showHorizonRing: (opts.config?.layout ?? "focus") !== "force" && !full,
       coreRadius: isHybrid && !full ? coreRadius(viewport) : undefined,
+      motion: motionFrame?.active ? motionFrame : undefined,
     });
   };
   const animate = () => {
@@ -107,6 +118,18 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     draw(t);
     if (t < 1) raf = requestAnimationFrame(animate);
     else prevLayout = engine.snapshot().layout ?? undefined;
+  };
+  // Live-traversal loop: advances the physics (rate-limited commits)
+  // and redraws the motion abstraction until flow decays to rest.
+  const motionLoop = () => {
+    const f = trav.tick(performance.now());
+    motionFrame = f;
+    draw(Math.min(1, (performance.now() - animStart) / 300));
+    if (f.active) motionRaf = requestAnimationFrame(motionLoop);
+    else {
+      motionFrame = null;
+      draw(1);
+    }
   };
 
   const off = engine.on((e) => {
@@ -143,11 +166,25 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
       pinched = true;
       dragging = false;
+      if (travActive) {
+        trav.cancel();
+        travActive = false;
+      }
       return;
     }
     dragging = true;
     dragMoved = false;
     last = { x: ev.clientX, y: ev.clientY };
+    lastMoveT = performance.now();
+    // A drag starting outside the squircle traverses the corpus.
+    if (isHybrid && !isFull()) {
+      const p = toScene(ev);
+      if (trav.start(p.x, p.y, performance.now())) {
+        travActive = true;
+        cancelAnimationFrame(motionRaf);
+        motionRaf = requestAnimationFrame(motionLoop);
+      }
+    }
     if (ev.pointerType === "touch") {
       tooltip.hide();
       const p = toScene(ev);
@@ -181,15 +218,21 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       return;
     }
     if (dragging) {
+      const now = performance.now();
       const dx = ev.clientX - last.x;
       const dy = ev.clientY - last.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
       if (dragMoved) {
-        camera.x += dx;
-        camera.y += dy;
+        if (travActive) {
+          trav.drag(dx, dy, now - lastMoveT);
+        } else {
+          camera.x += dx;
+          camera.y += dy;
+          draw(1);
+        }
         last = { x: ev.clientX, y: ev.clientY };
-        draw(1);
       }
+      lastMoveT = now;
       return;
     }
     const p = toScene(ev);
@@ -221,6 +264,16 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       return;
     }
     if (pinched) return;
+    if (travActive) {
+      travActive = false;
+      if (dragMoved) {
+        trav.release(); // momentum decay continues in the motion loop
+        dragging = false;
+        dragMoved = false;
+        return;
+      }
+      trav.cancel(); // a tap — normal click handling below
+    }
     const wasDrag = dragMoved;
     dragging = false;
     dragMoved = false;
@@ -267,6 +320,10 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       pinchDist = 0;
       dragging = false;
       dragMoved = false;
+      if (travActive) {
+        trav.cancel();
+        travActive = false;
+      }
     }
   };
   const onDbl = (ev: MouseEvent) => {
@@ -311,6 +368,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
 
   const ro = new ResizeObserver(() => {
     viewport = { width: container.clientWidth, height: container.clientHeight };
+    trav.setViewport(viewport);
     engine.resize(viewport.width, viewport.height);
     draw(1);
   });
@@ -323,6 +381,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     engine,
     destroy: () => {
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(motionRaf);
+      trav.cancel();
       clearTimeout(longPressTimer);
       tooltip.destroy();
       ro.disconnect();
