@@ -100,6 +100,39 @@ weighted lines).
   CE glue facade now exposes `subscribe(cb)` / `getSnapshot()` /
   `controller` so host chrome renders telemetry from the API.
 
+### Iteration 7 (2026-08-10) — the cosmological atlas (P9)
+
+Full redesign of the hybrid's scale model per feedback
+([img/09-mega-4k-shells.png](img/09-mega-4k-shells.png),
+[img/10-fullgraph-304.png](img/10-fullgraph-304.png)):
+
+- **≤ 360 nodes = exactly the classic viewer.** Wikis at or under the
+  core capacity render as ONE force graph with the original CE
+  constants, filling the viewport — no boundary, no aggregation, no
+  horizon ring. Refocusing keeps every surviving node put (< 5 px
+  mean, test-locked).
+- **Exponential shells beyond.** The corpus wraps the core in layers
+  keyed to log₁₀ size bands (360–1k granular fringe + clusters,
+  1k–10k clustered, 10k–100k smeared, beyond that per-type totals),
+  built in `scene/shells.ts`. Fully-known wikis enumerate the
+  beyond-harvest remainder into real, enterable "N × type beyond the
+  horizon" clusters; cloud-scale corpora get estimated far smears.
+- **Visible-universe compression.** Shells occupy exponentially
+  thinner radial bands of the core→wall gap (50/30/15/5%); the gap is
+  wider toward the screen corners, so compression is hardest along
+  the viewport edges — and high-shell aggregates render as
+  tangentially stretched, fading ellipses (the lensing smear).
+- **Stability grades.** Core click: survivors pinned, newcomers
+  settle. Shell-1 click: the lens *shifts* — the field translates so
+  the clicked node slides into the core and the far side drifts out.
+  Deep click: full re-layout. Adaptive-hybrid inherits all of it
+  (columnar core only when ≤ 80 nodes and the topology fits).
+- **Known gaps for next round**: dragging a shell node continuously to
+  steer the lens (currently click-graded only); shell-1 discovery
+  candidates should feed the direct/adjacent shelves when the core
+  absorbs the whole neighbourhood; the first full-graph solve costs
+  ~400 ms at 304 nodes (one-time; refocuses are ~0 ms).
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:

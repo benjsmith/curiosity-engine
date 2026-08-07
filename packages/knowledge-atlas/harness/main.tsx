@@ -8,7 +8,7 @@
 import { StrictMode, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { KnowledgeAtlas } from "../src/react.ts";
-import { allFixtures, type Fixture } from "../fixtures/index.ts";
+import { allFixtures, megaCorpus, type Fixture } from "../fixtures/index.ts";
 import { ScaledDataSource, SCALED_TOTAL_LEAVES } from "../src/datasources/scaled.ts";
 import { RemoteDataSource } from "../src/datasources/remote.ts";
 import type {
@@ -37,7 +37,7 @@ function buildSources(): Fixture[] {
     defaultFocus: fixtures[0].defaultFocus,
     expected: fixtures[0].expected,
   };
-  return [...fixtures, scaled, remote];
+  return [...fixtures, megaCorpus(SEED), scaled, remote];
 }
 
 function App() {

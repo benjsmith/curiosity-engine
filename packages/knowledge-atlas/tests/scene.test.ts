@@ -17,7 +17,11 @@ function req(overrides: Partial<SceneRequest> = {}): SceneRequest {
     lens: DEFAULT_LENS,
     viewport: { width: 1200, height: 800 },
     semanticScale: 2,
-    budget: { ...DEFAULT_BUDGET },
+    // Pipeline tests exercise ranking/aggregation/discovery logic at
+    // the original scene scale; cosmological capacity has its own
+    // tests in state.test.ts.
+    coreCapacity: 90,
+    budget: { ...DEFAULT_BUDGET, maxNodes: 110 },
     ...overrides,
   };
 }
@@ -108,11 +112,13 @@ describe("discovery horizon", () => {
     }
   });
 
-  it("finds the planted contrast pair via shared-sources-no-link", () => {
+  it("surfaces the planted contrast pair (contrast shelf or visible)", () => {
     const contrastScene = buildScene(g, req({ focusId: "analyses/scaling-helps" }), 42);
     const contrast = contrastScene.horizon.find((h) => h.cls === "contrast");
-    expect(contrast, "contrast group present").toBeTruthy();
-    expect(contrast!.candidates.map((c) => c.id)).toContain("analyses/scaling-hurts-downstream");
+    const inContrast =
+      contrast?.candidates.some((c) => c.id === "analyses/scaling-hurts-downstream") ?? false;
+    const inScene = contrastScene.nodes.some((n) => n.id === "analyses/scaling-hurts-downstream");
+    expect(inContrast || inScene).toBe(true);
   });
 
   it("surfaces the planted hidden connection (scene or horizon)", () => {

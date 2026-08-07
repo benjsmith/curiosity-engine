@@ -11,7 +11,7 @@
 
 import { classifyTopology } from "./adaptive.ts";
 import { coreRadius } from "../geometry.ts";
-import { hybridLayout, partitionCore } from "./hybrid.ts";
+import { hybridLayout, isFullGraphScene, partitionCore } from "./hybrid.ts";
 import { nodeRadius, type LayoutAdapter, type LayoutContext } from "./types.ts";
 import type { LayoutResult, SceneData } from "../types.ts";
 
@@ -23,12 +23,15 @@ const COLUMN_X = [-0.78, -0.12, 0.55];
 export const adaptiveHybridLayout: LayoutAdapter = {
   id: "adaptive-hybrid",
   layout(scene: SceneData, ctx: LayoutContext): LayoutResult {
-    // Base: full hybrid (force core + rim shelves).
+    // Base: full hybrid (force core + shells / whole-wiki graph).
     const base = hybridLayout.layout(scene, ctx);
+    if (isFullGraphScene(scene)) return base; // CE-viewer mode: never columnar
 
-    // Classify ONLY the core subgraph — the rim always stays shelved.
+    // Classify ONLY the core subgraph — the shells always stay put.
     const coreSet = partitionCore(scene);
     const coreNodes = scene.nodes.filter((n) => coreSet.has(n.id));
+    // Columns stop being legible past ~80 nodes; keep the mesh then.
+    if (coreNodes.length > 80) return base;
     const coreScene: SceneData = {
       ...scene,
       nodes: coreNodes,

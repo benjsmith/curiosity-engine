@@ -11,7 +11,7 @@ import { forceLayout } from "../src/core/layout/force.ts";
 import { classifyTopology } from "../src/core/layout/adaptive.ts";
 import { buildScene } from "../src/core/scene/builder.ts";
 import { indexFromCEData } from "../src/datasources/curiosity.ts";
-import { workspaceSmallData, ontologyTree, workspaceSmall } from "../fixtures/index.ts";
+import { workspaceSmallData, ontologyTree, workspaceSmall, denseSmallWorld as denseSmallWorldFixture } from "../fixtures/index.ts";
 import { ScaledDataSource, SCALED_TOTAL_LEAVES } from "../src/datasources/scaled.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS, type SceneRequest } from "../src/core/types.ts";
 
@@ -142,34 +142,57 @@ describe("hybrid layout (P6)", () => {
   const scene = buildScene(g, req("concepts/attention"), 42);
   const ctx = { viewport: { width: 1200, height: 800 }, seed: 42 };
 
-  it("keeps focus inside the core, CORE_SHARE of plain nodes in it, rest on the rim", async () => {
-    const { hybridLayout, coreRadius, CORE_SHARE } = await import("../src/core/layout/hybrid.ts");
+  it("core holds ≤360 plain nodes inside the squircle; shells sit outside", async () => {
+    const { hybridLayout, coreRadius, partitionCore, isFullGraphScene } = await import(
+      "../src/core/layout/hybrid.ts"
+    );
+    // workspace-small (~420 items) exceeds the 360 core capacity, so
+    // shell structure must exist and stay beyond the core boundary.
+    expect(isFullGraphScene(scene)).toBe(false);
     const l = hybridLayout.layout(scene, ctx);
     const rCore = coreRadius(ctx.viewport);
-    // The focus is no longer pinned at the origin (network look, not a
-    // radial star) but must stay inside the core zone.
-    const focusP = l.positions.get("concepts/attention")!;
-    expect(Math.hypot(focusP.x, focusP.y)).toBeLessThan(rCore);
-
-    const horizonIds = new Set(scene.horizon.flatMap((h) => h.candidates.map((c) => c.id)));
-    const plain = scene.nodes.filter((n) => n.role !== "focus" && !horizonIds.has(n.id));
-    const inCore = plain.filter((n) => {
+    const coreSet = partitionCore(scene);
+    expect(coreSet.size).toBeLessThanOrEqual(360);
+    for (const id of coreSet) {
+      const p = l.positions.get(id)!;
+      expect(Math.hypot(p.x, p.y), id).toBeLessThanOrEqual(rCore + 1);
+    }
+    const shellNodes = scene.nodes.filter((n) => n.shell);
+    expect(shellNodes.length).toBeGreaterThan(0);
+    for (const n of shellNodes) {
       const p = l.positions.get(n.id)!;
-      return Math.hypot(p.x, p.y) <= rCore;
-    });
-    const expected = Math.ceil(plain.length * CORE_SHARE);
-    expect(inCore.length).toBeGreaterThanOrEqual(Math.floor(expected * 0.95));
-    expect(inCore.length).toBeLessThanOrEqual(expected + 1);
-
-    // Aggregates and horizon candidates live on the rim.
+      expect(Math.hypot(p.x, p.y), n.id).toBeGreaterThan(rCore);
+    }
     for (const a of scene.aggregates) {
       const p = l.positions.get(a.id)!;
       expect(Math.hypot(p.x, p.y), a.id).toBeGreaterThan(rCore);
     }
-    for (const id of horizonIds) {
-      const p = l.positions.get(id);
-      if (p) expect(Math.hypot(p.x, p.y), id).toBeGreaterThan(rCore);
+  });
+
+  it("wikis at or below core capacity render as ONE full graph — no boundary", async () => {
+    const { hybridLayout, isFullGraphScene } = await import("../src/core/layout/hybrid.ts");
+    const f = denseSmallWorldFixture();
+    const small = await f.source.getScene(req(f.defaultFocus));
+    // 304 nodes ≤ 360: everything visible, nothing aggregated.
+    expect(isFullGraphScene(small)).toBe(true);
+    expect(small.aggregates.length).toBe(0);
+    expect(small.horizon.length).toBe(0);
+    expect(small.nodes.length).toBeGreaterThan(280);
+    const l = hybridLayout.layout(small, ctx);
+    expect(l.positions.size).toBe(small.nodes.length);
+    // Refocusing inside the full graph keeps every survivor put.
+    const focus2 = small.nodes.find((n) => n.role === "neighbour")!.id;
+    const s2 = await f.source.getScene(req(focus2));
+    const l2 = hybridLayout.layout(s2, { ...ctx, previous: l });
+    let moved = 0;
+    let count = 0;
+    for (const [id, pos] of l2.positions) {
+      const q = l.positions.get(id);
+      if (!q) continue;
+      moved += Math.hypot(pos.x - q.x, pos.y - q.y);
+      count++;
     }
+    expect(moved / Math.max(1, count)).toBeLessThan(5);
   });
 
   it("is deterministic", async () => {
@@ -224,7 +247,7 @@ describe("adaptive-hybrid layout (P7)", () => {
     const { adaptiveHybridLayout } = await import("../src/core/layout/adaptiveHybrid.ts");
     const { partitionCore } = await import("../src/core/layout/hybrid.ts");
     const f = ontologyTree();
-    const scene = await f.source.getScene(req(f.defaultFocus));
+    const scene = await f.source.getScene({ ...req(f.defaultFocus), coreCapacity: 60 });
     const l = adaptiveHybridLayout.layout(scene, ctx);
     const coreSet = partitionCore(scene);
     const xs = new Set(
@@ -252,7 +275,7 @@ describe("adaptive-hybrid layout (P7)", () => {
   it("is deterministic", async () => {
     const { adaptiveHybridLayout } = await import("../src/core/layout/adaptiveHybrid.ts");
     const f = ontologyTree();
-    const scene = await f.source.getScene(req(f.defaultFocus));
+    const scene = await f.source.getScene({ ...req(f.defaultFocus), coreCapacity: 60 });
     const a = adaptiveHybridLayout.layout(scene, ctx);
     const b = adaptiveHybridLayout.layout(scene, ctx);
     expect(JSON.stringify([...a.positions])).toBe(JSON.stringify([...b.positions]));
@@ -291,7 +314,11 @@ describe("lens", () => {
     const engine = new AtlasEngine(f.source, { seed: 42, layout: "hybrid" });
     engine.resize(1200, 800);
     engine.start("concepts/attention");
-    await new Promise((r) => setTimeout(r, 60));
+    // 360-node core solves take a while — poll until the scene lands.
+    for (let i = 0; i < 100 && !engine.snapshot().scene; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(engine.snapshot().scene).toBeTruthy();
     const beforeFocus = engine.getState().focusId;
     const ok = commitLensTarget(engine, { pull: 1, angle }, rCore);
     expect(ok).toBe(true);

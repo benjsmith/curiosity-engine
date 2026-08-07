@@ -130,6 +130,7 @@ export class AtlasEngine implements AtlasController {
           semanticScale: this.band,
           history: this.trails.historyIds(),
           pinned: [...this.trails.pinned],
+          coreCapacity: this.config.coreCapacity,
           budget: this.effectiveBudget(),
         },
         ac.signal,

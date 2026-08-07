@@ -202,21 +202,37 @@ export class CanvasRenderer implements SceneRenderer {
     ctx.globalAlpha = 1;
 
     // ── aggregates ──────────────────────────────────────────────────
+    // Far shells smear: high-shell groups stretch tangentially into
+    // arcs (the gravitational-lensing feel) and fade, while near
+    // groups stay crisp chips.
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (const a of frame.scene.aggregates) {
       const p = positions.get(a.id);
       if (!p) continue;
+      const shell = a.shell ?? 0;
+      const angle = Math.atan2(p.y, p.x);
+      const stretch = 1 + shell * 0.9;
+      const squash = Math.max(0.4, 1 - shell * 0.16);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      if (shell > 0) ctx.rotate(angle + Math.PI / 2);
+      ctx.globalAlpha = Math.max(0.35, 1 - shell * 0.16);
       ctx.fillStyle = T.aggregateFill;
       ctx.strokeStyle = typeColour(a.type, frame.theme);
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = shell >= 3 ? 1 : 1.5;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, p.r * stretch, p.r * squash, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      ctx.globalAlpha = 1;
       ctx.fillStyle = T.text;
-      ctx.font = `600 ${Math.max(9, Math.min(13, p.r * 0.55))}px system-ui, sans-serif`;
-      ctx.fillText(String(a.count), p.x, p.y);
+      ctx.font = `600 ${Math.max(8, Math.min(13, p.r * squash * 0.8))}px system-ui, sans-serif`;
+      if (shell > 0) {
+        ctx.rotate(-(angle + Math.PI / 2)); // keep the count upright
+      }
+      ctx.fillText(a.count > 9999 ? `${Math.round(a.count / 1000)}k` : String(a.count), 0, 0);
+      ctx.restore();
     }
 
     // ── nodes ───────────────────────────────────────────────────────

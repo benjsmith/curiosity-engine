@@ -321,6 +321,39 @@ export function mixedMultiscale(seed = 42): Fixture {
   };
 }
 
+// ── 5. mega-4k: exercises cosmological shells 1–2 ───────────────────
+
+export function megaCorpus(seed = 42): Fixture {
+  const rng = splitmix32(childSeed(seed, "mega-4k"));
+  const g = new GraphIndex();
+  const types = ["concept", "entity", "fact", "evidence", "analysis", "note"];
+  const CLUSTERS = 16;
+  const PER = 250; // 16 × 250 = 4 000
+  for (let c = 0; c < CLUSTERS; c++) {
+    for (let n = 0; n < PER; n++) {
+      g.addItem(item(`mega/c${c}n${n}`, types[(c + n) % types.length], `mega ${c}.${n}`, [`src/mega-${c}-${n % 40}.md`]));
+    }
+  }
+  const id = (c: number, n: number) => `mega/c${c}n${n}`;
+  for (let c = 0; c < CLUSTERS; c++) {
+    for (let n = 0; n < PER; n++) {
+      for (let k = 0; k < 2; k++) {
+        const m = Math.floor(rng() * PER);
+        if (m !== n) g.addEdge(id(c, n), id(c, m), "wikilink");
+      }
+      if (rng() < 0.04) {
+        g.addEdge(id(c, n), id(Math.floor(rng() * CLUSTERS), Math.floor(rng() * PER)), "wikilink");
+      }
+    }
+  }
+  return {
+    name: "mega-4k",
+    source: new LocalSceneSource(g, { seed }),
+    defaultFocus: "mega/c0n0",
+    expected: {},
+  };
+}
+
 export function allFixtures(seed = 42): Fixture[] {
   return [workspaceSmall(seed), ontologyTree(seed), denseSmallWorld(seed), mixedMultiscale(seed)];
 }

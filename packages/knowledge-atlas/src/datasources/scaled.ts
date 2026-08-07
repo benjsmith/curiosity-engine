@@ -156,8 +156,12 @@ export class ScaledDataSource implements AtlasDataSource {
     const path = request.focusId ? parseId(request.focusId) : null;
     const effectivePath = path ?? [0];
     const g = this.materialize(effectivePath);
-    const scene = buildScene(g, { ...request, focusId: idOf(effectivePath) }, this.seed);
-    if (scene.stats) scene.stats.totalNodes = SCALED_TOTAL_LEAVES;
+    const scene = buildScene(
+      g,
+      { ...request, focusId: idOf(effectivePath) },
+      this.seed,
+      SCALED_TOTAL_LEAVES,
+    );
     return scene;
   }
 

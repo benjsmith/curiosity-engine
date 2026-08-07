@@ -8,7 +8,7 @@ import { AtlasEngine } from "./core/engine.ts";
 import { CanvasRenderer } from "./renderer/canvas.ts";
 import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
-import { coreRadius } from "./core/layout/hybrid.ts";
+import { coreRadius, isFullGraphScene } from "./core/layout/hybrid.ts";
 import { inCoreZone } from "./core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
@@ -76,10 +76,15 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
   const lens: LensState = { pull: 0, angle: 0 };
 
+  const isFull = () => {
+    const sc = engine.snapshot().scene;
+    return sc ? isFullGraphScene(sc) : false;
+  };
   const draw = (progress: number) => {
     const snap = engine.snapshot();
     if (!snap.scene || !snap.layout) return;
-    const layout = isHybrid ? applyLens(snap.layout, lens, coreRadius(viewport)) : snap.layout;
+    const full = isFullGraphScene(snap.scene);
+    const layout = isHybrid && !full ? applyLens(snap.layout, lens, coreRadius(viewport)) : snap.layout;
     renderer.render({
       scene: snap.scene,
       layout,
@@ -92,9 +97,9 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       hoverId,
       selection: new Set(snap.state.selection),
       pinned: new Set(snap.state.pinned),
-      maxLabels: opts.config?.budget?.maxLabels ?? 40,
-      showHorizonRing: (opts.config?.layout ?? "focus") !== "force",
-      coreRadius: isHybrid ? coreRadius(viewport) : undefined,
+      maxLabels: opts.config?.budget?.maxLabels ?? 60,
+      showHorizonRing: (opts.config?.layout ?? "focus") !== "force" && !full,
+      coreRadius: isHybrid && !full ? coreRadius(viewport) : undefined,
     });
   };
   const animate = () => {
@@ -277,7 +282,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     if (isHybrid) {
       const p = toScene(ev);
       const rCore = coreRadius(viewport);
-      if (inCoreZone(p.x, p.y, viewport)) {
+      if (isFull() || inCoreZone(p.x, p.y, viewport)) {
         camera.scale = Math.max(0.5, Math.min(3, camera.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
         draw(1);
         return;

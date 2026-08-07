@@ -74,7 +74,10 @@ export function commitLensTarget(engine: AtlasEngine, lens: LensState, rCore: nu
     if (!best || w > best.weight) best = { id, weight: w, isAggregate };
   };
   for (const n of snap.scene.nodes) consider(n.id, Math.max(0.001, n.score), false);
-  for (const a of snap.scene.aggregates) consider(a.id, a.count * 0.5, true);
+  for (const a of snap.scene.aggregates) {
+    if (a.memberIds.length === 0) continue; // far smears can't be entered
+    consider(a.id, a.count * 0.5, true);
+  }
   const target = best as { id: string; weight: number; isAggregate: boolean } | null;
   if (!target) return false;
   if (target.isAggregate) {

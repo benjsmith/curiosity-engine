@@ -8,6 +8,7 @@ import { buildAggregates } from "./aggregate.ts";
 import { computeHorizon } from "./discovery.ts";
 import { buildLandmarks } from "./landmarks.ts";
 import { rankHarvest, selectDiverse } from "./ranking.ts";
+import { buildShells, DEFAULT_CORE_CAPACITY } from "./shells.ts";
 import type { GraphIndex } from "../graphindex.ts";
 import type {
   OmittedSummary,
@@ -35,18 +36,29 @@ function effectiveBudget(budget: SceneBudget, band: number): SceneBudget {
   };
 }
 
-export function buildScene(g: GraphIndex, req: SceneRequest, seed: number): SceneData {
+export function buildScene(
+  g: GraphIndex,
+  req: SceneRequest,
+  seed: number,
+  totalNodes = g.size,
+): SceneData {
   const band = bandOf(req.semanticScale);
   const budget = effectiveBudget(req.budget, band);
-  const horizonShare = 0.15;
   const history = req.history ?? [];
   const pinned = (req.pinned ?? []).filter((id) => g.items.has(id));
+  // Central-graph capacity: at or below it the whole wiki renders as
+  // ONE classic force graph, nothing in the boundary (iteration-7).
+  const coreCapacity = Math.min(req.coreCapacity ?? DEFAULT_CORE_CAPACITY, budget.maxNodes);
 
   if (!req.focusId || !g.items.has(req.focusId)) {
     return overviewScene(g, req, budget);
   }
   const focusId = req.focusId;
   const focus = g.items.get(focusId)!;
+
+  if (g.size <= coreCapacity && totalNodes <= coreCapacity && band >= 2) {
+    return fullGraphScene(g, req, budget, focusId, pinned);
+  }
 
   // 1. harvest
   const harvest = g.harvest(focusId, {
@@ -58,11 +70,15 @@ export function buildScene(g: GraphIndex, req: SceneRequest, seed: number): Scen
   // 2. rank
   const ranked = rankHarvest(g, harvest, req.lens, history);
 
-  // 3. select individually-visible nodes (MMR-diverse)
-  const horizonReserve = Math.max(2, Math.floor(budget.maxNodes * horizonShare));
+  // 3. select the central graph (MMR diversity at small budgets; plain
+  //    rank order at CE-viewer scale, where MMR is O(n²) and the local
+  //    neighbourhood is already diverse)
+  const horizonShare = 0.15;
+  const horizonReserve = Math.max(2, Math.floor(Math.min(60, budget.maxNodes * horizonShare)));
   const pinCount = pinned.filter((id) => id !== focusId).length;
-  const nodeSlots = Math.max(0, budget.maxNodes - 1 - horizonReserve - pinCount);
-  const picked = selectDiverse(g, ranked, nodeSlots);
+  const coreSlots = Math.min(coreCapacity, Math.max(1, budget.maxNodes - horizonReserve));
+  const nodeSlots = Math.max(0, coreSlots - 1 - pinCount);
+  const picked = nodeSlots <= 120 ? selectDiverse(g, ranked, nodeSlots) : ranked.slice(0, nodeSlots);
   const selected = new Set(picked.map((p) => p.id));
 
   // roles
@@ -78,10 +94,35 @@ export function buildScene(g: GraphIndex, req: SceneRequest, seed: number): Scen
     nodes.push({ id: c.id, item, role, score: c.score, ring: c.hop });
   }
 
-  // 4. aggregates from the fold
+  // 4. cosmological shells: everything beyond the core wraps it in
+  //    exponentially scaled layers (granular → smeared); the residual
+  //    corpus far beyond local knowledge becomes far-smear aggregates.
   const nodeIds = new Set(nodes.map((n) => n.id));
   const leftovers = ranked.filter((c) => !nodeIds.has(c.id));
-  const { aggregates, residualByType } = buildAggregates(g, leftovers, nodeIds, budget.maxAggregates);
+  const shellContent = buildShells(g, leftovers, nodeIds, coreCapacity, Math.max(totalNodes, g.size));
+  for (const sn of shellContent.nodes) {
+    if (nodes.length >= budget.maxNodes - horizonReserve) break;
+    if (!nodeIds.has(sn.id)) {
+      nodes.push(sn);
+      nodeIds.add(sn.id);
+    }
+  }
+  // Small near-core clusters (type × anchor) for the immediate fold,
+  // then the shell aggregates; both budgeted together.
+  const shellMemberIds = new Set(shellContent.nodes.map((n) => n.id));
+  const nearLeftovers = leftovers.filter(
+    (c) => !shellMemberIds.has(c.id) && (harvest.get(c.id)?.hop ?? 3) <= 1,
+  );
+  const { aggregates, residualByType } = buildAggregates(
+    g,
+    nearLeftovers,
+    nodeIds,
+    Math.max(0, budget.maxAggregates - shellContent.aggregates.length),
+  );
+  for (const a of shellContent.aggregates) {
+    if (aggregates.length >= budget.maxAggregates) break;
+    aggregates.push(a);
+  }
 
   // 5. discovery horizon (reserved slots)
   const horizon =
@@ -90,6 +131,7 @@ export function buildScene(g: GraphIndex, req: SceneRequest, seed: number): Scen
       : [];
   for (const grp of horizon) {
     for (const c of grp.candidates) {
+      if (nodes.length >= budget.maxNodes) break;
       if (!nodeIds.has(c.id)) {
         nodes.push({
           id: c.id,
@@ -97,6 +139,7 @@ export function buildScene(g: GraphIndex, req: SceneRequest, seed: number): Scen
           role: "context",
           score: c.score,
           ring: harvest.get(c.id)?.hop ?? 3,
+          shell: 1,
         });
         nodeIds.add(c.id);
       }
@@ -134,7 +177,72 @@ export function buildScene(g: GraphIndex, req: SceneRequest, seed: number): Scen
     horizon,
     landmarks,
     transitionMap,
-    stats: { totalNodes: g.size, omitted },
+    stats: { totalNodes: Math.max(totalNodes, g.size), omitted },
+  };
+}
+
+/**
+ * Whole-wiki scene (≤ coreCapacity): identical in spirit to the
+ * classic CE viewer — every node, every edge (within the edge budget),
+ * no aggregation, no boundary structure, no horizon.
+ */
+function fullGraphScene(
+  g: GraphIndex,
+  req: SceneRequest,
+  budget: SceneBudget,
+  focusId: string,
+  pinned: readonly string[],
+): SceneData {
+  const harvest = g.harvest(focusId, { maxHops: 6, visitCap: g.size * 4 });
+  const pinnedSet = new Set(pinned);
+  const nodes: RenderNode[] = [];
+  for (const item of g.items.values()) {
+    const h = harvest.get(item.id);
+    const role: RenderNode["role"] =
+      item.id === focusId
+        ? "focus"
+        : pinnedSet.has(item.id)
+          ? "pinned"
+          : h?.hop === 1
+            ? "neighbour"
+            : "context";
+    nodes.push({
+      id: item.id,
+      item,
+      role,
+      score: item.id === focusId ? Infinity : 1 / (1 + (h?.hop ?? 6)),
+      ring: h?.hop ?? 6,
+    });
+  }
+  const focusEdges: RenderEdge[] = [];
+  const restEdges: RenderEdge[] = [];
+  const seen = new Set<string>();
+  for (const e of g.edges) {
+    const key = `${e.from}|${e.to}|${e.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const edge: RenderEdge = {
+      source: e.from,
+      target: e.to,
+      type: e.type,
+      direction: "forward",
+      confidence: e.confidence,
+      priority: e.from === focusId || e.to === focusId ? 1 : 5,
+    };
+    (edge.priority === 1 ? focusEdges : restEdges).push(edge);
+  }
+  const edges = [...focusEdges, ...restEdges].slice(0, budget.maxEdges);
+  const landmarks = buildLandmarks(g, new Set(nodes.map((n) => n.item.type)), pinned, req.lens);
+  return {
+    focus: g.items.get(focusId),
+    nodes,
+    aggregates: [],
+    edges,
+    bundles: [],
+    horizon: [],
+    landmarks,
+    transitionMap: {},
+    stats: { totalNodes: g.size, omitted: [] },
   };
 }
 

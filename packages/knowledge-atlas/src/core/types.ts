@@ -58,6 +58,9 @@ export type SceneRequest = {
   history?: string[];
   /** Pinned item ids — always survive selection. */
   pinned?: string[];
+  /** Max individually-laid-out nodes in the central graph zone; wikis
+   * at or below this size render as ONE full graph, CE-viewer style. */
+  coreCapacity?: number;
   budget: SceneBudget;
 };
 
@@ -71,6 +74,8 @@ export type RenderNode = {
   score: number;
   /** Hop distance from focus (layout band hint). */
   ring?: number;
+  /** Cosmological shell (1 = nearest boundary layer); undefined = core. */
+  shell?: number;
 };
 
 export type RenderAggregate = {
@@ -88,6 +93,8 @@ export type RenderAggregate = {
   residual?: number;
   /** Nearest selected node this aggregate clusters around, if any. */
   anchorId?: string;
+  /** Cosmological shell (1 = nearest boundary layer); undefined = inner. */
+  shell?: number;
 };
 
 export type RenderEdge = {
@@ -311,6 +318,8 @@ export type LayoutKind =
 export type AtlasConfig = {
   /** Seed for every stochastic step (PLAN AD-7). Default 42. */
   seed?: number;
+  /** Central-graph capacity (default 360 — the classic CE viewer scale). */
+  coreCapacity?: number;
   /** Default "focus". */
   layout?: LayoutKind;
   budget?: Partial<SceneBudget>;
@@ -349,11 +358,11 @@ export type LayoutResult = {
 };
 
 export const DEFAULT_BUDGET: SceneBudget = {
-  maxNodes: 90,
-  maxAggregates: 12,
-  maxEdges: 170,
-  maxBundles: 16,
-  maxLabels: 54,
+  maxNodes: 460,
+  maxAggregates: 40,
+  maxEdges: 900,
+  maxBundles: 24,
+  maxLabels: 60,
 };
 
 export const DEFAULT_LENS: AtlasLens = { id: "default" };

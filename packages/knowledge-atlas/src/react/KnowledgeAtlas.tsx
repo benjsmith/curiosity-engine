@@ -10,7 +10,7 @@ import { AtlasEngine } from "../core/engine.ts";
 import { CanvasRenderer } from "../renderer/canvas.ts";
 import { resolveTheme } from "../renderer/theme.ts";
 import { CuriosityDataSource } from "../datasources/curiosity.ts";
-import { coreRadius } from "../core/layout/hybrid.ts";
+import { coreRadius, isFullGraphScene } from "../core/layout/hybrid.ts";
 import { inCoreZone } from "../core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "../interaction/tooltip.ts";
@@ -94,11 +94,16 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
       const lens: LensState = { pull: 0, angle: 0 };
 
+      const isFull = () => {
+        const sc = engine.snapshot().scene;
+        return sc ? isFullGraphScene(sc) : false;
+      };
       const draw = (progress: number) => {
         const snap = engine.snapshot();
         if (!snap.scene || !snap.layout) return;
         const rCore = coreRadius(viewport);
-        const layout = isHybrid ? applyLens(snap.layout, lens, rCore) : snap.layout;
+        const full = isFullGraphScene(snap.scene);
+        const layout = isHybrid && !full ? applyLens(snap.layout, lens, rCore) : snap.layout;
         renderer.render({
           scene: snap.scene,
           layout,
@@ -111,9 +116,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           hoverId,
           selection: new Set(snap.state.selection),
           pinned: new Set(snap.state.pinned),
-          maxLabels: props.config?.budget?.maxLabels ?? 40,
-          showHorizonRing: (props.config?.layout ?? "focus") !== "force",
-          coreRadius: isHybrid ? coreRadius(viewport) : undefined,
+          maxLabels: props.config?.budget?.maxLabels ?? 60,
+          showHorizonRing: (props.config?.layout ?? "focus") !== "force" && !full,
+          coreRadius: isHybrid && !full ? coreRadius(viewport) : undefined,
         });
       };
 
@@ -207,7 +212,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
               const mx = ((a.x + b.x) / 2 - rect.left - viewport.width / 2 - camera.x) / camera.scale;
               const my = ((a.y + b.y) / 2 - rect.top - viewport.height / 2 - camera.y) / camera.scale;
               const rCore = coreRadius(viewport);
-              if (inCoreZone(mx, my, viewport)) {
+              if (isFull() || inCoreZone(mx, my, viewport)) {
                 camera.scale = Math.max(0.5, Math.min(3, camera.scale * (zoomIn ? 1.12 : 1 / 1.12)));
               } else if (zoomIn) {
                 lens.angle = Math.atan2(my, mx);
@@ -328,9 +333,10 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           // Lens model (iteration-2 feedback): inside the core zone the
           // wheel is plain geometric zoom, like the classic viewer;
           // over the rim it pulls that sector inward until it commits.
+          // Whole-wiki mode has no rim: the entire surface zooms.
           const p = toScene(ev);
           const rCore = coreRadius(viewport);
-          if (inCoreZone(p.x, p.y, viewport)) {
+          if (isFull() || inCoreZone(p.x, p.y, viewport)) {
             const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
             camera.scale = Math.max(0.5, Math.min(3, camera.scale * factor));
             draw(1);
