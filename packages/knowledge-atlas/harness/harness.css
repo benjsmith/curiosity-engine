@@ -20,6 +20,16 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 13px/1.45 system-ui, sans-serif;
+  /* iOS long-press otherwise selects chrome text next to the canvas
+   * (Copy/Look Up callout) — suppress globally, re-enable where copy
+   * is genuinely useful. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.explain, .candidate .why {
+  -webkit-user-select: text;
+  user-select: text;
 }
 .app { display: grid; grid-template-columns: 1fr 300px; grid-template-rows: 44px 1fr; height: 100%; }
 .toolbar {

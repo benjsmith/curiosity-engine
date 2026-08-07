@@ -7,6 +7,7 @@
  * resolved theme so it works in both hosts and both colour modes.
  */
 
+import { pluralize } from "../core/scene/aggregate.ts";
 import type { RenderAggregate } from "../core/types.ts";
 import type { ResolvedTheme } from "../renderer/theme.ts";
 
@@ -58,7 +59,7 @@ export class AggregateTooltip {
     this.el.innerHTML =
       `<div style="font-weight:600;margin-bottom:4px">${escapeHtml(agg.label)}</div>` +
       rows +
-      (more > 0 ? `<div style="opacity:.6;margin-top:2px">…and ${more} more ${escapeHtml(agg.type)}${more === 1 ? "" : "s"}</div>` : "") +
+      (more > 0 ? `<div style="opacity:.6;margin-top:2px">…and ${more} more ${escapeHtml(pluralize(agg.type, more))}</div>` : "") +
       `<div style="opacity:.6;margin-top:6px;font-style:italic">tap here to bring this group into the graph</div>`;
     this.el.style.display = "block";
     // Keep inside the host: flip left/up near the far edges.
