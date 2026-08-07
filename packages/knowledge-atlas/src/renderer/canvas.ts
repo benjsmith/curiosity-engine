@@ -112,10 +112,12 @@ export class CanvasRenderer implements SceneRenderer {
       ctx.font = "10px system-ui, sans-serif";
       ctx.textAlign = "center";
       const arc = (2 * Math.PI) / CLASS_ORDER.length;
+      // Captions sit just INSIDE the ring — outside clips at the canvas
+      // edge on narrow (portrait/phone) viewports where R ≈ width/2.
       for (const grp of frame.scene.horizon) {
         const angle = CLASS_ORDER.indexOf(grp.cls) * arc + arc / 2 - Math.PI / 2;
-        const lx = Math.cos(angle) * (R + 14);
-        const ly = Math.sin(angle) * (R + 14);
+        const lx = Math.cos(angle) * (R - 16);
+        const ly = Math.sin(angle) * (R - 16);
         const omitted = grp.omittedCount > 0 ? ` (+${grp.omittedCount})` : "";
         ctx.fillText(`${CLASS_LABEL[grp.cls]}${omitted}`, lx, ly);
       }

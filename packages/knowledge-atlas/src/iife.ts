@@ -30,7 +30,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const renderer = new CanvasRenderer();
 
   const canvas = document.createElement("canvas");
-  canvas.style.cssText = "display:block;width:100%;height:100%;outline:none;";
+  canvas.style.cssText = "display:block;width:100%;height:100%;outline:none;touch-action:none;";
   canvas.tabIndex = 0;
   container.appendChild(canvas);
   renderer.mount(canvas);
@@ -91,12 +91,41 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let dragging = false;
   let dragMoved = false;
   let last = { x: 0, y: 0 };
+  // Touch: pinch = semantic zoom, double-tap = open (see React adapter).
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinchDist = 0;
+  let pinched = false;
+  let lastTap = { t: 0, x: 0, y: 0 };
   const onDown = (ev: PointerEvent) => {
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+      pinched = true;
+      dragging = false;
+      return;
+    }
     dragging = true;
     dragMoved = false;
     last = { x: ev.clientX, y: ev.clientY };
   };
   const onMove = (ev: PointerEvent) => {
+    if (pointers.has(ev.pointerId)) {
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    }
+    if (pointers.size === 2 && pinchDist > 0) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      const ratio = d / pinchDist;
+      if (ratio > 1.12) {
+        engine.zoomTo(engine.getState().semanticScale + 0.2);
+        pinchDist = d;
+      } else if (ratio < 0.89) {
+        engine.zoomTo(engine.getState().semanticScale - 0.2);
+        pinchDist = d;
+      }
+      return;
+    }
     if (dragging) {
       const dx = ev.clientX - last.x;
       const dy = ev.clientY - last.y;
@@ -118,12 +147,31 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     }
   };
   const onUp = (ev: PointerEvent) => {
+    pointers.delete(ev.pointerId);
+    if (pointers.size === 0 && pinched) {
+      pinched = false;
+      pinchDist = 0;
+      dragging = false;
+      dragMoved = false;
+      return;
+    }
+    if (pinched) return;
     const wasDrag = dragMoved;
     dragging = false;
     dragMoved = false;
     if (wasDrag) return;
     const p = toScene(ev);
-    const hit = engine.hitTester.pointAt(p.x, p.y);
+    const hit = engine.hitTester.pointAt(p.x, p.y, ev.pointerType === "touch" ? 12 : 4);
+    if (ev.pointerType === "touch") {
+      const now = performance.now();
+      const isDouble =
+        now - lastTap.t < 350 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30;
+      lastTap = { t: now, x: ev.clientX, y: ev.clientY };
+      if (isDouble) {
+        if (hit?.kind === "node") engine.openItem(hit.id);
+        return;
+      }
+    }
     if (!hit) return;
     if (hit.kind === "node") {
       camera.x = 0;
@@ -131,6 +179,15 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       engine.focus(hit.id, "user");
     } else {
       engine.zoomTo(engine.getState().semanticScale + 1);
+    }
+  };
+  const onCancel = (ev: PointerEvent) => {
+    pointers.delete(ev.pointerId);
+    if (pointers.size === 0) {
+      pinched = false;
+      pinchDist = 0;
+      dragging = false;
+      dragMoved = false;
     }
   };
   const onDbl = (ev: MouseEvent) => {
@@ -145,6 +202,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onCancel);
   canvas.addEventListener("dblclick", onDbl);
   canvas.addEventListener("wheel", onWheel, { passive: false });
 

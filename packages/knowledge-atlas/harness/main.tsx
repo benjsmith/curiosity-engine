@@ -174,26 +174,42 @@ function App() {
                 {grp.cls}
                 {grp.omittedCount > 0 && <span className="omit"> · {grp.omittedCount} more</span>}
               </div>
-              {grp.candidates.map((c) => (
-                <button
-                  key={c.id}
-                  className="candidate"
-                  data-testid="candidate"
-                  onClick={() => controllerRef.current?.focus(c.id)}
-                  onContextMenu={(ev) => {
-                    ev.preventDefault();
-                    controllerRef.current?.requestExplanation({
-                      kind: "candidate",
-                      id: c.id,
-                      focusId: controllerRef.current?.getState().focusId ?? "",
-                      cls: grp.cls,
-                    });
-                  }}
-                >
-                  {c.item.title}
-                  <div className="why">{c.reason.text}</div>
-                </button>
-              ))}
+              {grp.candidates.map((c) => {
+                const explain = () =>
+                  controllerRef.current?.requestExplanation({
+                    kind: "candidate",
+                    id: c.id,
+                    focusId: controllerRef.current?.getState().focusId ?? "",
+                    cls: grp.cls,
+                  });
+                return (
+                  <div key={c.id} style={{ display: "flex", gap: 4, alignItems: "flex-start" }}>
+                    <button
+                      className="candidate"
+                      data-testid="candidate"
+                      style={{ flex: 1 }}
+                      onClick={() => controllerRef.current?.focus(c.id)}
+                      onContextMenu={(ev) => {
+                        ev.preventDefault();
+                        explain();
+                      }}
+                    >
+                      {c.item.title}
+                      <div className="why">{c.reason.text}</div>
+                    </button>
+                    <button
+                      className="candidate"
+                      data-testid="candidate-why"
+                      style={{ flex: "0 0 auto", padding: "4px 7px" }}
+                      title="Why does this appear?"
+                      aria-label={`Explain ${c.item.title}`}
+                      onClick={explain}
+                    >
+                      ?
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>

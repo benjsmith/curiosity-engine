@@ -116,13 +116,43 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       let dragging = false;
       let dragMoved = false;
       let last = { x: 0, y: 0 };
+      // Touch: two-finger pinch drives SEMANTIC zoom (the wheel
+      // equivalent) and double-tap opens (the dblclick equivalent).
+      const pointers = new Map<number, { x: number; y: number }>();
+      let pinchDist = 0;
+      let pinched = false;
+      let lastTap = { t: 0, x: 0, y: 0 };
       const onPointerDown = (ev: PointerEvent) => {
+        pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        if (pointers.size === 2) {
+          const [a, b] = [...pointers.values()];
+          pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+          pinched = true;
+          dragging = false;
+          return;
+        }
         dragging = true;
         dragMoved = false;
         last = { x: ev.clientX, y: ev.clientY };
         canvas.setPointerCapture(ev.pointerId);
       };
       const onPointerMove = (ev: PointerEvent) => {
+        if (pointers.has(ev.pointerId)) {
+          pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        }
+        if (pointers.size === 2 && pinchDist > 0) {
+          const [a, b] = [...pointers.values()];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          const ratio = d / pinchDist;
+          if (ratio > 1.12) {
+            engine.zoomTo(engine.getState().semanticScale + 0.2);
+            pinchDist = d;
+          } else if (ratio < 0.89) {
+            engine.zoomTo(engine.getState().semanticScale - 0.2);
+            pinchDist = d;
+          }
+          return;
+        }
         if (dragging) {
           const dx = ev.clientX - last.x;
           const dy = ev.clientY - last.y;
@@ -146,13 +176,34 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         }
       };
       const onPointerUp = (ev: PointerEvent) => {
+        pointers.delete(ev.pointerId);
+        if (pointers.size === 0 && pinched) {
+          // A pinch just ended — its final lift must not count as a tap.
+          pinched = false;
+          pinchDist = 0;
+          dragging = false;
+          dragMoved = false;
+          return;
+        }
+        if (pinched) return;
         const wasDrag = dragMoved;
         dragging = false;
         dragMoved = false;
-        canvas.releasePointerCapture(ev.pointerId);
+        if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
         if (wasDrag) return;
         const p = toScene(ev);
-        const hit = engine.hitTester.pointAt(p.x, p.y);
+        const hit = engine.hitTester.pointAt(p.x, p.y, ev.pointerType === "touch" ? 12 : 4);
+        // Double-tap opens (touch has no reliable dblclick).
+        if (ev.pointerType === "touch") {
+          const now = performance.now();
+          const isDouble =
+            now - lastTap.t < 350 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30;
+          lastTap = { t: now, x: ev.clientX, y: ev.clientY };
+          if (isDouble) {
+            if (hit?.kind === "node") engine.openItem(hit.id);
+            return;
+          }
+        }
         if (!hit) return;
         if (hit.kind === "node") {
           camera.x = 0;
@@ -215,9 +266,19 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         }
       };
 
+      const onPointerCancel = (ev: PointerEvent) => {
+        pointers.delete(ev.pointerId);
+        if (pointers.size === 0) {
+          pinched = false;
+          pinchDist = 0;
+          dragging = false;
+          dragMoved = false;
+        }
+      };
       canvas.addEventListener("pointerdown", onPointerDown);
       canvas.addEventListener("pointermove", onPointerMove);
       canvas.addEventListener("pointerup", onPointerUp);
+      canvas.addEventListener("pointercancel", onPointerCancel);
       canvas.addEventListener("dblclick", onDblClick);
       canvas.addEventListener("wheel", onWheel, { passive: false });
       canvas.addEventListener("keydown", onKeyDown);
@@ -239,6 +300,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerup", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerCancel);
         canvas.removeEventListener("dblclick", onDblClick);
         canvas.removeEventListener("wheel", onWheel);
         canvas.removeEventListener("keydown", onKeyDown);
@@ -257,7 +319,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         <canvas
           ref={canvasRef}
           data-testid="atlas-canvas"
-          style={{ display: "block", width: "100%", height: "100%", outline: "none" }}
+          style={{ display: "block", width: "100%", height: "100%", outline: "none", touchAction: "none" }}
           aria-label="Knowledge atlas"
           role="application"
         />
