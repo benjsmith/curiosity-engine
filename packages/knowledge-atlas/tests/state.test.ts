@@ -138,6 +138,87 @@ describe("layouts", () => {
   });
 });
 
+describe("hybrid layout (P6)", () => {
+  const scene = buildScene(g, req("concepts/attention"), 42);
+  const ctx = { viewport: { width: 1200, height: 800 }, seed: 42 };
+
+  it("places focus at centre, ~67% of plain nodes in the force core, rest on the rim", async () => {
+    const { hybridLayout, coreRadius, CORE_SHARE } = await import("../src/core/layout/hybrid.ts");
+    const l = hybridLayout.layout(scene, ctx);
+    const rCore = coreRadius(ctx.viewport);
+    const focusP = l.positions.get("concepts/attention")!;
+    expect(Math.hypot(focusP.x, focusP.y)).toBeLessThan(1);
+
+    const horizonIds = new Set(scene.horizon.flatMap((h) => h.candidates.map((c) => c.id)));
+    const plain = scene.nodes.filter((n) => n.role !== "focus" && !horizonIds.has(n.id));
+    const inCore = plain.filter((n) => {
+      const p = l.positions.get(n.id)!;
+      return Math.hypot(p.x, p.y) <= rCore;
+    });
+    const expected = Math.ceil(plain.length * CORE_SHARE);
+    expect(inCore.length).toBeGreaterThanOrEqual(Math.floor(expected * 0.95));
+    expect(inCore.length).toBeLessThanOrEqual(expected + 1);
+
+    // Aggregates and horizon candidates live on the rim.
+    for (const a of scene.aggregates) {
+      const p = l.positions.get(a.id)!;
+      expect(Math.hypot(p.x, p.y), a.id).toBeGreaterThan(rCore);
+    }
+    for (const id of horizonIds) {
+      const p = l.positions.get(id);
+      if (p) expect(Math.hypot(p.x, p.y), id).toBeGreaterThan(rCore);
+    }
+  });
+
+  it("is deterministic", async () => {
+    const { hybridLayout } = await import("../src/core/layout/hybrid.ts");
+    const a = hybridLayout.layout(scene, ctx);
+    const b = hybridLayout.layout(scene, ctx);
+    expect(JSON.stringify([...a.positions])).toBe(JSON.stringify([...b.positions]));
+  });
+});
+
+describe("lens", () => {
+  it("pull moves only the targeted rim sector inward; commit focuses its dominant item", async () => {
+    const { hybridLayout, coreRadius } = await import("../src/core/layout/hybrid.ts");
+    const { applyLens, commitLensTarget } = await import("../src/interaction/lens.ts");
+    const { AtlasEngine } = await import("../src/core/engine.ts");
+    const scene = buildScene(g, req("concepts/attention"), 42);
+    const ctx = { viewport: { width: 1200, height: 800 }, seed: 42 };
+    const layout = hybridLayout.layout(scene, ctx);
+    const rCore = coreRadius(ctx.viewport);
+
+    // Pick a real rim item's angle as the lens direction.
+    const rimEntry = [...layout.positions.entries()].find(([, p]) => Math.hypot(p.x, p.y) > rCore * 1.3)!;
+    const angle = Math.atan2(rimEntry[1].y, rimEntry[1].x);
+    const displaced = applyLens(layout, { pull: 0.8, angle }, rCore);
+    const before = Math.hypot(rimEntry[1].x, rimEntry[1].y);
+    const afterP = displaced.positions.get(rimEntry[0])!;
+    expect(Math.hypot(afterP.x, afterP.y)).toBeLessThan(before);
+    // The opposite sector is untouched.
+    const opposite = [...layout.positions.entries()].find(([, p]) => {
+      const rho = Math.hypot(p.x, p.y);
+      const d = Math.abs(Math.atan2(Math.sin(Math.atan2(p.y, p.x) - (angle + Math.PI)), Math.cos(Math.atan2(p.y, p.x) - (angle + Math.PI))));
+      return rho > rCore * 1.3 && d < 0.3;
+    });
+    if (opposite) {
+      expect(displaced.positions.get(opposite[0])).toEqual(opposite[1]);
+    }
+
+    // Commit against a live engine: focus changes to something.
+    const f = workspaceSmall();
+    const engine = new AtlasEngine(f.source, { seed: 42, layout: "hybrid" });
+    engine.resize(1200, 800);
+    engine.start("concepts/attention");
+    await new Promise((r) => setTimeout(r, 60));
+    const beforeFocus = engine.getState().focusId;
+    const ok = commitLensTarget(engine, { pull: 1, angle }, rCore);
+    expect(ok).toBe(true);
+    expect(engine.getState().focusId).not.toBe(beforeFocus);
+    engine.destroy();
+  });
+});
+
 describe("adaptive topology classifier", () => {
   it("classifies the tree fixture as tree-like", async () => {
     const f = ontologyTree();

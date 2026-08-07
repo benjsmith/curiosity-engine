@@ -8,6 +8,8 @@ import { AtlasEngine } from "./core/engine.ts";
 import { CanvasRenderer } from "./renderer/canvas.ts";
 import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
+import { coreRadius } from "./core/layout/hybrid.ts";
+import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
 import type { AtlasConfig, AtlasEvent, LayoutResult } from "./core/types.ts";
 import type { Camera } from "./renderer/types.ts";
 
@@ -44,13 +46,16 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let hoverId: string | null = null;
   const camera: Camera = { x: 0, y: 0, scale: 1 };
   let viewport = { width: container.clientWidth || 800, height: container.clientHeight || 600 };
+  const isHybrid = (opts.config?.layout ?? "focus") === "hybrid";
+  const lens: LensState = { pull: 0, angle: 0 };
 
   const draw = (progress: number) => {
     const snap = engine.snapshot();
     if (!snap.scene || !snap.layout) return;
+    const layout = isHybrid ? applyLens(snap.layout, lens, coreRadius(viewport)) : snap.layout;
     renderer.render({
       scene: snap.scene,
-      layout: snap.layout,
+      layout,
       prevLayout,
       progress,
       camera,
@@ -62,6 +67,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       pinned: new Set(snap.state.pinned),
       maxLabels: opts.config?.budget?.maxLabels ?? 40,
       showHorizonRing: (opts.config?.layout ?? "focus") !== "force",
+      coreRadius: isHybrid ? coreRadius(viewport) : undefined,
     });
   };
   const animate = () => {
@@ -73,6 +79,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
 
   const off = engine.on((e) => {
     if (e.kind === "scene-ready") {
+      lens.pull = 0;
       cancelAnimationFrame(raf);
       animStart = performance.now();
       raf = requestAnimationFrame(animate);
@@ -178,7 +185,17 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       camera.y = 0;
       engine.focus(hit.id, "user");
     } else {
-      engine.zoomTo(engine.getState().semanticScale + 1);
+      // Aggregates are selectable: click focuses the top member so the
+      // region unfolds into the graph zone.
+      const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === hit.id);
+      const member = agg?.memberIds[0];
+      if (member) {
+        camera.x = 0;
+        camera.y = 0;
+        engine.focus(member, "user");
+      } else {
+        engine.zoomTo(engine.getState().semanticScale + 1);
+      }
     }
   };
   const onCancel = (ev: PointerEvent) => {
@@ -197,6 +214,27 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   };
   const onWheel = (ev: WheelEvent) => {
     ev.preventDefault();
+    if (isHybrid) {
+      const p = toScene(ev);
+      const rCore = coreRadius(viewport);
+      if (Math.hypot(p.x, p.y) <= rCore) {
+        camera.scale = Math.max(0.5, Math.min(3, camera.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
+        draw(1);
+        return;
+      }
+      if (ev.deltaY < 0) {
+        lens.angle = Math.atan2(p.y, p.x);
+        lens.pull = Math.min(1, lens.pull + LENS_STEP);
+        if (lens.pull >= 1) {
+          lens.pull = 0;
+          commitLensTarget(engine, { pull: 1, angle: lens.angle }, rCore);
+        }
+      } else {
+        lens.pull = Math.max(0, lens.pull - LENS_STEP);
+      }
+      draw(1);
+      return;
+    }
     engine.zoomTo(engine.getState().semanticScale + (ev.deltaY < 0 ? 0.2 : -0.2));
   };
   canvas.addEventListener("pointerdown", onDown);

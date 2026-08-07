@@ -8,6 +8,7 @@
 import { adaptiveLayout } from "./layout/adaptive.ts";
 import { focusLayout } from "./layout/focus.ts";
 import { forceLayout } from "./layout/force.ts";
+import { hybridLayout } from "./layout/hybrid.ts";
 import { hyperbolicLayout } from "./layout/hyperbolic.ts";
 import { HitTester } from "./hittest.ts";
 import { Trails } from "./trails.ts";
@@ -33,6 +34,7 @@ import type {
 const ADAPTERS: Record<LayoutKind, LayoutAdapter> = {
   force: forceLayout,
   focus: focusLayout,
+  hybrid: hybridLayout,
   hyperbolic: hyperbolicLayout,
   adaptive: adaptiveLayout,
 };

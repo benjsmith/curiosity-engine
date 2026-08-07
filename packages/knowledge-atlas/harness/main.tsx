@@ -43,7 +43,7 @@ function buildSources(): Fixture[] {
 function App() {
   const fixtures = useMemo(buildSources, []);
   const [fixtureIdx, setFixtureIdx] = useState(0);
-  const [layout, setLayout] = useState<LayoutKind>("focus");
+  const [layout, setLayout] = useState<LayoutKind>("hybrid");
   const [stats, setStats] = useState<SceneStats | null>(null);
   const [horizon, setHorizon] = useState<HorizonGroup[]>([]);
   const [trail, setTrail] = useState<TrailState | null>(null);
@@ -101,6 +101,7 @@ function App() {
           value={layout}
           onChange={(e) => setLayout(e.target.value as LayoutKind)}
         >
+          <option value="hybrid">hybrid (P6: force core + type rim)</option>
           <option value="focus">focus (P1)</option>
           <option value="force">force (P0 baseline)</option>
           <option value="hyperbolic">hyperbolic (P3)</option>
@@ -187,7 +188,7 @@ function App() {
                     <button
                       className="candidate"
                       data-testid="candidate"
-                      style={{ flex: 1 }}
+                      style={{ flex: 1, width: "auto" }}
                       onClick={() => controllerRef.current?.focus(c.id)}
                       onContextMenu={(ev) => {
                         ev.preventDefault();
@@ -200,7 +201,7 @@ function App() {
                     <button
                       className="candidate"
                       data-testid="candidate-why"
-                      style={{ flex: "0 0 auto", padding: "4px 7px" }}
+                      style={{ flex: "0 0 auto", width: "auto", padding: "4px 7px" }}
                       title="Why does this appear?"
                       aria-label={`Explain ${c.item.title}`}
                       onClick={explain}

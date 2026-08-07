@@ -35,6 +35,10 @@
 
     var handle = window.KnowledgeAtlas.mount(container, {
       data: data,
+      // Hybrid (force core + doc-type hyperbolic rim) per iteration-2
+      // feedback; wheel zooms the core like the classic viewer and
+      // lens-pulls the rim.
+      config: { layout: 'hybrid' },
       onOpenItem: function (id) {
         window.location.hash = '#page=' + encodeURIComponent(id);
       },

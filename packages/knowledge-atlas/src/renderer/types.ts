@@ -26,6 +26,8 @@ export type Frame = {
   maxLabels: number;
   /** Show per-class horizon arc captions. */
   showHorizonRing: boolean;
+  /** Hybrid mode: radius of the central force zone (faint boundary). */
+  coreRadius?: number;
 };
 
 export interface SceneRenderer {

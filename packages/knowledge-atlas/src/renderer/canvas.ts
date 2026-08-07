@@ -97,6 +97,16 @@ export class CanvasRenderer implements SceneRenderer {
       if (p) positions.set(a.id, p);
     }
 
+    // ── hybrid core boundary (lens zone hint) ───────────────────────
+    if (frame.coreRadius) {
+      ctx.strokeStyle = T.line;
+      ctx.globalAlpha = 0.3;
+      ctx.beginPath();
+      ctx.arc(0, 0, frame.coreRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     // ── horizon band ────────────────────────────────────────────────
     if (frame.showHorizonRing && frame.scene.horizon.length) {
       const R = Math.min(width, height) * 0.485;

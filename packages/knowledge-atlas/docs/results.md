@@ -97,6 +97,40 @@ weighted lines).
   only; `showCommunities` lens flag exists and defaults off.
 - Clean separation engine/renderer/adapters/harness: ✅ import rules.
 
+## Iteration 2 — first human feedback (2026-08-08)
+
+The maintainer tested the harness (desktop + phone artifact). Verdicts
+and the changes that followed, all landed behind `layout: "hybrid"`:
+
+- **Doc-type spatial organisation "works really well"** — the
+  prior-finding bet (explicit types over algorithmic communities as
+  geography) is confirmed by first human use.
+- **Hyperbolic felt most natural; adaptive good** — both retained, as
+  requested.
+- **Semantic zoom too step-like** → in the new hybrid mode the wheel
+  no longer drives semantic bands directly: it is geometric zoom over
+  the central graph (classic-viewer feel) and a *lens* over the rim.
+  Band stepping remains available via the toolbar buttons.
+- **Requested hybrid mode** → `hybrid` (P6,
+  [img/04-layout-hybrid.png](img/04-layout-hybrid.png)): a
+  force-directed core holding ~67% of the scene's plain nodes
+  (`CORE_SHARE`), transitioning at a visible boundary into the
+  hyperbolic doc-type rim (aggregates + discovery horizon). Now the
+  default in the harness and the CE glue.
+- **Lens interaction**: wheel/pinch inside the core = zoom the graph;
+  over the rim = pull that angular sector inward (positions
+  interpolate toward the core), committing at full pull by focusing
+  the sector's dominant item. Implemented in
+  `src/interaction/lens.ts`, shared by both adapters.
+- **Rim aggregates now selectable**: clicking (or lens-committing) a
+  grouping bubble focuses its top-ranked member, so the region unfolds
+  into the graph zone via the existing transition-map animation.
+
+Open questions for the next round: should the lens pull be continuous
+with the wheel delta (currently stepped at 0.34/notch with visual
+feedback between steps), and should the core's 67% share be
+lens-adjustable?
+
 ## Recommendation for the next production iteration
 
 1. **Adopt the P1 focus atlas as the production default**, force kept

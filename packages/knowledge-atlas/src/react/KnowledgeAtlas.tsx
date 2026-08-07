@@ -10,6 +10,8 @@ import { AtlasEngine } from "../core/engine.ts";
 import { CanvasRenderer } from "../renderer/canvas.ts";
 import { resolveTheme } from "../renderer/theme.ts";
 import { CuriosityDataSource } from "../datasources/curiosity.ts";
+import { coreRadius } from "../core/layout/hybrid.ts";
+import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
 import type { AtlasController, AtlasEvent, LayoutResult } from "../core/types.ts";
 import type { KnowledgeAtlasProps } from "./props.ts";
 import type { Camera } from "../renderer/types.ts";
@@ -63,13 +65,17 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       let hoverId: string | null = null;
       const camera: Camera = { x: 0, y: 0, scale: 1 };
       let viewport = { width: host.clientWidth || 800, height: host.clientHeight || 600 };
+      const isHybrid = (props.config?.layout ?? "focus") === "hybrid";
+      const lens: LensState = { pull: 0, angle: 0 };
 
       const draw = (progress: number) => {
         const snap = engine.snapshot();
         if (!snap.scene || !snap.layout) return;
+        const rCore = coreRadius(viewport);
+        const layout = isHybrid ? applyLens(snap.layout, lens, rCore) : snap.layout;
         renderer.render({
           scene: snap.scene,
-          layout: snap.layout,
+          layout,
           prevLayout,
           progress,
           camera,
@@ -81,6 +87,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           pinned: new Set(snap.state.pinned),
           maxLabels: props.config?.budget?.maxLabels ?? 40,
           showHorizonRing: (props.config?.layout ?? "focus") !== "force",
+          coreRadius: isHybrid ? coreRadius(viewport) : undefined,
         });
       };
 
@@ -93,6 +100,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
 
       const off = engine.on((e: AtlasEvent) => {
         if (e.kind === "scene-ready") {
+          lens.pull = 0; // a new scene resets any in-flight lens pull
           cancelAnimationFrame(raf);
           animStart = performance.now();
           raf = requestAnimationFrame(animate);
@@ -144,12 +152,32 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           const [a, b] = [...pointers.values()];
           const d = Math.hypot(a.x - b.x, a.y - b.y);
           const ratio = d / pinchDist;
-          if (ratio > 1.12) {
-            engine.zoomTo(engine.getState().semanticScale + 0.2);
+          if (ratio > 1.12 || ratio < 0.89) {
+            const zoomIn = ratio > 1;
             pinchDist = d;
-          } else if (ratio < 0.89) {
-            engine.zoomTo(engine.getState().semanticScale - 0.2);
-            pinchDist = d;
+            if (isHybrid) {
+              // Same lens model as the wheel, anchored at the pinch
+              // midpoint: core = geometric zoom, rim = sector pull.
+              const rect = canvas.getBoundingClientRect();
+              const mx = ((a.x + b.x) / 2 - rect.left - viewport.width / 2 - camera.x) / camera.scale;
+              const my = ((a.y + b.y) / 2 - rect.top - viewport.height / 2 - camera.y) / camera.scale;
+              const rCore = coreRadius(viewport);
+              if (Math.hypot(mx, my) <= rCore) {
+                camera.scale = Math.max(0.5, Math.min(3, camera.scale * (zoomIn ? 1.12 : 1 / 1.12)));
+              } else if (zoomIn) {
+                lens.angle = Math.atan2(my, mx);
+                lens.pull = Math.min(1, lens.pull + LENS_STEP);
+                if (lens.pull >= 1) {
+                  lens.pull = 0;
+                  commitLensTarget(engine, { pull: 1, angle: lens.angle }, rCore);
+                }
+              } else {
+                lens.pull = Math.max(0, lens.pull - LENS_STEP);
+              }
+              draw(1);
+            } else {
+              engine.zoomTo(engine.getState().semanticScale + (zoomIn ? 0.2 : -0.2));
+            }
           }
           return;
         }
@@ -210,8 +238,19 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           camera.y = 0;
           engine.focus(hit.id, "user");
         } else {
-          // Expanding an aggregate = one semantic band deeper.
-          engine.zoomTo(engine.getState().semanticScale + 1);
+          // Aggregates are selectable (iteration-2 feedback): clicking
+          // pulls the region into the graph zone by focusing its
+          // top-ranked member — the unfold animation starts at the
+          // bubble's position via transitionMap.
+          const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === hit.id);
+          const member = agg?.memberIds[0];
+          if (member) {
+            camera.x = 0;
+            camera.y = 0;
+            engine.focus(member, "user");
+          } else {
+            engine.zoomTo(engine.getState().semanticScale + 1);
+          }
         }
       };
       const onDblClick = (ev: MouseEvent) => {
@@ -221,7 +260,32 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       };
       const onWheel = (ev: WheelEvent) => {
         ev.preventDefault();
-        // Wheel = semantic zoom (PLAN §10): resolution, not glyph size.
+        if (isHybrid) {
+          // Lens model (iteration-2 feedback): inside the core zone the
+          // wheel is plain geometric zoom, like the classic viewer;
+          // over the rim it pulls that sector inward until it commits.
+          const p = toScene(ev);
+          const rCore = coreRadius(viewport);
+          if (Math.hypot(p.x, p.y) <= rCore) {
+            const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+            camera.scale = Math.max(0.5, Math.min(3, camera.scale * factor));
+            draw(1);
+            return;
+          }
+          if (ev.deltaY < 0) {
+            lens.angle = Math.atan2(p.y, p.x);
+            lens.pull = Math.min(1, lens.pull + LENS_STEP);
+            if (lens.pull >= 1) {
+              lens.pull = 0;
+              commitLensTarget(engine, { pull: 1, angle: lens.angle }, rCore);
+            }
+          } else {
+            lens.pull = Math.max(0, lens.pull - LENS_STEP);
+          }
+          draw(1);
+          return;
+        }
+        // Non-hybrid modes: wheel = semantic zoom (PLAN §10).
         const delta = ev.deltaY < 0 ? 0.2 : -0.2;
         engine.zoomTo(engine.getState().semanticScale + delta);
       };
