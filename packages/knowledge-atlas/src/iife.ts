@@ -82,6 +82,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const layoutKind = opts.config?.layout ?? "focus";
   const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
   const lens: LensState = { pull: 0, angle: 0 };
+  const boundaryShape = opts.config?.boundaryShape;
   // Lens traversal (iteration-8): drags starting outside the squircle
   // move the graph through the lens instead of panning the camera.
   const trav = new LensTraversal(
@@ -93,6 +94,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       camera.scale = Math.max(0.5, camera.scale / 1.12);
       engine.setViewScale(camera.scale);
     },
+    boundaryShape,
   );
   let travActive = false;
   let motionFrame: TraversalFrame | null = null;
@@ -139,6 +141,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       showHorizonRing: (opts.config?.layout ?? "focus") !== "force" && !full,
       coreRadius: isHybrid && !full ? coreRadius(viewport, bands) : undefined,
       shellBands: bands,
+      boundaryShape,
       motion: motionFrame?.active ? motionFrame : undefined,
       labelMode: labelState.mode,
       labelTypes: labelState.types,
@@ -371,7 +374,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       const p = toScene(ev);
       const bands = bandsOf();
       const rCore = coreRadius(viewport, bands);
-      if (isFull() || inCoreZone(p.x, p.y, viewport, bands)) {
+      if (isFull() || inCoreZone(p.x, p.y, viewport, bands, boundaryShape)) {
         camera.scale = Math.max(0.5, Math.min(3, camera.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
         // Density-coupled zoom: smaller nodes → higher core capacity.
         engine.setViewScale(camera.scale);

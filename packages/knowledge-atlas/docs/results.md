@@ -275,6 +275,20 @@ the atlas was a small disc in the middle of the canvas.
   facts sector absorbed all 110 facts; every fact aggregate vanished
   from the boundary.
 
+### Iteration 12 (2026-08-07) — boundary shape as an engine parameter
+
+Requested for the standalone engine: the disc↔squareness of the atlas
+is now `AtlasConfig.boundaryShape` (0..1). 0 is the circular family
+(a perfect circle in a square region, an ellipse otherwise); 1 is
+almost a rectangle with slightly rounded corners (superellipse
+exponent 2 → 16; default ≈0.19 = the tuned squircle). One parameter
+drives the outer wall, the core boundary, the halo, shell placement,
+traversal gearing, hit zones, AND the capacity rule — squarer shapes
+genuinely hold more points (area factor π·ab → ~4·ab). The harness
+toolbar has a ◯▢ slider; hosts of the future standalone package set
+it per domain (a chemical-space scatter might want ~0, a file-tree
+atlas ~0.8). 5 new tests (80 total).
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:

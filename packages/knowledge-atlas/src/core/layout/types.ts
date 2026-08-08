@@ -9,6 +9,8 @@ export type LayoutContext = {
   viewport: { width: number; height: number };
   previous?: LayoutResult;
   seed: number;
+  /** Boundary shape 0..1 (AtlasConfig.boundaryShape); default squircle. */
+  boundaryShape?: number;
 };
 
 export interface LayoutAdapter {

@@ -111,7 +111,7 @@ export class AtlasEngine implements AtlasController {
   private effectiveCapacity(): number {
     return (
       this.config.coreCapacity ??
-      coreCapacityFor(this.viewport, this.viewScale, this.lastShellBands)
+      coreCapacityFor(this.viewport, this.viewScale, this.lastShellBands, this.config.boundaryShape)
     );
   }
 
@@ -184,6 +184,7 @@ export class AtlasEngine implements AtlasController {
       viewport: this.viewport,
       previous: this.layoutResult ?? undefined,
       seed: this.config.seed,
+      boundaryShape: this.config.boundaryShape,
     });
     const layoutMs = performance.now() - layoutStart;
     this.hitTester.update(

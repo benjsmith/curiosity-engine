@@ -9,24 +9,46 @@
  * shell bands — anisotropic, so a phone's core is tall with squared
  * corners, not a disc. When outer shells are empty their space goes
  * back to the core; when they fill up, the core shrinks to make room.
+ *
+ * Iteration-12: the disc↔rectangle look is a configurable parameter
+ * (`boundaryShape`, 0..1). 0 is the circular family (a perfect circle
+ * in a square region, an ellipse otherwise); 1 is almost a rectangle
+ * with slightly rounded corners. Hosts set it via
+ * `AtlasConfig.boundaryShape`; every geometry function threads it.
  */
 
 export type Viewport = { width: number; height: number };
 
 const RIM_MARGIN = 10;
-const SQUIRCLE_N = 4.6;
-/** Superellipse (n=4.6) area ≈ 3.62·a·b (4ab·Γ(1+1/n)²/Γ(1+2/n)). */
-const SQUIRCLE_AREA_K = 3.62;
+
+/** Default shape ≈ superellipse exponent 4.6 — the tuned squircle. */
+export const BOUNDARY_SHAPE_DEFAULT = 0.186;
+
+/** Map shape 0..1 → superellipse exponent: 2 (circle/ellipse) … 16
+ * (near-rectangle, slightly rounded corners). */
+export function shapeExponent(shape: number): number {
+  const s = Math.min(1, Math.max(0, shape));
+  return 2 + 14 * s;
+}
+
+/** Superellipse area factor k in area = k·a·b. Exact at both ends
+ * (π at n=2, 4 as n→∞); within ~1.5% between. */
+function areaFactor(n: number): number {
+  return 4 - (4 - Math.PI) * (2 / n);
+}
 
 /**
- * Rim boundary radius at an angle: a superellipse ("squircle")
- * inscribed in the viewport, so the rim reaches into the screen
- * corners instead of stopping at the inscribed circle.
+ * Rim boundary radius at an angle: a superellipse inscribed in the
+ * viewport, reaching into the screen corners as `shape` rises.
  */
-export function rimRadiusAt(angle: number, viewport: Viewport): number {
+export function rimRadiusAt(
+  angle: number,
+  viewport: Viewport,
+  shape = BOUNDARY_SHAPE_DEFAULT,
+): number {
   const a = Math.max(60, viewport.width / 2 - RIM_MARGIN);
   const b = Math.max(60, viewport.height / 2 - RIM_MARGIN);
-  return superellipseRadius(angle, a, b);
+  return superellipseRadius(angle, a, b, shapeExponent(shape));
 }
 
 /**
@@ -50,12 +72,17 @@ function coreSemiAxes(viewport: Viewport, bands: number): { a: number; b: number
 }
 
 /**
- * Core boundary radius at an angle: the rim squircle inset by the
+ * Core boundary radius at an angle: the rim superellipse inset by the
  * shell depth — anisotropic, following the screen shape.
  */
-export function coreRadiusAt(angle: number, viewport: Viewport, bands = 1): number {
+export function coreRadiusAt(
+  angle: number,
+  viewport: Viewport,
+  bands = 1,
+  shape = BOUNDARY_SHAPE_DEFAULT,
+): number {
   const { a, b } = coreSemiAxes(viewport, bands);
-  return superellipseRadius(angle, a, b);
+  return superellipseRadius(angle, a, b, shapeExponent(shape));
 }
 
 /** Scalar core radius (the SHORT semi-axis) for isotropic physics —
@@ -65,19 +92,26 @@ export function coreRadius(viewport: Viewport, bands = 1): number {
   return Math.min(a, b);
 }
 
-/** Area of the core squircle — drives the legible-density capacity. */
-export function coreArea(viewport: Viewport, bands = 1): number {
+/** Area of the core boundary — drives the legible-density capacity.
+ * Squarer shapes hold more (π·a·b at shape 0 → ~4·a·b near 1). */
+export function coreArea(viewport: Viewport, bands = 1, shape = BOUNDARY_SHAPE_DEFAULT): number {
   const { a, b } = coreSemiAxes(viewport, bands);
-  return SQUIRCLE_AREA_K * a * b;
+  return areaFactor(shapeExponent(shape)) * a * b;
 }
 
-/** Is a layout-space point inside the (squircle) core zone? */
-export function inCoreZone(x: number, y: number, viewport: Viewport, bands = 1): boolean {
-  return Math.hypot(x, y) <= coreRadiusAt(Math.atan2(y, x), viewport, bands);
+/** Is a layout-space point inside the core zone? */
+export function inCoreZone(
+  x: number,
+  y: number,
+  viewport: Viewport,
+  bands = 1,
+  shape = BOUNDARY_SHAPE_DEFAULT,
+): boolean {
+  return Math.hypot(x, y) <= coreRadiusAt(Math.atan2(y, x), viewport, bands, shape);
 }
 
-function superellipseRadius(angle: number, a: number, b: number): number {
+function superellipseRadius(angle: number, a: number, b: number, n: number): number {
   const c = Math.abs(Math.cos(angle));
   const s = Math.abs(Math.sin(angle));
-  return 1 / Math.pow(Math.pow(c / a, SQUIRCLE_N) + Math.pow(s / b, SQUIRCLE_N), 1 / SQUIRCLE_N);
+  return 1 / Math.pow(Math.pow(c / a, n) + Math.pow(s / b, n), 1 / n);
 }

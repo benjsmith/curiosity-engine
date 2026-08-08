@@ -12,7 +12,7 @@ import {
 import { buildScene } from "../src/core/scene/builder.ts";
 import { hybridLayout, populatedShellBands } from "../src/core/layout/hybrid.ts";
 import { nodeRadius } from "../src/core/layout/types.ts";
-import { coreRadiusAt } from "../src/core/geometry.ts";
+import { coreArea, coreRadiusAt, rimRadiusAt, shapeExponent } from "../src/core/geometry.ts";
 import { indexFromCEData } from "../src/datasources/curiosity.ts";
 import { workspaceSmallData } from "../fixtures/index.ts";
 import { absorbTowardType, commitLensTarget, ABSORB_CAP } from "../src/interaction/lens.ts";
@@ -69,6 +69,46 @@ const layout = hybridLayout.layout(scene, { viewport, seed: 42 });
 const BANDS = populatedShellBands(scene);
 /** Halo normalisation: the core boundary at a point's own bearing. */
 const coreLimAt = (x: number, y: number) => coreRadiusAt(Math.atan2(y, x), viewport, BANDS);
+
+describe("boundaryShape (iteration-12: circle ↔ near-rectangle)", () => {
+  const square = { width: 800, height: 800 };
+
+  it("maps 0 → circle family, 1 → near-rectangle", () => {
+    expect(shapeExponent(0)).toBe(2);
+    expect(shapeExponent(1)).toBe(16);
+    expect(shapeExponent(-3)).toBe(2); // clamped
+    expect(shapeExponent(9)).toBe(16);
+  });
+
+  it("shape 0 on a square region is a perfect circle", () => {
+    const r0 = rimRadiusAt(0, square, 0);
+    for (const th of [0.3, Math.PI / 4, 1.1, 2.5]) {
+      expect(rimRadiusAt(th, square, 0)).toBeCloseTo(r0, 6);
+    }
+  });
+
+  it("shape 1 reaches almost into the corner; shape 0 does not", () => {
+    const axis = rimRadiusAt(0, square, 1);
+    const cornerFull = Math.hypot(axis, axis); // the true rectangle corner
+    const diagSquare = rimRadiusAt(Math.PI / 4, square, 1);
+    const diagCircle = rimRadiusAt(Math.PI / 4, square, 0);
+    expect(diagSquare / cornerFull).toBeGreaterThan(0.93); // slightly rounded
+    expect(diagCircle / cornerFull).toBeLessThan(0.72); // ≈ 1/√2
+  });
+
+  it("squarer shapes hold more points (capacity follows area)", () => {
+    const v = { width: 1280, height: 800 };
+    expect(coreArea(v, 1, 1)).toBeGreaterThan(coreArea(v, 1, 0.19));
+    expect(coreArea(v, 1, 0.19)).toBeGreaterThan(coreArea(v, 1, 0));
+    expect(coreCapacityFor(v, 1, 1, 1)).toBeGreaterThan(coreCapacityFor(v, 1, 1, 0));
+  });
+
+  it("the core boundary follows the same shape parameter", () => {
+    const diagSquare = coreRadiusAt(Math.PI / 4, square, 1, 1);
+    const diagCircle = coreRadiusAt(Math.PI / 4, square, 1, 0);
+    expect(diagSquare).toBeGreaterThan(diagCircle * 1.25);
+  });
+});
 
 describe("lensing halo (flat middle, eased edge)", () => {
 

@@ -117,7 +117,7 @@ export class CanvasRenderer implements SceneRenderer {
       const STEPS = 72;
       for (let i = 0; i <= STEPS; i++) {
         const th = (i / STEPS) * 2 * Math.PI;
-        const r = coreRadiusAt(th, frame.viewport, frame.shellBands ?? 1);
+        const r = coreRadiusAt(th, frame.viewport, frame.shellBands ?? 1, frame.boundaryShape);
         const x = Math.cos(th) * r;
         const y = Math.sin(th) * r;
         if (i === 0) ctx.moveTo(x, y);
@@ -133,7 +133,7 @@ export class CanvasRenderer implements SceneRenderer {
       // Hybrid mode: the rim is a squircle reaching into the corners;
       // other modes keep the inscribed circle.
       const boundaryAt = (angle: number) =>
-        frame.coreRadius ? rimRadiusAt(angle, frame.viewport) : circleR;
+        frame.coreRadius ? rimRadiusAt(angle, frame.viewport, frame.boundaryShape) : circleR;
       ctx.strokeStyle = T.line;
       ctx.globalAlpha = 0.35;
       ctx.setLineDash([2, 6]);

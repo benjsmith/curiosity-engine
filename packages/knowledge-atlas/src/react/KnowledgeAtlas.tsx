@@ -108,6 +108,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       const layoutKind = props.config?.layout ?? "focus";
       const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
       const lens: LensState = { pull: 0, angle: 0 };
+      const boundaryShape = props.config?.boundaryShape;
       // Lens traversal (iteration-8): drags STARTING outside the
       // squircle move the graph through the lens instead of panning.
       const trav = new LensTraversal(
@@ -120,6 +121,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           camera.scale = Math.max(0.5, camera.scale / 1.12);
           engine.setViewScale(camera.scale);
         },
+        boundaryShape,
       );
       let travActive = false;
       let motionFrame: TraversalFrame | null = null;
@@ -164,6 +166,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           showHorizonRing: (props.config?.layout ?? "focus") !== "force" && !full,
           coreRadius: isHybrid && !full ? rCore : undefined,
           shellBands: bands,
+          boundaryShape,
           motion: motionFrame?.active ? motionFrame : undefined,
           labelMode: labelRef.current.mode,
           labelTypes: labelRef.current.types,
@@ -291,7 +294,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
               const my = ((a.y + b.y) / 2 - rect.top - viewport.height / 2 - camera.y) / camera.scale;
               const bands = bandsOf();
               const rCore = coreRadius(viewport, bands);
-              if (isFull() || inCoreZone(mx, my, viewport, bands)) {
+              if (isFull() || inCoreZone(mx, my, viewport, bands, boundaryShape)) {
                 camera.scale = Math.max(0.5, Math.min(3, camera.scale * (zoomIn ? 1.12 : 1 / 1.12)));
                 // Zoom-out shrinks nodes → more corpus fits at the same
                 // density: the engine may raise the core capacity and
@@ -441,7 +444,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           const p = toScene(ev);
           const bands = bandsOf();
           const rCore = coreRadius(viewport, bands);
-          if (isFull() || inCoreZone(p.x, p.y, viewport, bands)) {
+          if (isFull() || inCoreZone(p.x, p.y, viewport, bands, boundaryShape)) {
             const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
             camera.scale = Math.max(0.5, Math.min(3, camera.scale * factor));
             // Classic-viewer zoom: nodes get smaller/larger — and the
@@ -565,7 +568,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         else if (ref) ref.current = null;
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [props.dataSource, props.config?.layout, props.config?.seed]);
+    }, [props.dataSource, props.config?.layout, props.config?.seed, props.config?.boundaryShape]);
 
     return (
       <div ref={hostRef} style={{ position: "relative", width: "100%", height: "100%", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" } as React.CSSProperties}>

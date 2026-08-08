@@ -70,10 +70,11 @@ export function docsPerPixel(
   angle: number,
   viewport: Viewport,
   shellTotals: readonly number[], // index 1..4 → docs represented by shell
+  boundaryShape?: number,
 ): number {
   const bands = bandsOfTotals(shellTotals);
-  const inner = coreRadiusAt(angle, viewport, bands) * 1.03;
-  const wall = rimRadiusAt(angle, viewport);
+  const inner = coreRadiusAt(angle, viewport, bands, boundaryShape) * 1.03;
+  const wall = rimRadiusAt(angle, viewport, boundaryShape);
   const gap = Math.max(24, wall - inner);
   const t = Math.min(1, Math.max(0, (startRho - inner) / gap));
   // Band edges match the layout's SHELL_CUM, renormalised to the
@@ -121,6 +122,7 @@ export class LensTraversal {
    * already saturated — the host should zoom out a notch so more of
    * the type fits and the count keeps falling (iteration-11). */
   private onSaturated?: (type: string) => void;
+  private boundaryShape?: number;
 
   private active = false;
   private angle = 0;
@@ -139,11 +141,13 @@ export class LensTraversal {
     viewport: Viewport,
     shellTotals: () => readonly number[],
     onSaturated?: (type: string) => void,
+    boundaryShape?: number,
   ) {
     this.engine = engine;
     this.viewport = viewport;
     this.shellTotals = shellTotals;
     this.onSaturated = onSaturated;
+    this.boundaryShape = boundaryShape;
   }
 
   setViewport(v: Viewport): void {
@@ -156,11 +160,11 @@ export class LensTraversal {
     const angle = Math.atan2(y, x);
     const totals = this.shellTotals();
     const bands = bandsOfTotals(totals);
-    if (rho <= coreRadiusAt(angle, this.viewport, bands) * 1.03) return false;
+    if (rho <= coreRadiusAt(angle, this.viewport, bands, this.boundaryShape) * 1.03) return false;
     this.active = true;
     this.released = false;
     this.angle = angle;
-    this.dpp = docsPerPixel(rho, this.angle, this.viewport, totals);
+    this.dpp = docsPerPixel(rho, this.angle, this.viewport, totals, this.boundaryShape);
     this.flowCap = flowCapFor(totals);
     this.flow = 0;
     this.odometer = 0;

@@ -11,7 +11,7 @@
 
 import { classifyTopology } from "./adaptive.ts";
 import { coreRadius } from "../geometry.ts";
-import { hybridLayout, isFullGraphScene, partitionCore } from "./hybrid.ts";
+import { hybridLayout, isFullGraphScene, partitionCore, populatedShellBands } from "./hybrid.ts";
 import { nodeRadius, type LayoutAdapter, type LayoutContext } from "./types.ts";
 import type { LayoutResult, SceneData } from "../types.ts";
 
@@ -46,7 +46,7 @@ export const adaptiveHybridLayout: LayoutAdapter = {
     }
 
     // Columnar core: focus left, then one typed column per hop band.
-    const Rcore = coreRadius(ctx.viewport);
+    const Rcore = coreRadius(ctx.viewport, populatedShellBands(scene));
     const byColumn = new Map<number, typeof coreNodes>();
     for (const n of coreNodes) {
       const col = n.role === "focus" ? 0 : Math.min(2, Math.max(1, n.ring ?? 1));

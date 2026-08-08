@@ -46,9 +46,11 @@ export function coreCapacityFor(
   viewport: { width: number; height: number },
   viewScale = 1,
   bands = 1,
+  boundaryShape?: number,
 ): number {
   const s = Math.min(2, Math.max(0.66, viewScale));
-  const area = bands <= 0 ? viewport.width * viewport.height : coreArea(viewport, bands);
+  const area =
+    bands <= 0 ? viewport.width * viewport.height : coreArea(viewport, bands, boundaryShape);
   const capacity = area / (TARGET_PX_PER_NODE * s * s);
   return Math.round(Math.max(MIN_CORE_CAPACITY, Math.min(MAX_CORE_CAPACITY, capacity)));
 }

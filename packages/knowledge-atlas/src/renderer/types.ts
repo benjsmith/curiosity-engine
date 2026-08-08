@@ -48,6 +48,8 @@ export type Frame = {
   coreRadius?: number;
   /** Populated shell bands (drives the anisotropic core boundary). */
   shellBands?: number;
+  /** Boundary shape 0..1 (AtlasConfig.boundaryShape). */
+  boundaryShape?: number;
   /** Active lens-traversal motion abstraction (drawn over the scene). */
   motion?: MotionOverlay;
   /**

@@ -338,6 +338,14 @@ export type AtlasConfig = {
   seed?: number;
   /** Central-graph capacity (default 360 — the classic CE viewer scale). */
   coreCapacity?: number;
+  /**
+   * Boundary shape, 0..1: 0 = the circular family (a perfect circle
+   * in a square region, an ellipse otherwise); 1 = almost a rectangle
+   * with slightly rounded corners. Default ≈0.19 (the tuned squircle).
+   * Applies to the outer wall and the core boundary alike; capacity
+   * follows the resulting area (squarer shapes hold more points).
+   */
+  boundaryShape?: number;
   /** Default "focus". */
   layout?: LayoutKind;
   budget?: Partial<SceneBudget>;

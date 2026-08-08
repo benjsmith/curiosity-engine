@@ -189,7 +189,11 @@ treated as API changes:
    CE type names (the palette maps them, nothing else). ✅
 5. **All geometry constants live in `geometry.ts`/`shells.ts`**
    (squircle, capacity density, shell bands) — the pieces the
-   standalone engine parameterises per domain. ✅
+   standalone engine parameterises per domain. ✅ First such parameter
+   already public: `AtlasConfig.boundaryShape` (0 = circle family …
+   1 = near-rectangle) drives the wall, the core boundary, and the
+   area-derived capacity together — a chemical-space scatter might run
+   ~0, a file-tree atlas ~0.8.
 6. **Determinism**: no wall clock or `Math.random` anywhere in
    core/layout/traversal (seeded splitmix32 + hash anchors). ✅
 7. **Chrome-free**: hosts consume events/snapshot/controller; nothing

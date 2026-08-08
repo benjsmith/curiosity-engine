@@ -55,6 +55,8 @@ function App() {
   const [labelMode, setLabelMode] = useState<"auto" | "on" | "off">("auto");
   const [labelTypes, setLabelTypes] = useState<string[]>(LABEL_TYPE_DEFAULTS);
   const [showLabelPicker, setShowLabelPicker] = useState(false);
+  // Engine parameter (iteration-12): 0 = circle … 1 = near-rectangle.
+  const [shape, setShape] = useState(0.19);
   const [stats, setStats] = useState<SceneStats | null>(null);
   const [horizon, setHorizon] = useState<HorizonGroup[]>([]);
   const [trail, setTrail] = useState<TrailState | null>(null);
@@ -86,7 +88,7 @@ function App() {
   // Key by fixture + layout so the component fully remounts per mode
   // (identical scene data through different geometry = the comparison).
   const atlasKey = `${fixture.name}:${layout}`;
-  const config = useMemo(() => ({ seed: SEED, layout }), [layout]);
+  const config = useMemo(() => ({ seed: SEED, layout, boundaryShape: shape }), [layout, shape]);
 
   return (
     <div className="app">
@@ -147,6 +149,19 @@ function App() {
         <button data-testid="btn-label-types" onClick={() => setShowLabelPicker((v) => !v)}>
           types…
         </button>
+        <label title="Boundary shape: circle ↔ rectangle" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          ◯▢
+          <input
+            data-testid="shape-slider"
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={shape}
+            onChange={(e) => setShape(Number(e.target.value))}
+            style={{ width: 70 }}
+          />
+        </label>
         <div className="spacer" />
         <span data-testid="focus-title">{focusTitle}</span>
       </div>
