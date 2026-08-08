@@ -24,6 +24,12 @@ const CLASS_LABEL: Record<DiscoveryClass, string> = {
 
 type PlacedLabel = { x: number; y: number; w: number; h: number };
 
+/** Boundary polyline sampling — square shapes pack their curvature
+ * into the corners, so go dense (iteration-13: 72 read as jagged). */
+const BOUNDARY_STEPS = 240;
+/** Haze layers between core boundary and wall (alpha accumulates). */
+const SHADE_BANDS = 8;
+
 export class CanvasRenderer implements SceneRenderer {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
@@ -107,24 +113,54 @@ export class CanvasRenderer implements SceneRenderer {
       if (p) positions.set(a.id, p);
     }
 
-    // ── hybrid core boundary (lens zone hint) ───────────────────────
-    // Same squircle family as the rim — a circle here read as a
-    // mismatch against the squircle wall (iteration-6 feedback).
+    // ── hybrid core boundary (lens zone hint, iteration-13) ─────────
+    // The boundary must read as GEOGRAPHY, not as another graph edge:
+    // a subtle haze deepens from the core boundary outward (denser
+    // space out there), with at most a whisper of a stroke. Paths are
+    // densely sampled — square shapes concentrate all their curvature
+    // in the corners and a coarse polyline read as jagged.
+    const boundaryStyle = frame.boundaryStyle ?? "shade";
     if (frame.coreRadius) {
-      ctx.strokeStyle = T.line;
-      ctx.globalAlpha = 0.3;
-      ctx.beginPath();
-      const STEPS = 72;
-      for (let i = 0; i <= STEPS; i++) {
-        const th = (i / STEPS) * 2 * Math.PI;
-        const r = coreRadiusAt(th, frame.viewport, frame.shellBands ?? 1, frame.boundaryShape);
-        const x = Math.cos(th) * r;
-        const y = Math.sin(th) * r;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const bands = frame.shellBands ?? 1;
+      // Adds the boundary as a SUBPATH (callers own beginPath, so the
+      // haze can combine it with the outer rect for an evenodd fill).
+      const corePath = (grow: number) => {
+        for (let i = 0; i <= BOUNDARY_STEPS; i++) {
+          const th = (i / BOUNDARY_STEPS) * 2 * Math.PI;
+          const rc = coreRadiusAt(th, frame.viewport, bands, frame.boundaryShape);
+          const rw = rimRadiusAt(th, frame.viewport, frame.boundaryShape);
+          const r = rc + (rw - rc) * grow;
+          const x = Math.cos(th) * r;
+          const y = Math.sin(th) * r;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+      };
+      if (boundaryStyle !== "line") {
+        // Haze: stack translucent fills of the region OUTSIDE
+        // successively larger boundary offsets — the accumulated alpha
+        // ramps up with distance, following the squircle exactly.
+        const span = (Math.hypot(width, height) * 2) / Math.max(0.4, frame.camera.scale);
+        ctx.fillStyle = T.textMuted;
+        for (let k = 0; k < SHADE_BANDS; k++) {
+          ctx.beginPath();
+          ctx.rect(-span, -span, span * 2, span * 2);
+          corePath(k / SHADE_BANDS);
+          ctx.globalAlpha = 0.05;
+          ctx.fill("evenodd");
+        }
+        ctx.globalAlpha = 1;
       }
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      if (boundaryStyle !== "shade") {
+        ctx.strokeStyle = T.line;
+        ctx.globalAlpha = 0.16;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        corePath(0);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     }
 
     // ── horizon band ────────────────────────────────────────────────
@@ -134,13 +170,14 @@ export class CanvasRenderer implements SceneRenderer {
       // other modes keep the inscribed circle.
       const boundaryAt = (angle: number) =>
         frame.coreRadius ? rimRadiusAt(angle, frame.viewport, frame.boundaryShape) : circleR;
+      // With the haze on, the wall needs barely any line at all.
+      const hazed = frame.coreRadius && boundaryStyle !== "line";
       ctx.strokeStyle = T.line;
-      ctx.globalAlpha = 0.35;
+      ctx.globalAlpha = hazed ? 0.18 : 0.35;
       ctx.setLineDash([2, 6]);
       ctx.beginPath();
-      const STEPS = 96;
-      for (let i = 0; i <= STEPS; i++) {
-        const th = (i / STEPS) * 2 * Math.PI;
+      for (let i = 0; i <= BOUNDARY_STEPS; i++) {
+        const th = (i / BOUNDARY_STEPS) * 2 * Math.PI;
         const r = boundaryAt(th);
         const x = Math.cos(th) * r;
         const y = Math.sin(th) * r;

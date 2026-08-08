@@ -50,6 +50,13 @@ export type Frame = {
   shellBands?: number;
   /** Boundary shape 0..1 (AtlasConfig.boundaryShape). */
   boundaryShape?: number;
+  /**
+   * Boundary treatment (iteration-13). "shade" paints a subtle haze
+   * that deepens from the core boundary outward (the sense of denser
+   * space out there) with only a whisper of a line; "line" keeps a
+   * plain faint stroke; "shade+line" combines them. Default "shade".
+   */
+  boundaryStyle?: "line" | "shade" | "shade+line";
   /** Active lens-traversal motion abstraction (drawn over the scene). */
   motion?: MotionOverlay;
   /**

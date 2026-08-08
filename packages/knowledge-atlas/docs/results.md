@@ -289,6 +289,26 @@ toolbar has a ◯▢ slider; hosts of the future standalone package set
 it per domain (a chemical-space scatter might want ~0, a file-tree
 atlas ~0.8). 5 new tests (80 total).
 
+### Iteration 13 (2026-08-07) — boundaries as geography, not lines
+
+Feedback: the boundary polyline read as jagged at square corners and
+looked like just another graph edge. Two treatments were built and
+compared (line-restyle vs outward gradient shading):
+
+- **Jaggedness**: boundary paths sample at 240 steps (was 72/96) —
+  square shapes concentrate all their curvature into the corners and
+  the coarse polyline showed it.
+- **Winner: the haze.** The region beyond the core boundary now
+  carries a subtle alpha ramp (8 stacked evenodd fills following the
+  exact squircle) that deepens outward — the impression of denser
+  space out there — with NO core boundary line at all, and the wall's
+  dashed line dropped to 0.18 alpha. The line-only variant kept a
+  whisper stroke (0.16) but gave no spatial cue; side-by-side the haze
+  communicated the zone better with less noise. Hosts can still pick
+  via `Frame.boundaryStyle` ("line" | "shade" | "shade+line",
+  default "shade"). Theme-symmetric: the haze lightens outward on
+  dark, darkens on light.
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:
