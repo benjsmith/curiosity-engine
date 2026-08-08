@@ -16,6 +16,7 @@
  */
 
 import { pluralize } from "./aggregate.ts";
+import { coreArea } from "../geometry.ts";
 import type { GraphIndex } from "../graphindex.ts";
 import type { RenderAggregate, RenderNode } from "../types.ts";
 import type { RankedCandidate } from "./ranking.ts";
@@ -23,12 +24,14 @@ import type { RankedCandidate } from "./ranking.ts";
 export const DEFAULT_CORE_CAPACITY = 360;
 
 /**
- * Legibility density (iteration-9; loosened a notch in iteration-10):
- * one node per ~3300 px² (≈57 px pitch). Capacity derives from this
- * density instead of a fixed 360 — a phone gets ~50, a desktop ~310,
- * a big display many more, same legible pitch everywhere.
+ * Legibility density: one node per ~2850 px² (≈53 px pitch — the
+ * classic viewer's density at 360 nodes on 1280×800). Iteration-11:
+ * capacity is computed from the CORE squircle's actual area (which
+ * grows when outer shells are empty and shrinks when they fill), not
+ * from the whole viewport — previously the two disagreed and the
+ * middle packed several times denser than the target.
  */
-export const TARGET_PX_PER_NODE = 3300;
+export const TARGET_PX_PER_NODE = 2850;
 export const MIN_CORE_CAPACITY = 40;
 export const MAX_CORE_CAPACITY = 1600;
 
@@ -36,15 +39,17 @@ export const MAX_CORE_CAPACITY = 1600;
  * Screen-scaled core capacity. `viewScale` is the geometric zoom:
  * zooming OUT (scale < 1) shrinks nodes, so more corpus fits at the
  * same legible density and material streams in from the boundary;
- * zooming in shows fewer, larger nodes. The zoom's density effect is
- * clamped so extreme zooms can't demand unbounded scenes.
+ * zooming in shows fewer, larger nodes. `bands` is the number of
+ * populated shell bands (0 = whole-viewport full-graph mode).
  */
 export function coreCapacityFor(
   viewport: { width: number; height: number },
   viewScale = 1,
+  bands = 1,
 ): number {
   const s = Math.min(2, Math.max(0.66, viewScale));
-  const capacity = (viewport.width * viewport.height) / (TARGET_PX_PER_NODE * s * s);
+  const area = bands <= 0 ? viewport.width * viewport.height : coreArea(viewport, bands);
+  const capacity = area / (TARGET_PX_PER_NODE * s * s);
   return Math.round(Math.max(MIN_CORE_CAPACITY, Math.min(MAX_CORE_CAPACITY, capacity)));
 }
 

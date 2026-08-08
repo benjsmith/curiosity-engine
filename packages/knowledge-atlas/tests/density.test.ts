@@ -10,9 +10,9 @@ import {
   coreCapacityFor,
 } from "../src/core/scene/shells.ts";
 import { buildScene } from "../src/core/scene/builder.ts";
-import { hybridLayout } from "../src/core/layout/hybrid.ts";
+import { hybridLayout, populatedShellBands } from "../src/core/layout/hybrid.ts";
 import { nodeRadius } from "../src/core/layout/types.ts";
-import { coreRadius } from "../src/core/geometry.ts";
+import { coreRadiusAt } from "../src/core/geometry.ts";
 import { indexFromCEData } from "../src/datasources/curiosity.ts";
 import { workspaceSmallData } from "../fixtures/index.ts";
 import { absorbTowardType, commitLensTarget, ABSORB_CAP } from "../src/interaction/lens.ts";
@@ -20,16 +20,21 @@ import type { AtlasEngine } from "../src/core/engine.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS, type SceneRequest } from "../src/core/types.ts";
 
 describe("coreCapacityFor (legible density)", () => {
-  it("scales with screen area: phone ~50, desktop ~310, big screens more", () => {
+  it("scales with the CORE's screen area: phone ~50, desktop ~250, big screens more", () => {
     const phone = coreCapacityFor({ width: 390, height: 450 });
     const desktop = coreCapacityFor({ width: 1280, height: 800 });
     const wall = coreCapacityFor({ width: 2560, height: 1440 });
     expect(phone).toBeGreaterThanOrEqual(MIN_CORE_CAPACITY);
     expect(phone).toBeLessThan(80);
-    expect(desktop).toBeGreaterThan(280);
-    expect(desktop).toBeLessThan(360); // a notch under the classic 360 (iteration-10)
+    expect(desktop).toBeGreaterThan(220);
+    expect(desktop).toBeLessThan(300);
     expect(wall).toBeGreaterThan(1000);
     expect(wall).toBeLessThanOrEqual(MAX_CORE_CAPACITY);
+    // Full-graph mode (bands = 0) fills the WHOLE viewport — the
+    // classic 360 on a desktop.
+    const full = coreCapacityFor({ width: 1280, height: 800 }, 1, 0);
+    expect(full).toBeGreaterThan(330);
+    expect(full).toBeLessThan(390);
   });
 
   it("zoom-out raises capacity (smaller nodes → more fit), zoom-in lowers it", () => {
@@ -61,7 +66,9 @@ const req: SceneRequest = {
 };
 const scene = buildScene(g, req, 42);
 const layout = hybridLayout.layout(scene, { viewport, seed: 42 });
-const Rcore = coreRadius(viewport);
+const BANDS = populatedShellBands(scene);
+/** Halo normalisation: the core boundary at a point's own bearing. */
+const coreLimAt = (x: number, y: number) => coreRadiusAt(Math.atan2(y, x), viewport, BANDS);
 
 describe("lensing halo (flat middle, eased edge)", () => {
 
@@ -71,7 +78,7 @@ describe("lensing halo (flat middle, eased edge)", () => {
       if (n.shell) continue;
       const p = layout.positions.get(n.id);
       if (!p) continue;
-      const t = Math.hypot(p.x, p.y) / Rcore;
+      const t = Math.hypot(p.x, p.y) / coreLimAt(p.x, p.y);
       if (t <= 0.6) {
         expect(p.r).toBeCloseTo(nodeRadius(n.item.meta.degree), 5);
         flatChecked++;
@@ -86,8 +93,8 @@ describe("lensing halo (flat middle, eased edge)", () => {
       if (n.shell) continue;
       const p = layout.positions.get(n.id);
       if (!p) continue;
-      const t = Math.hypot(p.x, p.y) / Rcore;
-      if (t > 0.85) {
+      const t = Math.hypot(p.x, p.y) / coreLimAt(p.x, p.y);
+      if (t > 0.8) {
         const base = nodeRadius(n.item.meta.degree);
         expect(p.r).toBeLessThan(base);
         expect(p.r).toBeGreaterThan(base * 0.6);
@@ -116,7 +123,7 @@ describe("lensing halo (flat middle, eased edge)", () => {
       // Idempotence: r is a pure function of the node's CURRENT
       // position (base radius × halo falloff), no matter how many
       // survivor passes ran — compounding would undershoot this.
-      const t = Math.hypot(b.x, b.y) / Rcore;
+      const t = Math.hypot(b.x, b.y) / coreLimAt(b.x, b.y);
       const u = Math.max(0, Math.min(1, (t - 0.62) / (1 - 0.62)));
       const expected = nodeRadius(n.item.meta.degree) * (1 - 0.38 * u * u);
       expect(b.r).toBeCloseTo(expected, 1);
@@ -230,8 +237,8 @@ describe("sector absorption (iteration-10)", () => {
       },
       focus: (id: string) => focused.push(id),
     } as unknown as AtlasEngine;
-    const ok = commitLensTarget(engine, { pull: 1, angle: 0 }, 100);
-    expect(ok).toBe(true);
+    const res = commitLensTarget(engine, { pull: 1, angle: 0 }, 100);
+    expect(res.ok).toBe(true);
     expect((lensState as { typeWeights?: Record<string, number> }).typeWeights?.fact).toBeCloseTo(1.6, 5);
     expect(focused).toEqual(["facts/f1"]);
   });

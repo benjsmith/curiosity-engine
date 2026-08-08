@@ -46,6 +46,8 @@ export type Frame = {
   showHorizonRing: boolean;
   /** Hybrid mode: radius of the central force zone (faint boundary). */
   coreRadius?: number;
+  /** Populated shell bands (drives the anisotropic core boundary). */
+  shellBands?: number;
   /** Active lens-traversal motion abstraction (drawn over the scene). */
   motion?: MotionOverlay;
   /**

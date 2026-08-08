@@ -143,29 +143,33 @@ describe("hybrid layout (P6)", () => {
   const ctx = { viewport: { width: 1200, height: 800 }, seed: 42 };
 
   it("core holds ≤360 plain nodes inside the squircle; shells sit outside", async () => {
-    const { hybridLayout, coreRadius, partitionCore, isFullGraphScene } = await import(
+    const { hybridLayout, partitionCore, isFullGraphScene, populatedShellBands } = await import(
       "../src/core/layout/hybrid.ts"
     );
+    const { coreRadiusAt } = await import("../src/core/geometry.ts");
     // workspace-small (~420 items) exceeds the 360 core capacity, so
     // shell structure must exist and stay beyond the core boundary.
     expect(isFullGraphScene(scene)).toBe(false);
     const l = hybridLayout.layout(scene, ctx);
-    const rCore = coreRadius(ctx.viewport);
+    const bands = populatedShellBands(scene);
+    const coreAt = (x: number, y: number) =>
+      coreRadiusAt(Math.atan2(y, x), ctx.viewport, bands);
     const coreSet = partitionCore(scene);
     expect(coreSet.size).toBeLessThanOrEqual(360);
     for (const id of coreSet) {
       const p = l.positions.get(id)!;
-      expect(Math.hypot(p.x, p.y), id).toBeLessThanOrEqual(rCore + 1);
+      // The core boundary is an anisotropic squircle (iteration-11).
+      expect(Math.hypot(p.x, p.y), id).toBeLessThanOrEqual(coreAt(p.x, p.y) + 1);
     }
     const shellNodes = scene.nodes.filter((n) => n.shell);
     expect(shellNodes.length).toBeGreaterThan(0);
     for (const n of shellNodes) {
       const p = l.positions.get(n.id)!;
-      expect(Math.hypot(p.x, p.y), n.id).toBeGreaterThan(rCore);
+      expect(Math.hypot(p.x, p.y), n.id).toBeGreaterThan(coreAt(p.x, p.y));
     }
     for (const a of scene.aggregates) {
       const p = l.positions.get(a.id)!;
-      expect(Math.hypot(p.x, p.y), a.id).toBeGreaterThan(rCore);
+      expect(Math.hypot(p.x, p.y), a.id).toBeGreaterThan(coreAt(p.x, p.y));
     }
   });
 
@@ -321,7 +325,7 @@ describe("lens", () => {
     expect(engine.snapshot().scene).toBeTruthy();
     const beforeFocus = engine.getState().focusId;
     const ok = commitLensTarget(engine, { pull: 1, angle }, rCore);
-    expect(ok).toBe(true);
+    expect(ok.ok).toBe(true);
     expect(engine.getState().focusId).not.toBe(beforeFocus);
     engine.destroy();
   });

@@ -56,7 +56,15 @@ export function buildScene(
   const focusId = req.focusId;
   const focus = g.items.get(focusId)!;
 
-  if (g.size <= coreCapacity && totalNodes <= coreCapacity && band >= 2) {
+  // Full-graph eligibility (iteration-11): with no boundary the graph
+  // fills the whole screen, so the engine passes a larger
+  // whole-viewport capacity; a pinned coreCapacity without one keeps
+  // the old single-threshold behaviour.
+  const fullCapacity = Math.min(
+    budget.maxNodes,
+    Math.max(coreCapacity, req.fullGraphCapacity ?? coreCapacity),
+  );
+  if (g.size <= fullCapacity && totalNodes <= fullCapacity && band >= 2) {
     return fullGraphScene(g, req, budget, focusId, pinned);
   }
 

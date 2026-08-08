@@ -61,6 +61,10 @@ export type SceneRequest = {
   /** Max individually-laid-out nodes in the central graph zone; wikis
    * at or below this size render as ONE full graph, CE-viewer style. */
   coreCapacity?: number;
+  /** Whole-viewport capacity for full-graph eligibility (iteration-11):
+   * with no boundary the graph fills the entire screen, so this is
+   * larger than `coreCapacity`. Defaults to `coreCapacity` when unset. */
+  fullGraphCapacity?: number;
   budget: SceneBudget;
 };
 

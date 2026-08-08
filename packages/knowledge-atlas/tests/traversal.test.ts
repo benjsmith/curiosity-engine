@@ -15,17 +15,19 @@ import {
   flowCapFor,
   shellTotalsFromScene,
 } from "../src/interaction/traversal.ts";
-import { coreRadius, rimRadiusAt } from "../src/core/geometry.ts";
+import { coreRadiusAt, rimRadiusAt } from "../src/core/geometry.ts";
 import type { AtlasEngine } from "../src/core/engine.ts";
 
 const VIEW = { width: 1200, height: 800 };
 // Exponential corpus: shell k holds ~10× shell k−1 (640/6.4k/64k/640k).
 const TOTALS = [0, 640, 6_400, 64_000, 640_000] as const;
 
-/** Radius fraction f of the way from the core edge to the wall at angle. */
-function rhoAt(f: number, angle = 0): number {
-  const rc = coreRadius(VIEW) * 1.12;
-  return rc + f * (rimRadiusAt(angle, VIEW) - rc);
+/** Radius fraction f of the way from the core edge to the wall at
+ * angle, for a corpus populating `bands` shells (geometry follows
+ * content — iteration-11). */
+function rhoAt(f: number, angle = 0, bands = 4): number {
+  const inner = coreRadiusAt(angle, VIEW, bands) * 1.03;
+  return inner + f * (rimRadiusAt(angle, VIEW) - inner);
 }
 
 /** Engine stub: one committable node far out in the +x sector. */
@@ -60,14 +62,17 @@ describe("docsPerPixel", () => {
     expect(deep / shallow).toBeGreaterThan(100);
   });
 
-  it("empty outer bands gear like the deepest populated shell", () => {
-    // A 4k-doc corpus only fills shells 1–2; dragging from the wall
-    // must not free-spin over the empty bands 3–4.
+  it("small corpora renormalise: populated bands share the whole gap", () => {
+    // A 4k-doc corpus fills shells 1–2 only; those two bands now span
+    // the entire core→wall gap (iteration-11) — the wall belongs to
+    // shell 2, and there is no empty space to free-spin over.
     const small = [0, 640, 3_000, 0, 0] as const;
-    const fromWall = docsPerPixel(rhoAt(0.99), 0, VIEW, small);
-    const fromShell2 = docsPerPixel(rhoAt(0.65), 0, VIEW, small);
-    expect(fromWall).toBe(fromShell2);
+    const fromWall = docsPerPixel(rhoAt(0.99, 0, 2), 0, VIEW, small);
+    const fromShell2 = docsPerPixel(rhoAt(0.7, 0, 2), 0, VIEW, small);
+    expect(fromWall).toBe(fromShell2); // same (deepest) band
     expect(fromWall).toBeGreaterThan(1);
+    const fromFringe = docsPerPixel(rhoAt(0.2, 0, 2), 0, VIEW, small);
+    expect(fromFringe).toBeLessThan(fromWall); // shell 1 gears gentler
   });
 
   it("is corner-aware: gentler density diagonally than on the short axis", () => {
@@ -85,7 +90,7 @@ describe("LensTraversal", () => {
     const { engine } = stubEngine();
     const t = new LensTraversal(engine, VIEW, () => TOTALS);
     expect(t.start(10, 10, 0)).toBe(false);
-    expect(t.start(coreRadius(VIEW) * 0.9, 0, 0)).toBe(false);
+    expect(t.start(coreRadiusAt(0, VIEW, 4) * 0.9, 0, 0)).toBe(false);
     expect(t.start(rhoAt(0.5), 0, 0)).toBe(true);
   });
 

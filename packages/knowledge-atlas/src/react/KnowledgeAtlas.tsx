@@ -9,7 +9,7 @@ import { forwardRef, useEffect, useRef } from "react";
 import { AtlasEngine } from "../core/engine.ts";
 import { CanvasRenderer } from "../renderer/canvas.ts";
 import { resolveTheme } from "../renderer/theme.ts";
-import { coreRadius, isFullGraphScene } from "../core/layout/hybrid.ts";
+import { coreRadius, isFullGraphScene, populatedShellBands } from "../core/layout/hybrid.ts";
 import { inCoreZone } from "../core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
 import { LensTraversal, shellTotalsFromScene, type TraversalFrame } from "../interaction/traversal.ts";
@@ -110,8 +110,16 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       const lens: LensState = { pull: 0, angle: 0 };
       // Lens traversal (iteration-8): drags STARTING outside the
       // squircle move the graph through the lens instead of panning.
-      const trav = new LensTraversal(engine, viewport, () =>
-        shellTotalsFromScene(engine.snapshot().scene ?? null),
+      const trav = new LensTraversal(
+        engine,
+        viewport,
+        () => shellTotalsFromScene(engine.snapshot().scene ?? null),
+        () => {
+          // Absorption saturated at this zoom: zoom out a notch so the
+          // pulled type keeps fitting and its count keeps falling.
+          camera.scale = Math.max(0.5, camera.scale / 1.12);
+          engine.setViewScale(camera.scale);
+        },
       );
       let travActive = false;
       let motionFrame: TraversalFrame | null = null;
@@ -122,10 +130,15 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         const sc = engine.snapshot().scene;
         return sc ? isFullGraphScene(sc) : false;
       };
+      const bandsOf = () => {
+        const sc = engine.snapshot().scene;
+        return sc ? Math.max(1, populatedShellBands(sc)) : 1;
+      };
       const draw = (progress: number) => {
         const snap = engine.snapshot();
         if (!snap.scene || !snap.layout) return;
-        const rCore = coreRadius(viewport);
+        const bands = Math.max(1, populatedShellBands(snap.scene));
+        const rCore = coreRadius(viewport, bands);
         const full = isFullGraphScene(snap.scene);
         // During a traversal, keep the field drifting continuously
         // toward the drag between rate-limited commits — without this
@@ -149,7 +162,8 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           pinned: new Set(snap.state.pinned),
           maxLabels: props.config?.budget?.maxLabels ?? 60,
           showHorizonRing: (props.config?.layout ?? "focus") !== "force" && !full,
-          coreRadius: isHybrid && !full ? coreRadius(viewport) : undefined,
+          coreRadius: isHybrid && !full ? rCore : undefined,
+          shellBands: bands,
           motion: motionFrame?.active ? motionFrame : undefined,
           labelMode: labelRef.current.mode,
           labelTypes: labelRef.current.types,
@@ -275,8 +289,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
               const rect = canvas.getBoundingClientRect();
               const mx = ((a.x + b.x) / 2 - rect.left - viewport.width / 2 - camera.x) / camera.scale;
               const my = ((a.y + b.y) / 2 - rect.top - viewport.height / 2 - camera.y) / camera.scale;
-              const rCore = coreRadius(viewport);
-              if (isFull() || inCoreZone(mx, my, viewport)) {
+              const bands = bandsOf();
+              const rCore = coreRadius(viewport, bands);
+              if (isFull() || inCoreZone(mx, my, viewport, bands)) {
                 camera.scale = Math.max(0.5, Math.min(3, camera.scale * (zoomIn ? 1.12 : 1 / 1.12)));
                 // Zoom-out shrinks nodes → more corpus fits at the same
                 // density: the engine may raise the core capacity and
@@ -424,8 +439,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           // over the rim it pulls that sector inward until it commits.
           // Whole-wiki mode has no rim: the entire surface zooms.
           const p = toScene(ev);
-          const rCore = coreRadius(viewport);
-          if (isFull() || inCoreZone(p.x, p.y, viewport)) {
+          const bands = bandsOf();
+          const rCore = coreRadius(viewport, bands);
+          if (isFull() || inCoreZone(p.x, p.y, viewport, bands)) {
             const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
             camera.scale = Math.max(0.5, Math.min(3, camera.scale * factor));
             // Classic-viewer zoom: nodes get smaller/larger — and the

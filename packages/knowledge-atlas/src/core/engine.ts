@@ -9,7 +9,7 @@ import { adaptiveLayout } from "./layout/adaptive.ts";
 import { adaptiveHybridLayout } from "./layout/adaptiveHybrid.ts";
 import { focusLayout } from "./layout/focus.ts";
 import { forceLayout } from "./layout/force.ts";
-import { hybridLayout } from "./layout/hybrid.ts";
+import { hybridLayout, populatedShellBands } from "./layout/hybrid.ts";
 import { hyperbolicLayout } from "./layout/hyperbolic.ts";
 import { HitTester } from "./hittest.ts";
 import { Trails } from "./trails.ts";
@@ -67,6 +67,10 @@ export class AtlasEngine implements AtlasController {
   private viewport = { width: 1200, height: 800 };
   private viewScale = 1;
   private lastRequestedCapacity = 0;
+  /** Populated shell bands of the last scene (0 = full graph). Feeds
+   * the capacity rule: empty shells give their space to the core. One
+   * scene of lag is fine — band count is a function of corpus size. */
+  private lastShellBands = 1;
   private status: AtlasState["status"] = "idle";
   private errorMsg?: string;
 
@@ -105,7 +109,10 @@ export class AtlasEngine implements AtlasController {
 
   /** Screen-density core capacity (iteration-9), unless pinned by config. */
   private effectiveCapacity(): number {
-    return this.config.coreCapacity ?? coreCapacityFor(this.viewport, this.viewScale);
+    return (
+      this.config.coreCapacity ??
+      coreCapacityFor(this.viewport, this.viewScale, this.lastShellBands)
+    );
   }
 
   private effectiveBudget(): SceneBudget {
@@ -142,6 +149,10 @@ export class AtlasEngine implements AtlasController {
           history: this.trails.historyIds(),
           pinned: [...this.trails.pinned],
           coreCapacity: (this.lastRequestedCapacity = this.effectiveCapacity()),
+          // Whole-viewport capacity: a wiki that fits the WHOLE screen
+          // at this zoom renders as one classic full graph.
+          fullGraphCapacity:
+            this.config.coreCapacity ?? coreCapacityFor(this.viewport, this.viewScale, 0),
           budget: this.effectiveBudget(),
         },
         ac.signal,
@@ -162,6 +173,7 @@ export class AtlasEngine implements AtlasController {
 
   private applyScene(scene: SceneData, sceneBuildMs: number): void {
     this.scene = scene;
+    this.lastShellBands = populatedShellBands(scene);
     this.horizonClassOf.clear();
     for (const grp of scene.horizon) {
       for (const c of grp.candidates) this.horizonClassOf.set(c.id, grp.cls);

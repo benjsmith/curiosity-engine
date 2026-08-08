@@ -18,8 +18,15 @@
  */
 
 import { commitLensTarget } from "./lens.ts";
-import { coreRadius, rimRadiusAt, type Viewport } from "../core/geometry.ts";
+import { coreRadius, coreRadiusAt, rimRadiusAt, type Viewport } from "../core/geometry.ts";
 import type { AtlasEngine } from "../core/engine.ts";
+
+/** Highest populated shell band (≥1) — geometry follows content. */
+function bandsOfTotals(totals: readonly number[]): number {
+  let b = 1;
+  for (let k = 1; k <= 4; k++) if ((totals[k] ?? 0) > 0) b = k;
+  return b;
+}
 
 /** Hard limits — the "scrolling speed limits". */
 export const MAX_DOCS_PER_SECOND = 250_000; // absolute display-flow cap
@@ -64,15 +71,18 @@ export function docsPerPixel(
   viewport: Viewport,
   shellTotals: readonly number[], // index 1..4 → docs represented by shell
 ): number {
-  const rCore = coreRadius(viewport);
+  const bands = bandsOfTotals(shellTotals);
+  const inner = coreRadiusAt(angle, viewport, bands) * 1.03;
   const wall = rimRadiusAt(angle, viewport);
-  const gap = Math.max(24, wall - rCore * 1.12);
-  const t = Math.min(1, Math.max(0, (startRho - rCore * 1.12) / gap));
-  // Band edges match the layout's SHELL_CUM (50/30/15/5% of the gap).
+  const gap = Math.max(24, wall - inner);
+  const t = Math.min(1, Math.max(0, (startRho - inner) / gap));
+  // Band edges match the layout's SHELL_CUM, renormalised to the
+  // populated bands (empty outer bands hold no space — iteration-11).
   const cum = [0, 0.5, 0.8, 0.95, 1.0];
-  let shell = 1;
-  for (let k = 1; k < cum.length; k++) {
-    if (t <= cum[k]) {
+  const cumMax = cum[bands];
+  let shell = bands;
+  for (let k = 1; k <= bands; k++) {
+    if (t <= cum[k] / cumMax) {
       shell = k;
       break;
     }
@@ -99,7 +109,7 @@ export function docsPerPixel(
     if (pick) shell = pick;
   }
   const total = shellTotals[shell] ?? 0;
-  const bandDepthPx = Math.max(12, gap * (cum[shell] - cum[shell - 1]));
+  const bandDepthPx = Math.max(12, (gap * (cum[shell] - cum[shell - 1])) / cumMax);
   return Math.max(0.05, total / bandDepthPx);
 }
 
@@ -107,6 +117,10 @@ export class LensTraversal {
   private engine: AtlasEngine;
   private viewport: Viewport;
   private shellTotals: () => readonly number[];
+  /** Called when a commit hits a type whose absorption boost is
+   * already saturated — the host should zoom out a notch so more of
+   * the type fits and the count keeps falling (iteration-11). */
+  private onSaturated?: (type: string) => void;
 
   private active = false;
   private angle = 0;
@@ -120,10 +134,16 @@ export class LensTraversal {
   private lastCommit = 0;
   private lastTick = 0;
 
-  constructor(engine: AtlasEngine, viewport: Viewport, shellTotals: () => readonly number[]) {
+  constructor(
+    engine: AtlasEngine,
+    viewport: Viewport,
+    shellTotals: () => readonly number[],
+    onSaturated?: (type: string) => void,
+  ) {
     this.engine = engine;
     this.viewport = viewport;
     this.shellTotals = shellTotals;
+    this.onSaturated = onSaturated;
   }
 
   setViewport(v: Viewport): void {
@@ -133,12 +153,13 @@ export class LensTraversal {
   /** Begin a gesture at layout-space (x, y); returns false inside the core. */
   start(x: number, y: number, now: number): boolean {
     const rho = Math.hypot(x, y);
-    const rCore = coreRadius(this.viewport);
-    if (rho <= rCore * 1.05) return false;
+    const angle = Math.atan2(y, x);
+    const totals = this.shellTotals();
+    const bands = bandsOfTotals(totals);
+    if (rho <= coreRadiusAt(angle, this.viewport, bands) * 1.03) return false;
     this.active = true;
     this.released = false;
-    this.angle = Math.atan2(y, x);
-    const totals = this.shellTotals();
+    this.angle = angle;
     this.dpp = docsPerPixel(rho, this.angle, this.viewport, totals);
     this.flowCap = flowCapFor(totals);
     this.flow = 0;
@@ -186,7 +207,13 @@ export class LensTraversal {
     // lens at most every COMMIT_INTERVAL_MS while flow persists.
     if (commit && this.flow > 0 && now - this.lastCommit >= COMMIT_INTERVAL_MS) {
       this.lastCommit = now;
-      commitLensTarget(this.engine, { pull: 1, angle: this.angle }, coreRadius(this.viewport));
+      const bands = bandsOfTotals(this.shellTotals());
+      const res = commitLensTarget(
+        this.engine,
+        { pull: 1, angle: this.angle },
+        coreRadius(this.viewport, bands),
+      );
+      if (res.saturatedType) this.onSaturated?.(res.saturatedType);
     }
 
     const normalized = this.flow / this.flowCap;

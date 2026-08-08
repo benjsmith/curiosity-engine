@@ -8,7 +8,7 @@ import { AtlasEngine } from "./core/engine.ts";
 import { CanvasRenderer } from "./renderer/canvas.ts";
 import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
-import { coreRadius, isFullGraphScene } from "./core/layout/hybrid.ts";
+import { coreRadius, isFullGraphScene, populatedShellBands } from "./core/layout/hybrid.ts";
 import { inCoreZone } from "./core/geometry.ts";
 import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
 import { LensTraversal, shellTotalsFromScene, type TraversalFrame } from "./interaction/traversal.ts";
@@ -84,8 +84,15 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const lens: LensState = { pull: 0, angle: 0 };
   // Lens traversal (iteration-8): drags starting outside the squircle
   // move the graph through the lens instead of panning the camera.
-  const trav = new LensTraversal(engine, viewport, () =>
-    shellTotalsFromScene(engine.snapshot().scene ?? null),
+  const trav = new LensTraversal(
+    engine,
+    viewport,
+    () => shellTotalsFromScene(engine.snapshot().scene ?? null),
+    () => {
+      // Absorption saturated: zoom out a notch so the count keeps falling.
+      camera.scale = Math.max(0.5, camera.scale / 1.12);
+      engine.setViewScale(camera.scale);
+    },
   );
   let travActive = false;
   let motionFrame: TraversalFrame | null = null;
@@ -101,16 +108,21 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     const sc = engine.snapshot().scene;
     return sc ? isFullGraphScene(sc) : false;
   };
+  const bandsOf = () => {
+    const sc = engine.snapshot().scene;
+    return sc ? Math.max(1, populatedShellBands(sc)) : 1;
+  };
   const draw = (progress: number) => {
     const snap = engine.snapshot();
     if (!snap.scene || !snap.layout) return;
     const full = isFullGraphScene(snap.scene);
+    const bands = Math.max(1, populatedShellBands(snap.scene));
     // Continuous drift toward the drag between rate-limited commits.
     const effLens: LensState =
       motionFrame?.active && motionFrame.intensity > 0.02
         ? { pull: Math.max(lens.pull, Math.min(0.45, motionFrame.intensity * 0.45)), angle: motionFrame.angle }
         : lens;
-    const layout = isHybrid && !full ? applyLens(snap.layout, effLens, coreRadius(viewport)) : snap.layout;
+    const layout = isHybrid && !full ? applyLens(snap.layout, effLens, coreRadius(viewport, bands)) : snap.layout;
     renderer.render({
       scene: snap.scene,
       layout,
@@ -125,7 +137,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       pinned: new Set(snap.state.pinned),
       maxLabels: opts.config?.budget?.maxLabels ?? 60,
       showHorizonRing: (opts.config?.layout ?? "focus") !== "force" && !full,
-      coreRadius: isHybrid && !full ? coreRadius(viewport) : undefined,
+      coreRadius: isHybrid && !full ? coreRadius(viewport, bands) : undefined,
+      shellBands: bands,
       motion: motionFrame?.active ? motionFrame : undefined,
       labelMode: labelState.mode,
       labelTypes: labelState.types,
@@ -356,8 +369,9 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     ev.preventDefault();
     if (isHybrid) {
       const p = toScene(ev);
-      const rCore = coreRadius(viewport);
-      if (isFull() || inCoreZone(p.x, p.y, viewport)) {
+      const bands = bandsOf();
+      const rCore = coreRadius(viewport, bands);
+      if (isFull() || inCoreZone(p.x, p.y, viewport, bands)) {
         camera.scale = Math.max(0.5, Math.min(3, camera.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
         // Density-coupled zoom: smaller nodes → higher core capacity.
         engine.setViewScale(camera.scale);

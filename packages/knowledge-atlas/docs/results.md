@@ -244,6 +244,37 @@ labels regressed vs the classic viewer, periphery overlapped.
   stretched width, 2 px pad — much tighter packing than the core, but
   nothing on top of anything). Test asserts zero overlapping pairs.
 
+### Iteration 11 (2026-08-07) — the atlas fills the screen; absorption reaches zero
+
+Feedback: still couldn't drain the "34 facts" smear, and on a phone
+the atlas was a small disc in the middle of the canvas.
+
+- **Screen-filling squircle geometry.** The outer wall hugs the
+  viewport (margin 10 px) and the core boundary is the SAME
+  superellipse inset by the radial depth of the *populated* shell
+  bands — anisotropic, so a phone's core is tall with squared corners,
+  not a disc. Empty outer shells hand their space back to the core;
+  when they fill (bigger corpus → more bands), the core shrinks to
+  accommodate. Content now uses ~85% of the canvas at every size.
+  `SHELL_CUM` renormalises over populated bands so there is no dead
+  ring, and the periphery relax re-clamps at each item's final bearing.
+- **Capacity from the core's true area.** Previously capacity used
+  whole-viewport area while the layout squeezed nodes into ~20% of the
+  screen — the real reason the middle kept reading too dense. Capacity
+  is now core-squircle-area / 2850 px² (the classic pitch): phone ~50,
+  desktop ~250 in-shell (~360 for whole-viewport full-graph mode,
+  which keeps its own threshold via `SceneRequest.fullGraphCapacity`).
+  The mesh solve fits anisotropically (capped 1.6×) so it fills the
+  tall/wide core, and the halo and stability grades are all per-bearing.
+- **Absorption completes.** Two fixes: commits can now target far
+  smears (they boost the type even with no enterable member), and when
+  a pull hits a type whose boost is already saturated, the adapter
+  zooms the camera out a notch (`LensCommit.saturatedType` → smaller
+  nodes → higher capacity) — exactly the zoom-out semantics from
+  iteration 9, applied automatically. Verified live: six drags at the
+  facts sector absorbed all 110 facts; every fact aggregate vanished
+  from the boundary.
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:

@@ -66,9 +66,10 @@ export const ABSORB_DECAY = 0.85;
  * beyond-the-horizon count genuinely drops toward zero) while other
  * boosted types decay back toward neutral.
  */
-export function absorbTowardType(engine: AtlasEngine, type: string): void {
+export function absorbTowardType(engine: AtlasEngine, type: string): boolean {
   const lens = engine.getState().lens;
   const weights: Record<string, number> = { ...(lens.typeWeights ?? {}) };
+  const saturated = (weights[type] ?? 1) >= ABSORB_CAP;
   for (const k of Object.keys(weights)) {
     if (k !== type && weights[k] > 1) {
       const w = weights[k] * ABSORB_DECAY;
@@ -78,7 +79,17 @@ export function absorbTowardType(engine: AtlasEngine, type: string): void {
   }
   weights[type] = Math.min(ABSORB_CAP, Math.max(1, weights[type] ?? 1) * ABSORB_BOOST);
   engine.setLens({ ...lens, typeWeights: weights });
+  return saturated;
 }
+
+export type LensCommit = {
+  ok: boolean;
+  /** Set when the pull hit a type whose boost is already at cap — the
+   * ranking can't absorb more at this zoom; the host should zoom out
+   * a notch (smaller nodes → higher capacity → the count keeps
+   * falling toward zero). */
+  saturatedType?: string;
+};
 
 /**
  * Commit a saturated pull: focus the dominant rim item in the lens
@@ -87,9 +98,9 @@ export function absorbTowardType(engine: AtlasEngine, type: string): void {
  * ranking toward their type so repeated pulls absorb the whole group.
  * Returns true if the scene was retargeted.
  */
-export function commitLensTarget(engine: AtlasEngine, lens: LensState, rCore: number): boolean {
+export function commitLensTarget(engine: AtlasEngine, lens: LensState, rCore: number): LensCommit {
   const snap = engine.snapshot();
-  if (!snap.scene || !snap.layout) return false;
+  if (!snap.scene || !snap.layout) return { ok: false };
   let best: { id: string; weight: number; isAggregate: boolean } | null = null;
   const consider = (id: string, weight: number, isAggregate: boolean) => {
     const p = snap.layout!.positions.get(id);
@@ -106,17 +117,17 @@ export function commitLensTarget(engine: AtlasEngine, lens: LensState, rCore: nu
   // be absorbed via the type boost — so they are targets too.
   for (const a of snap.scene.aggregates) consider(a.id, a.count * 0.5, true);
   const target = best as { id: string; weight: number; isAggregate: boolean } | null;
-  if (!target) return false;
+  if (!target) return { ok: false };
   if (target.isAggregate) {
     const agg = snap.scene.aggregates.find((a) => a.id === target.id);
-    if (!agg) return false;
+    if (!agg) return { ok: false };
     // Boost first (its rebuild is superseded by the focus request when
     // there is an enterable member — the engine drops stale scenes).
-    absorbTowardType(engine, agg.type);
+    const wasSaturated = absorbTowardType(engine, agg.type);
     const member = agg.memberIds[0];
     if (member) engine.focus(member, "user");
-    return true;
+    return wasSaturated ? { ok: true, saturatedType: agg.type } : { ok: true };
   }
   engine.focus(target.id, "user");
-  return true;
+  return { ok: true };
 }

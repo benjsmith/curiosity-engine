@@ -117,7 +117,7 @@ export class CanvasRenderer implements SceneRenderer {
       const STEPS = 72;
       for (let i = 0; i <= STEPS; i++) {
         const th = (i / STEPS) * 2 * Math.PI;
-        const r = coreRadiusAt(th, frame.viewport);
+        const r = coreRadiusAt(th, frame.viewport, frame.shellBands ?? 1);
         const x = Math.cos(th) * r;
         const y = Math.sin(th) * r;
         if (i === 0) ctx.moveTo(x, y);

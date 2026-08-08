@@ -31,7 +31,7 @@ import {
   forceY,
 } from "d3-force";
 import { anchorAngle } from "../scene/landmarks.ts";
-import { coreRadius, rimRadiusAt } from "../geometry.ts";
+import { coreRadius, coreRadiusAt, rimRadiusAt, type Viewport } from "../geometry.ts";
 import {
   aggregateRadius,
   meanDisplacement,
@@ -64,6 +64,20 @@ export function isFullGraphScene(scene: SceneData): boolean {
   );
 }
 
+/**
+ * Number of populated shell bands (0 for full-graph scenes). Shared by
+ * the engine (capacity), the layout, the renderer, and the adapters so
+ * geometry always agrees: empty outer bands hand their space back to
+ * the core (iteration-11).
+ */
+export function populatedShellBands(scene: SceneData): number {
+  if (isFullGraphScene(scene)) return 0;
+  let bands = 1;
+  for (const n of scene.nodes) if (n.shell) bands = Math.max(bands, Math.min(4, n.shell));
+  for (const a of scene.aggregates) if (a.shell) bands = Math.max(bands, Math.min(4, a.shell));
+  return bands;
+}
+
 type SimNode = { id: string; r: number; x?: number; y?: number };
 type AnchoredNode = SimNode & { x0: number; y0: number; survivor: boolean };
 
@@ -72,8 +86,10 @@ export const hybridLayout: LayoutAdapter = {
   layout(scene: SceneData, ctx: LayoutContext): LayoutResult {
     if (isFullGraphScene(scene)) return fullGraphLayout(scene, ctx);
 
-    const Rcore = coreRadius(ctx.viewport);
-    const rimInner = Rcore * 1.12;
+    // Geometry (iteration-11): the core squircle is the wall inset by
+    // the populated shell depth — anisotropic, screen-filling.
+    const bands = populatedShellBands(scene);
+    const Rcore = coreRadius(ctx.viewport, bands);
     const positions = new Map<string, LayoutPoint>();
     const horizonIds = new Map<string, DiscoveryClass>();
     for (const grp of scene.horizon) for (const c of grp.candidates) horizonIds.set(c.id, grp.cls);
@@ -86,40 +102,43 @@ export const hybridLayout: LayoutAdapter = {
       .filter((e) => coreSet.has(e.source) && coreSet.has(e.target))
       .map((e) => ({ source: e.source, target: e.target }));
 
-    // ── stability grade ──────────────────────────────────────────────
+    // ── stability grade (per-angle: the core is anisotropic) ─────────
     const focusNode = scene.nodes.find((n) => n.role === "focus");
     const prevFocusPos = focusNode ? ctx.previous?.positions.get(focusNode.id) : undefined;
     const prevRho = prevFocusPos ? Math.hypot(prevFocusPos.x, prevFocusPos.y) : Infinity;
     const focusAngle = prevFocusPos ? Math.atan2(prevFocusPos.y, prevFocusPos.x) : 0;
+    const coreAtFocus = prevFocusPos ? coreRadiusAt(focusAngle, ctx.viewport, bands) : 0;
+    const cumMax = SHELL_CUM[Math.max(1, Math.min(4, bands))];
     const shell1Outer = prevFocusPos
-      ? rimInner + (rimRadiusAt(focusAngle, ctx.viewport) - rimInner) * SHELL_CUM[1]
+      ? coreAtFocus * 1.03 +
+        (rimRadiusAt(focusAngle, ctx.viewport) - coreAtFocus * 1.03) * (SHELL_CUM[1] / cumMax)
       : 0;
 
-    if (ctx.previous && prevRho <= Rcore) {
+    if (ctx.previous && prevRho <= coreAtFocus) {
       // Grade 1 — core click: survivors pinned, newcomers settle in.
-      settleCore(coreNodes, coreLinks, ctx, Rcore, positions, { dx: 0, dy: 0 }, prevFocusPos);
-      haloSizes(positions, coreSet, Rcore);
-      placeShells(scene, coreSet, horizonIds, positions, ctx, Rcore, rimInner);
+      settleCore(coreNodes, coreLinks, ctx, Rcore, bands, positions, { dx: 0, dy: 0 }, prevFocusPos);
+      haloSizes(positions, coreSet, ctx.viewport, bands);
+      placeShells(scene, coreSet, horizonIds, positions, ctx, bands);
       return { positions, displacement: meanDisplacement(positions, ctx.previous) };
     }
     if (ctx.previous && prevFocusPos && prevRho <= shell1Outer) {
       // Grade 2 — shell-1 click: shift the lens. The whole core field
       // translates opposite the click so the selected node slides
       // inside; the far side drifts toward the boundary.
-      const inTarget = Rcore * 0.55;
+      const inTarget = coreAtFocus * 0.55;
       const shift = prevRho - inTarget;
       const dx = -Math.cos(focusAngle) * shift;
       const dy = -Math.sin(focusAngle) * shift;
-      settleCore(coreNodes, coreLinks, ctx, Rcore, positions, { dx, dy }, prevFocusPos);
-      haloSizes(positions, coreSet, Rcore);
-      placeShells(scene, coreSet, horizonIds, positions, ctx, Rcore, rimInner);
+      settleCore(coreNodes, coreLinks, ctx, Rcore, bands, positions, { dx, dy }, prevFocusPos);
+      haloSizes(positions, coreSet, ctx.viewport, bands);
+      placeShells(scene, coreSet, horizonIds, positions, ctx, bands);
       return { positions, displacement: meanDisplacement(positions, ctx.previous) };
     }
 
     // Grade 3 — deep click / first layout: full mesh solve.
-    fullCoreSolve(coreNodes, coreLinks, ctx, Rcore, positions);
-    haloSizes(positions, coreSet, Rcore);
-    placeShells(scene, coreSet, horizonIds, positions, ctx, Rcore, rimInner);
+    fullCoreSolve(coreNodes, coreLinks, ctx, Rcore, bands, positions);
+    haloSizes(positions, coreSet, ctx.viewport, bands);
+    placeShells(scene, coreSet, horizonIds, positions, ctx, bands);
     return { positions, displacement: meanDisplacement(positions, ctx.previous) };
   },
 };
@@ -140,16 +159,20 @@ function haloU(rho: number, Rcore: number): number {
 }
 
 /** Size falloff — applied every layout (radii are rebuilt from degree
- * each pass, so this is idempotent; positions are untouched here). */
+ * each pass, so this is idempotent; positions are untouched here).
+ * Normalised against the ANISOTROPIC core boundary at each node's own
+ * bearing, so the halo hugs the squircle, not a circle. */
 function haloSizes(
   positions: Map<string, LayoutPoint>,
   coreSet: ReadonlySet<string>,
-  Rcore: number,
+  viewport: Viewport,
+  bands: number,
 ): void {
   for (const id of coreSet) {
     const p = positions.get(id);
     if (!p) continue;
-    const u = haloU(Math.hypot(p.x, p.y), Rcore);
+    const lim = coreRadiusAt(Math.atan2(p.y, p.x), viewport, bands);
+    const u = haloU(Math.hypot(p.x, p.y), lim);
     if (u > 0) positions.set(id, { x: p.x, y: p.y, r: p.r * (1 - 0.38 * u * u) });
   }
 }
@@ -228,6 +251,7 @@ function fullCoreSolve(
   coreLinks: Array<{ source: string; target: string }>,
   ctx: LayoutContext,
   Rcore: number,
+  bands: number,
   positions: Map<string, LayoutPoint>,
 ): void {
   for (const sn of coreNodes) {
@@ -261,30 +285,34 @@ function fullCoreSolve(
   }
   cx /= n;
   cy /= n;
-  const radii = coreNodes
-    .map((sn) => Math.hypot((sn.x ?? 0) - cx, (sn.y ?? 0) - cy))
-    .sort((a, b) => a - b);
-  const p92 = radii[Math.min(radii.length - 1, Math.floor(radii.length * 0.92))] || 1;
-  const rMax = Rcore * 0.93;
-  const fit = rMax / p92;
+  // Anisotropic fit (iteration-11): fill the core squircle in both
+  // axes — a phone's tall core gets a tall mesh — capped at 1.6× so
+  // narrow topologies don't distort.
+  const p92 = (arr: number[]) => {
+    const s = [...arr].sort((x, y) => x - y);
+    return s[Math.min(s.length - 1, Math.floor(s.length * 0.92))] || 1;
+  };
+  const ca = coreRadiusAt(0, ctx.viewport, bands) * 0.93;
+  const cb = coreRadiusAt(Math.PI / 2, ctx.viewport, bands) * 0.93;
+  const fitX = ca / p92(coreNodes.map((sn) => Math.abs((sn.x ?? 0) - cx)));
+  const fitY = cb / p92(coreNodes.map((sn) => Math.abs((sn.y ?? 0) - cy)));
+  const base = Math.min(fitX, fitY);
+  const kx = Math.min(fitX, base * 1.6);
+  const ky = Math.min(fitY, base * 1.6);
   const anchored: AnchoredNode[] = coreNodes.map((sn) => {
-    let x = ((sn.x ?? 0) - cx) * fit;
-    let y = ((sn.y ?? 0) - cy) * fit;
-    const d = Math.hypot(x, y);
-    if (d > rMax) {
-      x *= rMax / d;
-      y *= rMax / d;
-    }
+    const x = ((sn.x ?? 0) - cx) * kx;
+    const y = ((sn.y ?? 0) - cy) * ky;
     return { id: sn.id, r: sn.r, x, y, x0: x, y0: y, survivor: true };
   });
   relaxAnchored(anchored, 80);
-  clampInto(anchored, rMax, positions);
+  clampIntoCore(anchored, ctx.viewport, bands, positions);
   // Halo position compression — fresh solves only, so survivor grades
   // (which inherit these positions verbatim) never re-compress them.
   for (const sn of coreNodes) {
     const p = positions.get(sn.id);
     if (!p) continue;
-    const u = haloU(Math.hypot(p.x, p.y), Rcore);
+    const lim = coreRadiusAt(Math.atan2(p.y, p.x), ctx.viewport, bands);
+    const u = haloU(Math.hypot(p.x, p.y), lim);
     if (u > 0) {
       const k = 1 - 0.12 * u * u;
       positions.set(sn.id, { x: p.x * k, y: p.y * k, r: p.r });
@@ -299,11 +327,11 @@ function settleCore(
   coreLinks: Array<{ source: string; target: string }>,
   ctx: LayoutContext,
   Rcore: number,
+  bands: number,
   positions: Map<string, LayoutPoint>,
   shift: { dx: number; dy: number },
   prevFocusPos: LayoutPoint | undefined,
 ): void {
-  const rMax = Rcore * 0.93;
   const anchored: AnchoredNode[] = coreNodes.map((sn) => {
     const prev = ctx.previous!.positions.get(sn.id);
     if (prev) {
@@ -336,7 +364,7 @@ function settleCore(
     return { ...sn, x: seed.x, y: seed.y, x0: seed.x, y0: seed.y, survivor: false };
   });
   relaxAnchored(anchored, 120);
-  clampInto(anchored, rMax, positions);
+  clampIntoCore(anchored, ctx.viewport, bands, positions);
 }
 
 function relaxAnchored(nodes: AnchoredNode[], ticks: number): void {
@@ -348,14 +376,22 @@ function relaxAnchored(nodes: AnchoredNode[], ticks: number): void {
   for (let i = 0; i < ticks; i++) relax.tick();
 }
 
-function clampInto(nodes: AnchoredNode[], rMax: number, positions: Map<string, LayoutPoint>): void {
+/** Clamp into the anisotropic core squircle (95% of the boundary at
+ * each node's own bearing). */
+function clampIntoCore(
+  nodes: AnchoredNode[],
+  viewport: Viewport,
+  bands: number,
+  positions: Map<string, LayoutPoint>,
+): void {
   for (const fn of nodes) {
     let x = fn.x ?? 0;
     let y = fn.y ?? 0;
     const d = Math.hypot(x, y);
-    if (d > rMax) {
-      x *= rMax / d;
-      y *= rMax / d;
+    const lim = coreRadiusAt(Math.atan2(y, x), viewport, bands) * 0.95;
+    if (d > lim) {
+      x *= lim / d;
+      y *= lim / d;
     }
     positions.set(fn.id, { x, y, r: fn.r });
   }
@@ -389,10 +425,8 @@ function placeShells(
   horizonIds: ReadonlyMap<string, DiscoveryClass>,
   positions: Map<string, LayoutPoint>,
   ctx: LayoutContext,
-  Rcore: number,
-  rimInner: number,
+  bands: number,
 ): void {
-  void Rcore;
   type P = { id: string; sector: number; shell: number; r: number; order: number; isAgg: boolean };
   const placements: P[] = [];
   for (const n of scene.nodes) {
@@ -424,13 +458,17 @@ function placeShells(
   const SECTOR_ARC = 0.78;
   type Placed = { id: string; angle: number; rho: number; r: number; isAgg: boolean; shell: number };
   const placed: Placed[] = [];
+  const cumMax = SHELL_CUM[Math.max(1, Math.min(4, bands))];
   for (const list of groups.values()) {
     list.sort((a, b) => b.order - a.order || (a.id < b.id ? -1 : 1));
     const { sector, shell } = list[0];
     const wall = rimRadiusAt(sector, ctx.viewport);
+    // Populated bands share the whole core→wall gap (iteration-11):
+    // SHELL_CUM renormalised so empty outer bands leave no dead ring.
+    const rimInner = coreRadiusAt(sector, ctx.viewport, bands) * 1.03;
     const gap = Math.max(24, wall - rimInner);
-    const bandIn = rimInner + gap * SHELL_CUM[shell - 1];
-    const bandOut = rimInner + gap * SHELL_CUM[shell];
+    const bandIn = rimInner + gap * (SHELL_CUM[shell - 1] / cumMax);
+    const bandOut = rimInner + gap * (SHELL_CUM[shell] / cumMax);
     const bandMid = (bandIn + bandOut) / 2;
     const bandDepth = Math.max(10, bandOut - bandIn);
     const capacity = Math.max(1, Math.floor((SECTOR_ARC * bandMid) / COL_GAP));
@@ -460,8 +498,12 @@ function placeShells(
   }
   relaxShellBands(placed);
   for (const q of placed) {
+    // Re-clamp at the item's FINAL bearing: the relax pass moves items
+    // tangentially, and both boundaries are anisotropic — an item slid
+    // toward the wide axis must not end up inside the core squircle.
     const wallHere = rimRadiusAt(q.angle, ctx.viewport);
-    const rho = Math.min(q.rho, wallHere - 10);
+    const innerHere = coreRadiusAt(q.angle, ctx.viewport, bands) * 1.03 + 4;
+    const rho = Math.min(Math.max(q.rho, innerHere), wallHere - 10);
     positions.set(q.id, { x: Math.cos(q.angle) * rho, y: Math.sin(q.angle) * rho, r: q.r });
   }
 }
