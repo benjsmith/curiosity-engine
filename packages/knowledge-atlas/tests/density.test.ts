@@ -15,7 +15,7 @@ import { nodeRadius } from "../src/core/layout/types.ts";
 import { coreArea, coreRadiusAt, rimRadiusAt, shapeExponent } from "../src/core/geometry.ts";
 import { indexFromCEData } from "../src/datasources/curiosity.ts";
 import { workspaceSmallData } from "../fixtures/index.ts";
-import { absorbTowardType, commitLensTarget, ABSORB_CAP } from "../src/interaction/lens.ts";
+import { absorbTowardType, applyCorePan, commitLensTarget, ABSORB_CAP } from "../src/interaction/lens.ts";
 import type { AtlasEngine } from "../src/core/engine.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS, type SceneRequest } from "../src/core/types.ts";
 
@@ -210,6 +210,41 @@ describe("lensing halo (flat middle, eased edge)", () => {
       }
     }
     expect(overlapping).toBe(0);
+  });
+});
+
+describe("graph-zone pan (iteration-14)", () => {
+  it("translates only core content; shells, aggregates and the frame stay fixed", () => {
+    const panned = applyCorePan(layout, scene, { x: 40, y: -25 });
+    let coreChecked = 0;
+    let fixedChecked = 0;
+    for (const n of scene.nodes) {
+      const a = layout.positions.get(n.id);
+      const b = panned.positions.get(n.id);
+      if (!a || !b) continue;
+      if (n.shell) {
+        expect(b).toEqual(a);
+        fixedChecked++;
+      } else {
+        expect(b.x).toBeCloseTo(a.x + 40, 6);
+        expect(b.y).toBeCloseTo(a.y - 25, 6);
+        coreChecked++;
+      }
+    }
+    for (const g of scene.aggregates) {
+      const a = layout.positions.get(g.id);
+      const b = panned.positions.get(g.id);
+      if (a && b) {
+        expect(b).toEqual(a);
+        fixedChecked++;
+      }
+    }
+    expect(coreChecked).toBeGreaterThan(10);
+    expect(fixedChecked).toBeGreaterThan(3);
+  });
+
+  it("zero pan is the identity (no allocation churn on idle frames)", () => {
+    expect(applyCorePan(layout, scene, { x: 0, y: 0 })).toBe(layout);
   });
 });
 

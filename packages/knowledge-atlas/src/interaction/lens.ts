@@ -92,6 +92,29 @@ export type LensCommit = {
 };
 
 /**
+ * Graph-zone pan (iteration-14): translate ONLY the core content —
+ * shell nodes, aggregates, and therefore the boundary frame stay
+ * fixed on screen. Used by the adapters while an in-core drag is
+ * live; the accompanying low-dose lens commits absorb the shift into
+ * real scene steps, and the residual springs back on release.
+ */
+export function applyCorePan(
+  layout: LayoutResult,
+  scene: { nodes: Array<{ id: string; shell?: number }>; aggregates: Array<{ id: string }> },
+  pan: { x: number; y: number },
+): LayoutResult {
+  if (!pan.x && !pan.y) return layout;
+  const fixed = new Set<string>();
+  for (const n of scene.nodes) if (n.shell) fixed.add(n.id);
+  for (const a of scene.aggregates) fixed.add(a.id);
+  const positions = new Map<string, LayoutPoint>();
+  for (const [id, p] of layout.positions) {
+    positions.set(id, fixed.has(id) ? p : { x: p.x + pan.x, y: p.y + pan.y, r: p.r });
+  }
+  return { positions, displacement: layout.displacement };
+}
+
+/**
  * Commit a saturated pull: focus the dominant rim item in the lens
  * sector. Aggregates enter through their top-ranked member so the
  * unfold animation carries the region into the core — and steer the

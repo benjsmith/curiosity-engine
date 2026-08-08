@@ -11,7 +11,7 @@ import { CanvasRenderer } from "../renderer/canvas.ts";
 import { resolveTheme } from "../renderer/theme.ts";
 import { coreRadius, isFullGraphScene, populatedShellBands } from "../core/layout/hybrid.ts";
 import { inCoreZone } from "../core/geometry.ts";
-import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
+import { applyCorePan, applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
 import { LensTraversal, shellTotalsFromScene, type TraversalFrame } from "../interaction/traversal.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "../interaction/tooltip.ts";
 import type { AtlasController, AtlasEvent, LayoutResult } from "../core/types.ts";
@@ -127,6 +127,25 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       let motionFrame: TraversalFrame | null = null;
       let motionRaf = 0;
       let lastMoveT = 0;
+      // Graph-zone pan (iteration-14): in-core drags translate ONLY
+      // the core content — the boundary frame stays fixed — while
+      // low-dose lens commits stream a few nodes in/out per step.
+      const corePan = { x: 0, y: 0 };
+      let panRaf = 0;
+      let panTravelled = 0;
+      let lastPanCommit = 0;
+      const panSpring = () => {
+        corePan.x *= 0.8;
+        corePan.y *= 0.8;
+        if (Math.hypot(corePan.x, corePan.y) < 0.5) {
+          corePan.x = 0;
+          corePan.y = 0;
+          draw(1);
+          return;
+        }
+        draw(1);
+        panRaf = requestAnimationFrame(panSpring);
+      };
 
       const isFull = () => {
         const sc = engine.snapshot().scene;
@@ -149,7 +168,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           motionFrame?.active && motionFrame.intensity > 0.02
             ? { pull: Math.max(lens.pull, Math.min(0.45, motionFrame.intensity * 0.45)), angle: motionFrame.angle }
             : lens;
-        const layout = isHybrid && !full ? applyLens(snap.layout, effLens, rCore) : snap.layout;
+        const panned =
+          isHybrid && !full ? applyCorePan(snap.layout, snap.scene, corePan) : snap.layout;
+        const layout = isHybrid && !full ? applyLens(panned, effLens, rCore) : panned;
         renderer.render({
           scene: snap.scene,
           layout,
@@ -198,6 +219,10 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       const off = engine.on((e: AtlasEvent) => {
         if (e.kind === "scene-ready") {
           lens.pull = 0; // a new scene resets any in-flight lens pull
+          // Each pan-driven scene step absorbs most of the shift into
+          // the layout itself (grade-2 lens translation).
+          corePan.x *= 0.35;
+          corePan.y *= 0.35;
           cancelAnimationFrame(raf);
           animStart = performance.now();
           raf = requestAnimationFrame(animate);
@@ -327,6 +352,30 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
               // Centerward motion feeds the traversal flow; the motion
               // loop owns drawing while a traversal is live.
               trav.drag(dx, dy, now - lastMoveT);
+            } else if (isHybrid && !isFull()) {
+              // Pan the GRAPH ZONE only — the frame stays fixed. The
+              // pan rubber-bands, and every ~90px commits one low-dose
+              // lens step toward the incoming side, so nodes stream in
+              // and out a few at a time (CE-pan feel, atlas edges).
+              cancelAnimationFrame(panRaf);
+              corePan.x += dx;
+              corePan.y += dy;
+              const bands = bandsOf();
+              const maxPan = coreRadius(viewport, bands) * 0.4;
+              const mag = Math.hypot(corePan.x, corePan.y);
+              if (mag > maxPan) {
+                const k = maxPan / mag;
+                corePan.x *= k;
+                corePan.y *= k;
+              }
+              panTravelled += Math.hypot(dx, dy);
+              if (panTravelled >= 90 && now - lastPanCommit >= 350) {
+                panTravelled = 0;
+                lastPanCommit = now;
+                const angle = Math.atan2(-corePan.y, -corePan.x);
+                commitLensTarget(engine, { pull: 1, angle }, coreRadius(viewport, bands));
+              }
+              draw(1);
             } else {
               camera.x += dx;
               camera.y += dy;
@@ -387,7 +436,15 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         dragging = false;
         dragMoved = false;
         if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
-        if (wasDrag) return;
+        if (wasDrag) {
+          // Residual graph-zone pan springs back to centre.
+          if (corePan.x || corePan.y) {
+            cancelAnimationFrame(panRaf);
+            panRaf = requestAnimationFrame(panSpring);
+          }
+          panTravelled = 0;
+          return;
+        }
         const p = toScene(ev);
         const hit = engine.hitTester.pointAt(p.x, p.y, ev.pointerType === "touch" ? 12 : 4);
         // Double-tap opens (touch has no reliable dblclick).
@@ -523,6 +580,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
             trav.cancel();
             travActive = false;
           }
+          corePan.x = 0;
+          corePan.y = 0;
+          panTravelled = 0;
         }
       };
       canvas.addEventListener("pointerdown", onPointerDown);
@@ -548,6 +608,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       return () => {
         cancelAnimationFrame(raf);
         cancelAnimationFrame(motionRaf);
+        cancelAnimationFrame(panRaf);
         trav.cancel();
         redrawRef.current = null;
         ro.disconnect();

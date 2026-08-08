@@ -10,7 +10,7 @@ import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
 import { coreRadius, isFullGraphScene, populatedShellBands } from "./core/layout/hybrid.ts";
 import { inCoreZone } from "./core/geometry.ts";
-import { applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
+import { applyCorePan, applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
 import { LensTraversal, shellTotalsFromScene, type TraversalFrame } from "./interaction/traversal.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
 import type { AtlasConfig, AtlasEvent, LayoutResult } from "./core/types.ts";
@@ -100,6 +100,24 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let motionFrame: TraversalFrame | null = null;
   let motionRaf = 0;
   let lastMoveT = 0;
+  // Graph-zone pan (iteration-14): in-core drags translate ONLY the
+  // core content — the frame stays fixed — with low-dose lens commits.
+  const corePan = { x: 0, y: 0 };
+  let panRaf = 0;
+  let panTravelled = 0;
+  let lastPanCommit = 0;
+  const panSpring = () => {
+    corePan.x *= 0.8;
+    corePan.y *= 0.8;
+    if (Math.hypot(corePan.x, corePan.y) < 0.5) {
+      corePan.x = 0;
+      corePan.y = 0;
+      draw(1);
+      return;
+    }
+    draw(1);
+    panRaf = requestAnimationFrame(panSpring);
+  };
 
   const labelState = {
     mode: opts.labelMode ?? "auto",
@@ -124,7 +142,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       motionFrame?.active && motionFrame.intensity > 0.02
         ? { pull: Math.max(lens.pull, Math.min(0.45, motionFrame.intensity * 0.45)), angle: motionFrame.angle }
         : lens;
-    const layout = isHybrid && !full ? applyLens(snap.layout, effLens, coreRadius(viewport, bands)) : snap.layout;
+    const panned = isHybrid && !full ? applyCorePan(snap.layout, snap.scene, corePan) : snap.layout;
+    const layout = isHybrid && !full ? applyLens(panned, effLens, coreRadius(viewport, bands)) : panned;
     renderer.render({
       scene: snap.scene,
       layout,
@@ -169,6 +188,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const off = engine.on((e) => {
     if (e.kind === "scene-ready") {
       lens.pull = 0;
+      corePan.x *= 0.35; // pan-driven steps absorb the shift
+      corePan.y *= 0.35;
       cancelAnimationFrame(raf);
       animStart = performance.now();
       raf = requestAnimationFrame(animate);
@@ -259,6 +280,28 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       if (dragMoved) {
         if (travActive) {
           trav.drag(dx, dy, now - lastMoveT);
+        } else if (isHybrid && !isFull()) {
+          // Pan the GRAPH ZONE only — frame fixed; ~90px per low-dose
+          // lens commit streams nodes in/out a few at a time.
+          cancelAnimationFrame(panRaf);
+          corePan.x += dx;
+          corePan.y += dy;
+          const bands = bandsOf();
+          const maxPan = coreRadius(viewport, bands) * 0.4;
+          const mag = Math.hypot(corePan.x, corePan.y);
+          if (mag > maxPan) {
+            const k = maxPan / mag;
+            corePan.x *= k;
+            corePan.y *= k;
+          }
+          panTravelled += Math.hypot(dx, dy);
+          if (panTravelled >= 90 && now - lastPanCommit >= 350) {
+            panTravelled = 0;
+            lastPanCommit = now;
+            const angle = Math.atan2(-corePan.y, -corePan.x);
+            commitLensTarget(engine, { pull: 1, angle }, coreRadius(viewport, bands));
+          }
+          draw(1);
         } else {
           camera.x += dx;
           camera.y += dy;
@@ -311,7 +354,14 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     const wasDrag = dragMoved;
     dragging = false;
     dragMoved = false;
-    if (wasDrag) return;
+    if (wasDrag) {
+      if (corePan.x || corePan.y) {
+        cancelAnimationFrame(panRaf);
+        panRaf = requestAnimationFrame(panSpring);
+      }
+      panTravelled = 0;
+      return;
+    }
     const p = toScene(ev);
     const hit = engine.hitTester.pointAt(p.x, p.y, ev.pointerType === "touch" ? 12 : 4);
     if (ev.pointerType === "touch") {
@@ -358,6 +408,9 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
         trav.cancel();
         travActive = false;
       }
+      corePan.x = 0;
+      corePan.y = 0;
+      panTravelled = 0;
     }
   };
   const onDbl = (ev: MouseEvent) => {
@@ -424,6 +477,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     destroy: () => {
       cancelAnimationFrame(raf);
       cancelAnimationFrame(motionRaf);
+      cancelAnimationFrame(panRaf);
       trav.cancel();
       clearTimeout(longPressTimer);
       tooltip.destroy();

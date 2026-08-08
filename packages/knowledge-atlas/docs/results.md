@@ -309,6 +309,28 @@ compared (line-restyle vs outward gradient shading):
   default "shade"). Theme-symmetric: the haze lightens outward on
   dark, darkens on light.
 
+### Iteration 14 (2026-08-07) — the frame stays put; panning is traversal at low dose
+
+Phone feedback: dragging inside the graph zone panned the WHOLE view,
+boundary frame included. Now the frame (wall, shells, smears, haze) is
+fixed on screen and only content moves:
+
+- **In-core drag = graph-zone pan.** `applyCorePan` translates only
+  core content at draw time (shell nodes/aggregates excluded), so the
+  mesh follows the finger 1:1 inside the fixed frame, rubber-banded to
+  ~40% of the core radius.
+- **…which IS low-dose traversal.** Every ~90 px of drag commits one
+  lens step toward the incoming side (`commitLensTarget` at the
+  opposite of the drag direction, ≥350 ms apart) — a few nodes stream
+  in from the side you pull from and out the far side, the grade-2
+  lens-shift translation absorbing most of the accumulated pan on each
+  scene step. Feels like the CE viewer's pan with different edge
+  behaviour, exactly as specced; boundary drags keep the full
+  lightspeed traversal.
+- **Release**: any residual pan springs back to centre (~5 frames of
+  0.8× decay). Camera panning now exists only in full-graph mode and
+  non-hybrid layouts, where there is no frame to hold still.
+
 ## Next iteration (P8) — host integration spec
 
 Agreed direction for the next session:
