@@ -14,16 +14,18 @@ import {
   forceSimulation,
 } from "d3-force";
 import { aggregateRadius, meanDisplacement, nodeRadius, type LayoutAdapter, type LayoutContext } from "./types.ts";
-import type { LayoutPoint, LayoutResult, SceneData } from "../types.ts";
+import { DEFAULT_PHYSICS, type LayoutPoint, type LayoutResult, type SceneData } from "../types.ts";
 
-const PHYSICS = { charge: -420, link: 110, collide: 10 };
-const PREWARM_TICKS = 350;
+function prewarmTicks(count: number): number {
+  return count > 10_000 ? 24 : count > 2_000 ? 60 : count > 800 ? 140 : 350;
+}
 
 type SimNode = { id: string; r: number; x?: number; y?: number };
 
 export const forceLayout: LayoutAdapter = {
   id: "force",
   layout(scene: SceneData, ctx: LayoutContext): LayoutResult {
+    const physics = ctx.physics ?? DEFAULT_PHYSICS;
     const simNodes: SimNode[] = [
       ...scene.nodes.map((n) => ({ id: n.id, r: nodeRadius(n.item.meta.degree) })),
       ...scene.aggregates.map((a) => ({ id: a.id, r: aggregateRadius(a.count) })),
@@ -46,14 +48,16 @@ export const forceLayout: LayoutAdapter = {
         "link",
         forceLink(links as never[])
           .id((d) => (d as unknown as SimNode).id)
-          .distance(PHYSICS.link)
+          .distance(physics.link)
           .strength(0.55),
       )
-      .force("charge", forceManyBody().strength(PHYSICS.charge).distanceMax(500))
+      .force("charge", forceManyBody().strength(physics.charge).distanceMax(500))
       .force("center", forceCenter(0, 0).strength(0.04))
-      .force("collide", forceCollide((d) => (d as unknown as SimNode).r + PHYSICS.collide))
+      .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
+      .alpha(1)
+      .alphaDecay(0.05)
       .stop();
-    for (let i = 0; i < PREWARM_TICKS; i++) sim.tick();
+    for (let i = 0; i < prewarmTicks(simNodes.length); i++) sim.tick();
 
     const positions = new Map<string, LayoutPoint>();
     for (const sn of simNodes) {

@@ -2,6 +2,35 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-14 — v1.3.0 — Knowledge Atlas viewer and shared graph navigation
+
+**Migration:** none — rebuild or reopen the viewer to receive the new static
+bundle. **Breaking:** none. Classic remains the default; Atlas is optional and
+appears only for wikis above 360 pages unless selected with `?viewer=atlas`.
+
+Curiosity Engine now ships the hybrid Knowledge Atlas developed in
+`packages/knowledge-atlas`: the canonical Classic force field remains in the
+centre while dense, distance-scaled boundary layers expose material beyond the
+current viewport. Wheel/pinch zoom remains pointer-anchored geometric zoom;
+dragging is reversible affine pan. Density policies support 10,000 visible
+nodes by default, suppress labels and edges as overview density rises, and
+retain a configurable 100,000-node experimental ceiling.
+
+Atlas adds delayed boundary hover labels, adaptive far-field node sizing,
+theme-reactive Canvas rendering, responsive phone sizing, and a cached,
+line-free whole-wiki minimap with click/drag navigation. Classic now shares the
+same minimap, Switchbay's motion-time label suppression, remount cleanup, and
+the wiki browser's collapse/expand-all control. Classic zoom has an explicit
+full-viewport hit surface; empty space and the minimap both accept wheel input,
+removing a transient node-only zoom failure.
+
+The engine exposes framework-neutral core, Canvas, React, Curiosity adapter,
+telemetry subscription, and snapshot/controller surfaces. The first-party IIFE
+is vendored offline at sha256
+`5d381ef5b76321494ec09c400bff45d00cfa0379b61a2b590d06dcff9e74c7e2`.
+Release validation: 94 unit tests, 19 Chromium e2e tests, 188 Python tests, and
+the 10k/1M density scenarios.
+
 ## 2026-08-06 — v1.2.1 — viewer payload: table types classified, drifted pages reachable, honest degrees
 
 **Migration:** none — re-run `viewer.sh build` (or just open the viewer; the

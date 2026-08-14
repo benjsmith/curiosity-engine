@@ -3,7 +3,7 @@
  * (scene, ctx) -> positions, no DOM, no wall clock.
  */
 
-import type { LayoutKind, LayoutPoint, LayoutResult, SceneData } from "../types.ts";
+import type { AtlasPhysics, LayoutKind, LayoutPoint, LayoutResult, SceneData } from "../types.ts";
 
 export type LayoutContext = {
   viewport: { width: number; height: number };
@@ -11,6 +11,8 @@ export type LayoutContext = {
   seed: number;
   /** Boundary shape 0..1 (AtlasConfig.boundaryShape); default squircle. */
   boundaryShape?: number;
+  /** Live classic-viewer force settings. */
+  physics?: AtlasPhysics;
 };
 
 export interface LayoutAdapter {

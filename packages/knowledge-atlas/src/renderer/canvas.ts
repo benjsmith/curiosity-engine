@@ -1,7 +1,7 @@
 /**
- * Canvas 2D renderer (AD-2). Scene budgets cap draw items at ~10²–10³,
- * well inside Canvas 2D's 60fps envelope, with crisp text for free and
- * no GPU-driver variance (SwiftShader e2e). DPR-aware; label placement
+ * Canvas 2D renderer (AD-2). Density policy keeps labels and ordinary
+ * edges out of large overview scenes, allowing a 10k-node production
+ * envelope while preserving crisp text at closer scales. DPR-aware; label placement
  * is greedy AABB collision in score order (ports the CE viewer's
  * auto-label logic). Draw order per PLAN §9: horizon band → bundles →
  * edges → aggregates → nodes → labels → overlays.
@@ -279,7 +279,7 @@ export class CanvasRenderer implements SceneRenderer {
       const colour = typeColour(n.item.type, frame.theme);
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      if (n.shell) {
+      if (n.shell || frame.layout.boundaryIds?.has(n.id)) {
         // Beyond the boundary (iteration-9): outlines with a faded
         // centre, keyed to the same palette as the solid core nodes.
         ctx.fillStyle = colour;
@@ -336,9 +336,12 @@ export class CanvasRenderer implements SceneRenderer {
     ctx.font = labelFont;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    const byScore = [...frame.scene.nodes].sort((a, b) =>
-      a.role === "focus" ? -1 : b.role === "focus" ? 1 : b.score - a.score || (a.id < b.id ? -1 : 1),
-    );
+    const byScore = [...frame.scene.nodes].sort((a, b) => {
+      const priority = (id: string, role: string) => role === "focus" ? 0 : id === frame.hoverId ? 1 : 2;
+      const pa = priority(a.id, a.role);
+      const pb = priority(b.id, b.role);
+      return pa - pb || b.score - a.score || (a.id < b.id ? -1 : 1);
+    });
     // Label policy (iteration-10, classic-viewer parity): the focus is
     // always labelled; other nodes pass the mode + type filter. Auto
     // mode requires legible screen size and skips periphery nodes —
@@ -347,14 +350,15 @@ export class CanvasRenderer implements SceneRenderer {
     const MIN_LABEL_SCREEN_R = 6; // matches the classic viewer's constant
     let labelCount = 0;
     for (const n of byScore) {
-      if (labelCount >= frame.maxLabels) break;
       const p = positions.get(n.id);
       if (!p) continue;
-      if (n.role !== "focus") {
+      const forced = n.role === "focus" || n.id === frame.hoverId;
+      if (!forced && labelCount >= frame.maxLabels) continue;
+      if (!forced) {
         if (labelMode === "off") continue;
         if (frame.labelTypes && !frame.labelTypes.has(n.item.type)) continue;
         if (labelMode === "auto") {
-          if (n.shell) continue;
+          if (n.shell || frame.layout.boundaryIds?.has(n.id)) continue;
           if (p.r * frame.camera.scale < MIN_LABEL_SCREEN_R) continue;
         }
       }
@@ -368,9 +372,23 @@ export class CanvasRenderer implements SceneRenderer {
       const lx = flip ? p.x - p.r - 4 - total : p.x + p.r + 4;
       const ly = p.y;
       const box: PlacedLabel = { x: lx - 2, y: ly - 8, w: total + 4, h: 16 };
-      if (placed.some((q) => overlaps(q, box))) continue;
+      if (!forced && placed.some((q) => overlaps(q, box))) continue;
       placed.push(box);
       labelCount++;
+      if (n.id === frame.hoverId) {
+        // A compact pill makes a deliberately-dwelled boundary label
+        // legible over dense edges without creating persistent chrome.
+        ctx.fillStyle = T.aggregateFill;
+        ctx.globalAlpha = 0.96;
+        ctx.beginPath();
+        ctx.roundRect(box.x, box.y, box.w, box.h, 4);
+        ctx.fill();
+        ctx.strokeStyle = T.line;
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       // Prefix + title on one line reads better on canvas than the
       // SVG two-liner; keep it simple.
       if (n.item.meta.titlePrefix) {
@@ -385,14 +403,16 @@ export class CanvasRenderer implements SceneRenderer {
     ctx.fillStyle = frame.theme.tokens.textMuted;
     ctx.font = "10px system-ui, sans-serif";
     ctx.textAlign = "center";
-    for (const a of frame.scene.aggregates) {
-      const p = positions.get(a.id);
-      if (!p) continue;
-      const text = truncate(a.label, 30);
-      const box: PlacedLabel = { x: p.x - 60, y: p.y + p.r + 2, w: 120, h: 14 };
-      if (placed.some((q) => overlaps(q, box))) continue;
-      placed.push(box);
-      ctx.fillText(text, p.x, p.y + p.r + 10);
+    if (frame.maxLabels > 0) {
+      for (const a of frame.scene.aggregates) {
+        const p = positions.get(a.id);
+        if (!p) continue;
+        const text = truncate(a.label, 30);
+        const box: PlacedLabel = { x: p.x - 60, y: p.y + p.r + 2, w: 120, h: 14 };
+        if (placed.some((q) => overlaps(q, box))) continue;
+        placed.push(box);
+        ctx.fillText(text, p.x, p.y + p.r + 10);
+      }
     }
 
     ctx.restore();

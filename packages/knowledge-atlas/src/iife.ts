@@ -6,14 +6,15 @@
 
 import { AtlasEngine } from "./core/engine.ts";
 import { CanvasRenderer } from "./renderer/canvas.ts";
+import { AtlasMinimap } from "./renderer/minimap.ts";
 import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
 import { coreRadius, isFullGraphScene, populatedShellBands } from "./core/layout/hybrid.ts";
-import { inCoreZone } from "./core/geometry.ts";
-import { applyCorePan, applyLens, commitLensTarget, LENS_STEP, type LensState } from "./interaction/lens.ts";
-import { LensTraversal, shellTotalsFromScene, type TraversalFrame } from "./interaction/traversal.ts";
+import { hybridLayout } from "./core/layout/hybrid.ts";
+import { clampCameraScale, projectCamera, responsiveNodeScale, wheelZoomFactor } from "./interaction/camera.ts";
+import { boundaryHoverDelay, projectedBoundaryDepth } from "./interaction/hover.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
-import type { AtlasConfig, AtlasEvent, LayoutResult } from "./core/types.ts";
+import { DEFAULT_PHYSICS, type AtlasConfig, type AtlasEvent, type AtlasPhysics, type LayoutResult } from "./core/types.ts";
 import type { Camera } from "./renderer/types.ts";
 
 export type MountOptions = {
@@ -32,6 +33,8 @@ export type MountHandle = {
   engine: AtlasEngine;
   /** Update the label policy live (wired to the host's label picker). */
   setLabels: (mode: "auto" | "on" | "off", types?: readonly string[] | null) => void;
+  /** Update the classic force controls and re-solve the central graph. */
+  setPhysics: (physics: Partial<AtlasPhysics>) => void;
   destroy: () => void;
 };
 
@@ -49,15 +52,13 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   renderer.mount(canvas);
 
   const mode = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-  const theme = resolveTheme(undefined, source.palette, mode);
+  let theme = resolveTheme(undefined, source.palette, mode);
   if (getComputedStyle(container).position === "static") container.style.position = "relative";
   const tooltip = new AggregateTooltip(container, theme, (aggId) => {
     const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === aggId);
     const member = agg?.memberIds[0];
     tooltip.hide();
     if (member) {
-      camera.x = 0;
-      camera.y = 0;
       engine.focus(member, "user");
     }
   });
@@ -77,94 +78,139 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let animStart = 0;
   let raf = 0;
   let hoverId: string | null = null;
+  let hoverTimer = 0;
+  let pendingHoverId: string | null = null;
+  let projectedForHover: LayoutResult | undefined;
+  let hoverScene = null as ReturnType<typeof engine.snapshot>["scene"];
+  let hoverBands = 1;
+  const hoverShell = new Map<string, number>();
   const camera: Camera = { x: 0, y: 0, scale: 1 };
   let viewport = { width: container.clientWidth || 800, height: container.clientHeight || 600 };
   const layoutKind = opts.config?.layout ?? "focus";
   const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
-  const lens: LensState = { pull: 0, angle: 0 };
   const boundaryShape = opts.config?.boundaryShape;
-  // Lens traversal (iteration-8): drags starting outside the squircle
-  // move the graph through the lens instead of panning the camera.
-  const trav = new LensTraversal(
-    engine,
-    viewport,
-    () => shellTotalsFromScene(engine.snapshot().scene ?? null),
-    () => {
-      // Absorption saturated: zoom out a notch so the count keeps falling.
-      camera.scale = Math.max(0.5, camera.scale / 1.12);
-      engine.setViewScale(camera.scale);
-    },
-    boundaryShape,
-  );
-  let travActive = false;
-  let motionFrame: TraversalFrame | null = null;
-  let motionRaf = 0;
-  let lastMoveT = 0;
-  // Graph-zone pan (iteration-14): in-core drags translate ONLY the
-  // core content — the frame stays fixed — with low-dose lens commits.
-  const corePan = { x: 0, y: 0 };
-  let panRaf = 0;
-  let panTravelled = 0;
-  let lastPanCommit = 0;
-  const panSpring = () => {
-    corePan.x *= 0.8;
-    corePan.y *= 0.8;
-    if (Math.hypot(corePan.x, corePan.y) < 0.5) {
-      corePan.x = 0;
-      corePan.y = 0;
-      draw(1);
-      return;
-    }
-    draw(1);
-    panRaf = requestAnimationFrame(panSpring);
+  let overviewLayout: LayoutResult | undefined;
+  let overviewScene = null as ReturnType<typeof engine.snapshot>["scene"];
+  let overviewTimer = 0;
+  let overviewPending = false;
+  let destroyed = false;
+  let overviewPhysics = { ...DEFAULT_PHYSICS, ...opts.config?.physics };
+  let densityTimer = 0;
+  const scheduleDensity = () => {
+    clearTimeout(densityTimer);
+    densityTimer = window.setTimeout(() => engine.setViewScale(camera.scale), 120);
   };
+  const minimap = new AtlasMinimap(container, (worldX, worldY) => {
+    camera.x = -worldX * camera.scale;
+    camera.y = -worldY * camera.scale;
+    draw(1);
+  });
 
   const labelState = {
     mode: opts.labelMode ?? "auto",
     types: opts.labelTypes ? new Set(opts.labelTypes) : null,
   } as { mode: "auto" | "on" | "off"; types: ReadonlySet<string> | null };
 
-  const isFull = () => {
-    const sc = engine.snapshot().scene;
-    return sc ? isFullGraphScene(sc) : false;
-  };
-  const bandsOf = () => {
-    const sc = engine.snapshot().scene;
-    return sc ? Math.max(1, populatedShellBands(sc)) : 1;
-  };
   const draw = (progress: number) => {
     const snap = engine.snapshot();
     if (!snap.scene || !snap.layout) return;
     const full = isFullGraphScene(snap.scene);
     const bands = Math.max(1, populatedShellBands(snap.scene));
-    // Continuous drift toward the drag between rate-limited commits.
-    const effLens: LensState =
-      motionFrame?.active && motionFrame.intensity > 0.02
-        ? { pull: Math.max(lens.pull, Math.min(0.45, motionFrame.intensity * 0.45)), angle: motionFrame.angle }
-        : lens;
-    const panned = isHybrid && !full ? applyCorePan(snap.layout, snap.scene, corePan) : snap.layout;
-    const layout = isHybrid && !full ? applyLens(panned, effLens, coreRadius(viewport, bands)) : panned;
+    const layout = snap.layout;
+    const nodeScale = responsiveNodeScale(viewport);
+    const projected = projectCamera(
+      layout,
+      snap.scene,
+      camera,
+      isHybrid && !full,
+      nodeScale,
+      viewport,
+      boundaryShape,
+      isHybrid && full,
+    );
+    projectedForHover = projected;
+    hoverBands = bands;
+    if (hoverScene !== snap.scene) {
+      hoverScene = snap.scene;
+      hoverShell.clear();
+      for (const node of snap.scene.nodes) if (node.shell) hoverShell.set(node.id, node.shell);
+      for (const aggregate of snap.scene.aggregates) {
+        if (aggregate.shell) hoverShell.set(aggregate.id, aggregate.shell);
+      }
+    }
+    const projectedPrev = prevLayout
+      ? projectCamera(
+          prevLayout,
+          snap.scene,
+          camera,
+          isHybrid && !full,
+          nodeScale,
+          viewport,
+          boundaryShape,
+          isHybrid && full,
+        )
+      : undefined;
+    engine.hitTester.update(
+      projected.positions,
+      snap.scene.nodes.map((node) => node.id),
+      snap.scene.aggregates.map((aggregate) => aggregate.id),
+    );
     renderer.render({
       scene: snap.scene,
-      layout,
-      prevLayout,
+      layout: projected,
+      prevLayout: projectedPrev,
       progress,
-      camera,
+      camera: { x: 0, y: 0, scale: 1 },
       viewport,
       dpr: window.devicePixelRatio || 1,
       theme,
       hoverId,
       selection: new Set(snap.state.selection),
       pinned: new Set(snap.state.pinned),
-      maxLabels: opts.config?.budget?.maxLabels ?? 60,
+      maxLabels: snap.stats?.labelCount ?? opts.config?.budget?.maxLabels ?? 60,
       showHorizonRing: (opts.config?.layout ?? "focus") !== "force" && !full,
-      coreRadius: isHybrid && !full ? coreRadius(viewport, bands) : undefined,
+      coreRadius: isHybrid ? coreRadius(viewport, bands) : undefined,
       shellBands: bands,
       boundaryShape,
-      motion: motionFrame?.active ? motionFrame : undefined,
       labelMode: labelState.mode,
       labelTypes: labelState.types,
     });
+    canvas.dataset.hoverId = hoverId ?? "";
+    if (full) {
+      overviewLayout = snap.layout;
+      overviewScene = snap.scene;
+    }
+    minimap.update(overviewLayout, overviewScene, camera, viewport, theme, boundaryShape);
+  };
+  const themeObserver = new MutationObserver(() => {
+    const nextMode = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+    theme = resolveTheme(undefined, source.palette, nextMode);
+    tooltip.setTheme(theme);
+    draw(1);
+  });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  const ensureOverview = () => {
+    if (destroyed || overviewScene || overviewPending || !source.getOverviewScene) return;
+    overviewPending = true;
+    // Let the primary scene paint first; the overview solve is secondary
+    // work and must not delay first interaction on a phone.
+    overviewTimer = window.setTimeout(() => {
+      Promise.resolve(source.getOverviewScene?.(engine.getState().focusId))
+        .then((scene) => {
+          if (!scene || destroyed) return;
+          overviewScene = scene;
+          overviewLayout = hybridLayout.layout(scene, {
+            viewport,
+            seed: opts.config?.seed ?? 42,
+            boundaryShape,
+            physics: overviewPhysics,
+          });
+          draw(1);
+        })
+        .finally(() => {
+          overviewPending = false;
+        });
+    }, 0);
   };
   const animate = () => {
     const t = Math.min(1, (performance.now() - animStart) / 300);
@@ -172,27 +218,13 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     if (t < 1) raf = requestAnimationFrame(animate);
     else prevLayout = engine.snapshot().layout ?? undefined;
   };
-  // Live-traversal loop: advances the physics (rate-limited commits)
-  // and redraws the motion abstraction until flow decays to rest.
-  const motionLoop = () => {
-    const f = trav.tick(performance.now());
-    motionFrame = f;
-    draw(Math.min(1, (performance.now() - animStart) / 300));
-    if (f.active) motionRaf = requestAnimationFrame(motionLoop);
-    else {
-      motionFrame = null;
-      draw(1);
-    }
-  };
-
   const off = engine.on((e) => {
     if (e.kind === "scene-ready") {
-      lens.pull = 0;
-      corePan.x *= 0.35; // pan-driven steps absorb the shift
-      corePan.y *= 0.35;
+      clearHoverIntent(true);
       cancelAnimationFrame(raf);
       animStart = performance.now();
       raf = requestAnimationFrame(animate);
+      if (!isFullGraphScene(engine.snapshot().scene!)) ensureOverview();
     }
     if (e.kind === "item-open-requested") opts.onOpenItem?.(e.id);
     opts.onEvent?.(e);
@@ -201,8 +233,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const toScene = (ev: MouseEvent) => {
     const rect = canvas.getBoundingClientRect();
     return {
-      x: (ev.clientX - rect.left - viewport.width / 2 - camera.x) / camera.scale,
-      y: (ev.clientY - rect.top - viewport.height / 2 - camera.y) / camera.scale,
+      x: ev.clientX - rect.left - viewport.width / 2,
+      y: ev.clientY - rect.top - viewport.height / 2,
     };
   };
   let dragging = false;
@@ -214,32 +246,70 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   let pinched = false;
   let lastTap = { t: 0, x: 0, y: 0 };
   let lastClickFocus = { id: "", t: 0 };
+  const clearHoverIntent = (clearVisible = false) => {
+    clearTimeout(hoverTimer);
+    hoverTimer = 0;
+    pendingHoverId = null;
+    if (clearVisible && hoverId !== null) {
+      hoverId = null;
+      tooltip.hide();
+      draw(1);
+    }
+  };
+  const hoverDelay = (id: string): number => {
+    const projected = projectedForHover;
+    const scene = hoverScene;
+    if (!projected || !scene) return 0;
+    const shell = hoverShell.get(id);
+    const inBoundary = Boolean(shell) || Boolean(projected.boundaryIds?.has(id));
+    if (!inBoundary) return 0;
+    const point = projected.positions.get(id);
+    const depth = shell
+      ? Math.max(0, Math.min(1, (shell - 1) / 3))
+      : point
+        ? projectedBoundaryDepth(point, viewport, boundaryShape, hoverBands)
+        : 0;
+    return boundaryHoverDelay(depth, scene.stats?.totalNodes ?? scene.nodes.length);
+  };
+  const scheduleHover = (hit: ReturnType<typeof engine.hitTester.pointAt>, ev: PointerEvent) => {
+    const id = hit?.id ?? null;
+    canvas.style.cursor = id ? "pointer" : "default";
+    if (id === hoverId || id === pendingHoverId) return;
+    clearHoverIntent(false);
+    if (hoverId !== null) {
+      hoverId = null;
+      tooltip.hide();
+      draw(1);
+    }
+    if (!hit || ev.pointerType === "touch") return;
+    const hitId = hit.id;
+    const { clientX, clientY } = ev;
+    const commit = () => {
+      if (pendingHoverId !== hitId || dragging) return;
+      pendingHoverId = null;
+      hoverTimer = 0;
+      hoverId = hitId;
+      maybeShowTooltip(hit.kind === "aggregate" ? hitId : null, clientX, clientY);
+      draw(1);
+    };
+    const delay = hoverDelay(hitId);
+    pendingHoverId = hitId;
+    if (delay === 0) commit();
+    else hoverTimer = window.setTimeout(commit, delay);
+  };
   const onDown = (ev: PointerEvent) => {
+    clearHoverIntent(true);
     pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
       pinched = true;
       dragging = false;
-      if (travActive) {
-        trav.cancel();
-        travActive = false;
-      }
       return;
     }
     dragging = true;
     dragMoved = false;
     last = { x: ev.clientX, y: ev.clientY };
-    lastMoveT = performance.now();
-    // A drag starting outside the squircle traverses the corpus.
-    if (isHybrid && !isFull()) {
-      const p = toScene(ev);
-      if (trav.start(p.x, p.y, performance.now())) {
-        travActive = true;
-        cancelAnimationFrame(motionRaf);
-        motionRaf = requestAnimationFrame(motionLoop);
-      }
-    }
     if (ev.pointerType === "touch") {
       tooltip.hide();
       const p = toScene(ev);
@@ -263,66 +333,38 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       const [a, b] = [...pointers.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       const ratio = d / pinchDist;
-      if (ratio > 1.12) {
-        engine.zoomTo(engine.getState().semanticScale + 0.2);
+      if (ratio > 1.025 || ratio < 0.975) {
+        const rect = canvas.getBoundingClientRect();
+        const anchor = {
+          x: (a.x + b.x) / 2 - rect.left - viewport.width / 2,
+          y: (a.y + b.y) / 2 - rect.top - viewport.height / 2,
+        };
+        const old = camera.scale;
+        camera.scale = clampCameraScale(old * Math.max(0.94, Math.min(1.06, ratio)));
+        const k = camera.scale / old;
+        camera.x = anchor.x - (anchor.x - camera.x) * k;
+        camera.y = anchor.y - (anchor.y - camera.y) * k;
+        scheduleDensity();
         pinchDist = d;
-      } else if (ratio < 0.89) {
-        engine.zoomTo(engine.getState().semanticScale - 0.2);
-        pinchDist = d;
+        draw(1);
       }
       return;
     }
     if (dragging) {
-      const now = performance.now();
       const dx = ev.clientX - last.x;
       const dy = ev.clientY - last.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
       if (dragMoved) {
-        if (travActive) {
-          trav.drag(dx, dy, now - lastMoveT);
-        } else if (isHybrid && !isFull()) {
-          // Pan the GRAPH ZONE only — frame fixed; ~90px per low-dose
-          // lens commit streams nodes in/out a few at a time.
-          cancelAnimationFrame(panRaf);
-          corePan.x += dx;
-          corePan.y += dy;
-          const bands = bandsOf();
-          const maxPan = coreRadius(viewport, bands) * 0.4;
-          const mag = Math.hypot(corePan.x, corePan.y);
-          if (mag > maxPan) {
-            const k = maxPan / mag;
-            corePan.x *= k;
-            corePan.y *= k;
-          }
-          panTravelled += Math.hypot(dx, dy);
-          if (panTravelled >= 90 && now - lastPanCommit >= 350) {
-            panTravelled = 0;
-            lastPanCommit = now;
-            const angle = Math.atan2(-corePan.y, -corePan.x);
-            commitLensTarget(engine, { pull: 1, angle }, coreRadius(viewport, bands));
-          }
-          draw(1);
-        } else {
-          camera.x += dx;
-          camera.y += dy;
-          draw(1);
-        }
+        camera.x += dx;
+        camera.y += dy;
+        draw(1);
         last = { x: ev.clientX, y: ev.clientY };
       }
-      lastMoveT = now;
       return;
     }
     const p = toScene(ev);
     const hit = engine.hitTester.pointAt(p.x, p.y);
-    const id = hit?.id ?? null;
-    if (id !== hoverId) {
-      hoverId = id;
-      canvas.style.cursor = id ? "pointer" : "default";
-      if (ev.pointerType !== "touch") {
-        maybeShowTooltip(hit?.kind === "aggregate" ? id : null, ev.clientX, ev.clientY);
-      }
-      draw(1);
-    }
+    scheduleHover(hit, ev);
   };
   const onUp = (ev: PointerEvent) => {
     clearTimeout(longPressTimer);
@@ -341,25 +383,10 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       return;
     }
     if (pinched) return;
-    if (travActive) {
-      travActive = false;
-      if (dragMoved) {
-        trav.release(); // momentum decay continues in the motion loop
-        dragging = false;
-        dragMoved = false;
-        return;
-      }
-      trav.cancel(); // a tap — normal click handling below
-    }
     const wasDrag = dragMoved;
     dragging = false;
     dragMoved = false;
     if (wasDrag) {
-      if (corePan.x || corePan.y) {
-        cancelAnimationFrame(panRaf);
-        panRaf = requestAnimationFrame(panSpring);
-      }
-      panTravelled = 0;
       return;
     }
     const p = toScene(ev);
@@ -379,8 +406,6 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     }
     if (!hit) return;
     if (hit.kind === "node") {
-      camera.x = 0;
-      camera.y = 0;
       lastClickFocus = { id: hit.id, t: performance.now() };
       engine.focus(hit.id, "user");
     } else {
@@ -389,8 +414,6 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === hit.id);
       const member = agg?.memberIds[0];
       if (member) {
-        camera.x = 0;
-        camera.y = 0;
         engine.focus(member, "user");
       } else {
         engine.zoomTo(engine.getState().semanticScale + 1);
@@ -404,13 +427,6 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       pinchDist = 0;
       dragging = false;
       dragMoved = false;
-      if (travActive) {
-        trav.cancel();
-        travActive = false;
-      }
-      corePan.x = 0;
-      corePan.y = 0;
-      panTravelled = 0;
     }
   };
   const onDbl = (ev: MouseEvent) => {
@@ -419,31 +435,25 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     if (hit?.kind === "node") engine.openItem(hit.id);
     else if (performance.now() - lastClickFocus.t < 600 && lastClickFocus.id) {
       engine.openItem(lastClickFocus.id);
+    } else if (engine.getState().focusId) {
+      // A focus-driven scene transition may move the node between the
+      // two clicks; opening the active focus preserves classic behavior.
+      engine.openItem(engine.getState().focusId!);
     }
   };
   const onWheel = (ev: WheelEvent) => {
     ev.preventDefault();
+    clearHoverIntent(true);
     if (isHybrid) {
-      const p = toScene(ev);
-      const bands = bandsOf();
-      const rCore = coreRadius(viewport, bands);
-      if (isFull() || inCoreZone(p.x, p.y, viewport, bands, boundaryShape)) {
-        camera.scale = Math.max(0.5, Math.min(3, camera.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
-        // Density-coupled zoom: smaller nodes → higher core capacity.
-        engine.setViewScale(camera.scale);
-        draw(1);
-        return;
-      }
-      if (ev.deltaY < 0) {
-        lens.angle = Math.atan2(p.y, p.x);
-        lens.pull = Math.min(1, lens.pull + LENS_STEP);
-        if (lens.pull >= 1) {
-          lens.pull = 0;
-          commitLensTarget(engine, { pull: 1, angle: lens.angle }, rCore);
-        }
-      } else {
-        lens.pull = Math.max(0, lens.pull - LENS_STEP);
-      }
+      // One geometric zoom model across the plotting area. The graph
+      // zooms around the pointer; the boundary remains fixed geography.
+      const anchor = toScene(ev);
+      const old = camera.scale;
+      camera.scale = clampCameraScale(old * wheelZoomFactor(ev.deltaY, ev.deltaMode));
+      const k = camera.scale / old;
+      camera.x = anchor.x - (anchor.x - camera.x) * k;
+      camera.y = anchor.y - (anchor.y - camera.y) * k;
+      scheduleDensity();
       draw(1);
       return;
     }
@@ -458,13 +468,14 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
 
   const ro = new ResizeObserver(() => {
     viewport = { width: container.clientWidth, height: container.clientHeight };
-    trav.setViewport(viewport);
     engine.resize(viewport.width, viewport.height);
+    engine.setViewScale(camera.scale);
     draw(1);
   });
   ro.observe(container);
 
   engine.resize(viewport.width, viewport.height);
+  engine.setViewScale(camera.scale);
   engine.start(opts.initialFocus);
 
   return {
@@ -474,13 +485,28 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       if (types !== undefined) labelState.types = types ? new Set(types) : null;
       draw(1);
     },
+    setPhysics: (physics) => {
+      overviewPhysics = { ...overviewPhysics, ...physics };
+      if (overviewScene) {
+        overviewLayout = hybridLayout.layout(overviewScene, {
+          viewport,
+          seed: opts.config?.seed ?? 42,
+          boundaryShape,
+          physics: overviewPhysics,
+        });
+      }
+      engine.setPhysics(physics);
+    },
     destroy: () => {
+      destroyed = true;
       cancelAnimationFrame(raf);
-      cancelAnimationFrame(motionRaf);
-      cancelAnimationFrame(panRaf);
-      trav.cancel();
       clearTimeout(longPressTimer);
+      clearTimeout(densityTimer);
+      clearTimeout(overviewTimer);
+      clearTimeout(hoverTimer);
+      themeObserver.disconnect();
       tooltip.destroy();
+      minimap.destroy();
       ro.disconnect();
       off();
       renderer.destroy();

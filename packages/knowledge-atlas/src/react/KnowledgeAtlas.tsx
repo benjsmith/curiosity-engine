@@ -8,11 +8,11 @@
 import { forwardRef, useEffect, useRef } from "react";
 import { AtlasEngine } from "../core/engine.ts";
 import { CanvasRenderer } from "../renderer/canvas.ts";
+import { AtlasMinimap } from "../renderer/minimap.ts";
 import { resolveTheme } from "../renderer/theme.ts";
 import { coreRadius, isFullGraphScene, populatedShellBands } from "../core/layout/hybrid.ts";
-import { inCoreZone } from "../core/geometry.ts";
-import { applyCorePan, applyLens, commitLensTarget, LENS_STEP, type LensState } from "../interaction/lens.ts";
-import { LensTraversal, shellTotalsFromScene, type TraversalFrame } from "../interaction/traversal.ts";
+import { clampCameraScale, projectCamera, responsiveNodeScale, wheelZoomFactor } from "../interaction/camera.ts";
+import { boundaryHoverDelay, projectedBoundaryDepth } from "../interaction/hover.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "../interaction/tooltip.ts";
 import type { AtlasController, AtlasEvent, LayoutResult } from "../core/types.ts";
 import type { KnowledgeAtlasProps } from "./props.ts";
@@ -66,7 +66,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       // Palette comes through the AtlasDataSource contract, not a
       // concrete source class — any source can bring its own colours.
       const dataPalette = props.dataSource.palette;
-      const mode =
+      const currentMode = () =>
         typeof document !== "undefined" &&
         (document.documentElement.dataset.theme === "light" ||
           (document.documentElement.dataset.theme === undefined &&
@@ -74,15 +74,13 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
             matchMedia("(prefers-color-scheme: light)").matches))
           ? "light"
           : "dark";
-      const theme = resolveTheme(props.theme, dataPalette, mode);
+      let theme = resolveTheme(props.theme, dataPalette, currentMode());
       const tooltip = new AggregateTooltip(host, theme, (aggId) => {
-        // Clicking the tooltip centres the community (iteration-6).
+        // Keep the camera stable while the chosen community unfolds.
         const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === aggId);
         const member = agg?.memberIds[0];
         tooltip.hide();
         if (member) {
-          camera.x = 0;
-          camera.y = 0;
           engine.focus(member, "user");
         }
       });
@@ -103,97 +101,108 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       let animStart = 0;
       let raf = 0;
       let hoverId: string | null = null;
+      let hoverTimer = 0;
+      let pendingHoverId: string | null = null;
+      let projectedForHover: LayoutResult | undefined;
+      let hoverScene = null as ReturnType<typeof engine.snapshot>["scene"];
+      let hoverBands = 1;
+      const hoverShell = new Map<string, number>();
       const camera: Camera = { x: 0, y: 0, scale: 1 };
       let viewport = { width: host.clientWidth || 800, height: host.clientHeight || 600 };
       const layoutKind = props.config?.layout ?? "focus";
       const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
-      const lens: LensState = { pull: 0, angle: 0 };
       const boundaryShape = props.config?.boundaryShape;
-      // Lens traversal (iteration-8): drags STARTING outside the
-      // squircle move the graph through the lens instead of panning.
-      const trav = new LensTraversal(
-        engine,
-        viewport,
-        () => shellTotalsFromScene(engine.snapshot().scene ?? null),
-        () => {
-          // Absorption saturated at this zoom: zoom out a notch so the
-          // pulled type keeps fitting and its count keeps falling.
-          camera.scale = Math.max(0.5, camera.scale / 1.12);
-          engine.setViewScale(camera.scale);
-        },
-        boundaryShape,
-      );
-      let travActive = false;
-      let motionFrame: TraversalFrame | null = null;
-      let motionRaf = 0;
-      let lastMoveT = 0;
-      // Graph-zone pan (iteration-14): in-core drags translate ONLY
-      // the core content — the boundary frame stays fixed — while
-      // low-dose lens commits stream a few nodes in/out per step.
-      const corePan = { x: 0, y: 0 };
-      let panRaf = 0;
-      let panTravelled = 0;
-      let lastPanCommit = 0;
-      const panSpring = () => {
-        corePan.x *= 0.8;
-        corePan.y *= 0.8;
-        if (Math.hypot(corePan.x, corePan.y) < 0.5) {
-          corePan.x = 0;
-          corePan.y = 0;
-          draw(1);
-          return;
-        }
+      let overviewLayout: LayoutResult | undefined;
+      let overviewScene = engine.snapshot().scene;
+      let densityTimer = 0;
+      const scheduleDensity = () => {
+        clearTimeout(densityTimer);
+        densityTimer = window.setTimeout(() => engine.setViewScale(camera.scale), 120);
+      };
+      const minimap = new AtlasMinimap(host, (worldX, worldY) => {
+        camera.x = -worldX * camera.scale;
+        camera.y = -worldY * camera.scale;
         draw(1);
-        panRaf = requestAnimationFrame(panSpring);
-      };
-
-      const isFull = () => {
-        const sc = engine.snapshot().scene;
-        return sc ? isFullGraphScene(sc) : false;
-      };
-      const bandsOf = () => {
-        const sc = engine.snapshot().scene;
-        return sc ? Math.max(1, populatedShellBands(sc)) : 1;
-      };
+      });
       const draw = (progress: number) => {
         const snap = engine.snapshot();
         if (!snap.scene || !snap.layout) return;
         const bands = Math.max(1, populatedShellBands(snap.scene));
         const rCore = coreRadius(viewport, bands);
         const full = isFullGraphScene(snap.scene);
-        // During a traversal, keep the field drifting continuously
-        // toward the drag between rate-limited commits — without this
-        // the graph only steps ~3×/sec and reads as a low frame rate.
-        const effLens: LensState =
-          motionFrame?.active && motionFrame.intensity > 0.02
-            ? { pull: Math.max(lens.pull, Math.min(0.45, motionFrame.intensity * 0.45)), angle: motionFrame.angle }
-            : lens;
-        const panned =
-          isHybrid && !full ? applyCorePan(snap.layout, snap.scene, corePan) : snap.layout;
-        const layout = isHybrid && !full ? applyLens(panned, effLens, rCore) : panned;
+        const layout = snap.layout;
+        const nodeScale = responsiveNodeScale(viewport);
+        const projected = projectCamera(
+          layout,
+          snap.scene,
+          camera,
+          isHybrid && !full,
+          nodeScale,
+          viewport,
+          boundaryShape,
+          isHybrid && full,
+        );
+        projectedForHover = projected;
+        hoverBands = bands;
+        if (hoverScene !== snap.scene) {
+          hoverScene = snap.scene;
+          hoverShell.clear();
+          for (const node of snap.scene.nodes) if (node.shell) hoverShell.set(node.id, node.shell);
+          for (const aggregate of snap.scene.aggregates) {
+            if (aggregate.shell) hoverShell.set(aggregate.id, aggregate.shell);
+          }
+        }
+        const projectedPrev = prevLayout
+          ? projectCamera(
+              prevLayout,
+              snap.scene,
+              camera,
+              isHybrid && !full,
+              nodeScale,
+              viewport,
+              boundaryShape,
+              isHybrid && full,
+            )
+          : undefined;
+        engine.hitTester.update(
+          projected.positions,
+          snap.scene.nodes.map((node) => node.id),
+          snap.scene.aggregates.map((aggregate) => aggregate.id),
+        );
         renderer.render({
           scene: snap.scene,
-          layout,
-          prevLayout,
+          layout: projected,
+          prevLayout: projectedPrev,
           progress,
-          camera,
+          camera: { x: 0, y: 0, scale: 1 },
           viewport,
           dpr: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
           theme,
           hoverId,
           selection: new Set(snap.state.selection),
           pinned: new Set(snap.state.pinned),
-          maxLabels: props.config?.budget?.maxLabels ?? 60,
+          maxLabels: snap.stats?.labelCount ?? props.config?.budget?.maxLabels ?? 60,
           showHorizonRing: (props.config?.layout ?? "focus") !== "force" && !full,
-          coreRadius: isHybrid && !full ? rCore : undefined,
+          coreRadius: isHybrid ? rCore : undefined,
           shellBands: bands,
           boundaryShape,
-          motion: motionFrame?.active ? motionFrame : undefined,
           labelMode: labelRef.current.mode,
           labelTypes: labelRef.current.types,
         });
+        canvas.dataset.hoverId = hoverId ?? "";
+        if (full) {
+          overviewLayout = snap.layout;
+          overviewScene = snap.scene;
+        }
+        minimap.update(overviewLayout, overviewScene, camera, viewport, theme, boundaryShape);
       };
       redrawRef.current = () => draw(1);
+      const themeObserver = new MutationObserver(() => {
+        theme = resolveTheme(props.theme, dataPalette, currentMode());
+        tooltip.setTheme(theme);
+        draw(1);
+      });
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
       const animate = () => {
         const t = Math.min(1, (performance.now() - animStart) / transitionMs);
@@ -202,27 +211,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         else prevLayout = engine.snapshot().layout ?? undefined;
       };
 
-      // Runs while a traversal is live (drag or momentum): advances the
-      // physics (which rate-limits real scene commits) and redraws with
-      // the motion abstraction until flow decays below the threshold.
-      const motionLoop = () => {
-        const f = trav.tick(performance.now());
-        motionFrame = f;
-        draw(Math.min(1, (performance.now() - animStart) / transitionMs));
-        if (f.active) motionRaf = requestAnimationFrame(motionLoop);
-        else {
-          motionFrame = null;
-          draw(1);
-        }
-      };
-
       const off = engine.on((e: AtlasEvent) => {
         if (e.kind === "scene-ready") {
-          lens.pull = 0; // a new scene resets any in-flight lens pull
-          // Each pan-driven scene step absorbs most of the shift into
-          // the layout itself (grade-2 lens translation).
-          corePan.x *= 0.35;
-          corePan.y *= 0.35;
+          clearHoverIntent(true);
           cancelAnimationFrame(raf);
           animStart = performance.now();
           raf = requestAnimationFrame(animate);
@@ -239,8 +230,8 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       const toScene = (ev: PointerEvent | MouseEvent | WheelEvent) => {
         const rect = canvas.getBoundingClientRect();
         return {
-          x: (ev.clientX - rect.left - viewport.width / 2 - camera.x) / camera.scale,
-          y: (ev.clientY - rect.top - viewport.height / 2 - camera.y) / camera.scale,
+          x: ev.clientX - rect.left - viewport.width / 2,
+          y: ev.clientY - rect.top - viewport.height / 2,
         };
       };
       let dragging = false;
@@ -256,34 +247,74 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       // second click of a double-click can land on empty canvas. Track
       // the last click-focused node and let dblclick fall back to it.
       let lastClickFocus = { id: "", t: 0 };
+      const clearHoverIntent = (clearVisible = false) => {
+        clearTimeout(hoverTimer);
+        hoverTimer = 0;
+        pendingHoverId = null;
+        if (clearVisible && hoverId !== null) {
+          hoverId = null;
+          engine.hover(null);
+          tooltip.hide();
+          draw(1);
+        }
+      };
+      const hoverDelay = (id: string): number => {
+        const projected = projectedForHover;
+        const scene = hoverScene;
+        if (!projected || !scene) return 0;
+        const shell = hoverShell.get(id);
+        const inBoundary = Boolean(shell) || Boolean(projected.boundaryIds?.has(id));
+        if (!inBoundary) return 0;
+        const point = projected.positions.get(id);
+        const depth = shell
+          ? Math.max(0, Math.min(1, (shell - 1) / 3))
+          : point
+            ? projectedBoundaryDepth(point, viewport, boundaryShape, hoverBands)
+            : 0;
+        return boundaryHoverDelay(depth, scene.stats?.totalNodes ?? scene.nodes.length);
+      };
+      const scheduleHover = (hit: ReturnType<typeof engine.hitTester.pointAt>, ev: PointerEvent) => {
+        const id = hit?.id ?? null;
+        canvas.style.cursor = id ? "pointer" : "default";
+        if (id === hoverId || id === pendingHoverId) return;
+        clearHoverIntent(false);
+        if (hoverId !== null) {
+          hoverId = null;
+          engine.hover(null);
+          tooltip.hide();
+          draw(1);
+        }
+        if (!hit || ev.pointerType === "touch") return;
+        const hitId = hit.id;
+        const { clientX, clientY } = ev;
+        const commit = () => {
+          if (pendingHoverId !== hitId || dragging) return;
+          pendingHoverId = null;
+          hoverTimer = 0;
+          hoverId = hitId;
+          engine.hover(hitId);
+          maybeShowTooltip(hit.kind === "aggregate" ? hitId : null, clientX, clientY);
+          draw(1);
+        };
+        const delay = hoverDelay(hitId);
+        pendingHoverId = hitId;
+        if (delay === 0) commit();
+        else hoverTimer = window.setTimeout(commit, delay);
+      };
       const onPointerDown = (ev: PointerEvent) => {
+        clearHoverIntent(true);
         pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
         if (pointers.size === 2) {
           const [a, b] = [...pointers.values()];
           pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
           pinched = true;
           dragging = false;
-          if (travActive) {
-            trav.cancel();
-            travActive = false;
-          }
           return;
         }
         dragging = true;
         dragMoved = false;
         last = { x: ev.clientX, y: ev.clientY };
-        lastMoveT = performance.now();
         canvas.setPointerCapture(ev.pointerId);
-        // A drag starting outside the squircle traverses the corpus
-        // through the lens (iteration-8); inside it stays a camera pan.
-        if (isHybrid && !isFull()) {
-          const p = toScene(ev);
-          if (trav.start(p.x, p.y, performance.now())) {
-            travActive = true;
-            cancelAnimationFrame(motionRaf);
-            motionRaf = requestAnimationFrame(motionLoop);
-          }
-        }
         // Touch-and-hold on a grouping bubble shows its annotation.
         if (ev.pointerType === "touch") {
           tooltip.hide(); // a new tap dismisses any held-open tooltip
@@ -308,33 +339,21 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           const [a, b] = [...pointers.values()];
           const d = Math.hypot(a.x - b.x, a.y - b.y);
           const ratio = d / pinchDist;
-          if (ratio > 1.12 || ratio < 0.89) {
+          if (ratio > 1.025 || ratio < 0.975) {
             const zoomIn = ratio > 1;
             pinchDist = d;
             if (isHybrid) {
-              // Same lens model as the wheel, anchored at the pinch
-              // midpoint: core = geometric zoom, rim = sector pull.
               const rect = canvas.getBoundingClientRect();
-              const mx = ((a.x + b.x) / 2 - rect.left - viewport.width / 2 - camera.x) / camera.scale;
-              const my = ((a.y + b.y) / 2 - rect.top - viewport.height / 2 - camera.y) / camera.scale;
-              const bands = bandsOf();
-              const rCore = coreRadius(viewport, bands);
-              if (isFull() || inCoreZone(mx, my, viewport, bands, boundaryShape)) {
-                camera.scale = Math.max(0.5, Math.min(3, camera.scale * (zoomIn ? 1.12 : 1 / 1.12)));
-                // Zoom-out shrinks nodes → more corpus fits at the same
-                // density: the engine may raise the core capacity and
-                // stream more in from the boundary (iteration-9).
-                engine.setViewScale(camera.scale);
-              } else if (zoomIn) {
-                lens.angle = Math.atan2(my, mx);
-                lens.pull = Math.min(1, lens.pull + LENS_STEP);
-                if (lens.pull >= 1) {
-                  lens.pull = 0;
-                  commitLensTarget(engine, { pull: 1, angle: lens.angle }, rCore);
-                }
-              } else {
-                lens.pull = Math.max(0, lens.pull - LENS_STEP);
-              }
+              const anchor = {
+                x: (a.x + b.x) / 2 - rect.left - viewport.width / 2,
+                y: (a.y + b.y) / 2 - rect.top - viewport.height / 2,
+              };
+              const old = camera.scale;
+              camera.scale = clampCameraScale(old * Math.max(0.94, Math.min(1.06, ratio)));
+              const k = camera.scale / old;
+              camera.x = anchor.x - (anchor.x - camera.x) * k;
+              camera.y = anchor.y - (anchor.y - camera.y) * k;
+              scheduleDensity();
               draw(1);
             } else {
               engine.zoomTo(engine.getState().semanticScale + (zoomIn ? 0.2 : -0.2));
@@ -343,62 +362,20 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           return;
         }
         if (dragging) {
-          const now = performance.now();
           const dx = ev.clientX - last.x;
           const dy = ev.clientY - last.y;
           if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
           if (dragMoved) {
-            if (travActive) {
-              // Centerward motion feeds the traversal flow; the motion
-              // loop owns drawing while a traversal is live.
-              trav.drag(dx, dy, now - lastMoveT);
-            } else if (isHybrid && !isFull()) {
-              // Pan the GRAPH ZONE only — the frame stays fixed. The
-              // pan rubber-bands, and every ~90px commits one low-dose
-              // lens step toward the incoming side, so nodes stream in
-              // and out a few at a time (CE-pan feel, atlas edges).
-              cancelAnimationFrame(panRaf);
-              corePan.x += dx;
-              corePan.y += dy;
-              const bands = bandsOf();
-              const maxPan = coreRadius(viewport, bands) * 0.4;
-              const mag = Math.hypot(corePan.x, corePan.y);
-              if (mag > maxPan) {
-                const k = maxPan / mag;
-                corePan.x *= k;
-                corePan.y *= k;
-              }
-              panTravelled += Math.hypot(dx, dy);
-              if (panTravelled >= 90 && now - lastPanCommit >= 350) {
-                panTravelled = 0;
-                lastPanCommit = now;
-                const angle = Math.atan2(-corePan.y, -corePan.x);
-                commitLensTarget(engine, { pull: 1, angle }, coreRadius(viewport, bands));
-              }
-              draw(1);
-            } else {
-              camera.x += dx;
-              camera.y += dy;
-              draw(1);
-            }
+            camera.x += dx;
+            camera.y += dy;
+            draw(1);
             last = { x: ev.clientX, y: ev.clientY };
           }
-          lastMoveT = now;
           return;
         }
         const p = toScene(ev);
         const hit = engine.hitTester.pointAt(p.x, p.y);
-        const id = hit?.id ?? null;
-        if (id !== hoverId) {
-          hoverId = id;
-          engine.hover(id);
-          canvas.style.cursor = id ? "pointer" : "default";
-          // Grouping bubbles annotate themselves on hover.
-          if (ev.pointerType !== "touch") {
-            maybeShowTooltip(hit?.kind === "aggregate" ? id : null, ev.clientX, ev.clientY);
-          }
-          draw(1);
-        }
+        scheduleHover(hit, ev);
       };
       const onPointerUp = (ev: PointerEvent) => {
         clearTimeout(longPressTimer);
@@ -419,30 +396,11 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           return;
         }
         if (pinched) return;
-        if (travActive) {
-          travActive = false;
-          if (dragMoved) {
-            // Release with flow → momentum: the motion loop keeps
-            // ticking (friction decay) until the flow settles.
-            trav.release();
-            dragging = false;
-            dragMoved = false;
-            if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
-            return;
-          }
-          trav.cancel(); // a tap, not a drag — normal click handling
-        }
         const wasDrag = dragMoved;
         dragging = false;
         dragMoved = false;
         if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
         if (wasDrag) {
-          // Residual graph-zone pan springs back to centre.
-          if (corePan.x || corePan.y) {
-            cancelAnimationFrame(panRaf);
-            panRaf = requestAnimationFrame(panSpring);
-          }
-          panTravelled = 0;
           return;
         }
         const p = toScene(ev);
@@ -463,8 +421,6 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         }
         if (!hit) return;
         if (hit.kind === "node") {
-          camera.x = 0;
-          camera.y = 0;
           lastClickFocus = { id: hit.id, t: performance.now() };
           engine.focus(hit.id, "user");
         } else {
@@ -475,8 +431,6 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === hit.id);
           const member = agg?.memberIds[0];
           if (member) {
-            camera.x = 0;
-            camera.y = 0;
             engine.focus(member, "user");
           } else {
             engine.zoomTo(engine.getState().semanticScale + 1);
@@ -489,38 +443,21 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         if (hit?.kind === "node") engine.openItem(hit.id);
         else if (performance.now() - lastClickFocus.t < 600 && lastClickFocus.id) {
           engine.openItem(lastClickFocus.id);
+        } else if (engine.getState().focusId) {
+          engine.openItem(engine.getState().focusId!);
         }
       };
       const onWheel = (ev: WheelEvent) => {
         ev.preventDefault();
+        clearHoverIntent(true);
         if (isHybrid) {
-          // Lens model (iteration-2 feedback): inside the core zone the
-          // wheel is plain geometric zoom, like the classic viewer;
-          // over the rim it pulls that sector inward until it commits.
-          // Whole-wiki mode has no rim: the entire surface zooms.
-          const p = toScene(ev);
-          const bands = bandsOf();
-          const rCore = coreRadius(viewport, bands);
-          if (isFull() || inCoreZone(p.x, p.y, viewport, bands, boundaryShape)) {
-            const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-            camera.scale = Math.max(0.5, Math.min(3, camera.scale * factor));
-            // Classic-viewer zoom: nodes get smaller/larger — and the
-            // density-derived capacity follows (zoom-out streams more
-            // in from the boundary).
-            engine.setViewScale(camera.scale);
-            draw(1);
-            return;
-          }
-          if (ev.deltaY < 0) {
-            lens.angle = Math.atan2(p.y, p.x);
-            lens.pull = Math.min(1, lens.pull + LENS_STEP);
-            if (lens.pull >= 1) {
-              lens.pull = 0;
-              commitLensTarget(engine, { pull: 1, angle: lens.angle }, rCore);
-            }
-          } else {
-            lens.pull = Math.max(0, lens.pull - LENS_STEP);
-          }
+          const anchor = toScene(ev);
+          const old = camera.scale;
+          camera.scale = clampCameraScale(old * wheelZoomFactor(ev.deltaY, ev.deltaMode));
+          const k = camera.scale / old;
+          camera.x = anchor.x - (anchor.x - camera.x) * k;
+          camera.y = anchor.y - (anchor.y - camera.y) * k;
+          scheduleDensity();
           draw(1);
           return;
         }
@@ -543,6 +480,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
             const dir = ev.key.slice(5).toLowerCase() as "up" | "down" | "left" | "right";
             const next = engine.hitTester.nearestInDirection(anchor, dir);
             if (next) {
+              clearHoverIntent(false);
               hoverId = next;
               engine.hover(next);
               draw(1);
@@ -576,13 +514,6 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           pinchDist = 0;
           dragging = false;
           dragMoved = false;
-          if (travActive) {
-            trav.cancel();
-            travActive = false;
-          }
-          corePan.x = 0;
-          corePan.y = 0;
-          panTravelled = 0;
         }
       };
       canvas.addEventListener("pointerdown", onPointerDown);
@@ -596,20 +527,18 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
 
       const ro = new ResizeObserver(() => {
         viewport = { width: host.clientWidth, height: host.clientHeight };
-        trav.setViewport(viewport);
         engine.resize(viewport.width, viewport.height);
+        engine.setViewScale(camera.scale);
         draw(1);
       });
       ro.observe(host);
 
       engine.resize(viewport.width, viewport.height);
+      engine.setViewScale(camera.scale);
       engine.start(props.initialFocus);
 
       return () => {
         cancelAnimationFrame(raf);
-        cancelAnimationFrame(motionRaf);
-        cancelAnimationFrame(panRaf);
-        trav.cancel();
         redrawRef.current = null;
         ro.disconnect();
         canvas.removeEventListener("pointerdown", onPointerDown);
@@ -620,7 +549,11 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         canvas.removeEventListener("wheel", onWheel);
         canvas.removeEventListener("keydown", onKeyDown);
         clearTimeout(longPressTimer);
+        clearTimeout(densityTimer);
+        clearTimeout(hoverTimer);
+        themeObserver.disconnect();
         tooltip.destroy();
+        minimap.destroy();
         off();
         renderer.destroy();
         engine.destroy();

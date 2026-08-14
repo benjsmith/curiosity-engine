@@ -4,13 +4,15 @@
  * graph), the rest of the corpus wraps the core in exponentially
  * scaled layers, like a visible-universe plot:
  *
- *   shell 1 — corpus ranks  C … 1 000    (granular: nodes + small clusters)
- *   shell 2 — ranks     1 000 … 10 000   (clustered aggregates)
- *   shell 3 — ranks    10 000 … 100 000  (smeared aggregates)
- *   shell 4 — everything beyond          (per-type smears / totals)
+ *   next milestone — corpus ranks C … 1 000 (when C < 1k)
+ *   next milestone — ranks up to 10 000    (when C < 10k)
+ *   next milestone — ranks up to 100 000   (when C < 100k)
+ *   final layer    — everything beyond
  *
  * A shell only exists when the knowledge base is large enough to
- * populate it, so a growing wiki visibly grows structure outward.
+ * populate it, so a growing wiki visibly grows structure outward. A
+ * milestone already inside the zoom-dependent core is removed, making
+ * the corresponding layer recede instead of consuming screen space.
  * Rank = graph proximity to the current focus (BFS + score), so the
  * shells answer "how far from here" — space compresses with distance.
  */
@@ -33,7 +35,9 @@ export const DEFAULT_CORE_CAPACITY = 360;
  */
 export const TARGET_PX_PER_NODE = 2850;
 export const MIN_CORE_CAPACITY = 40;
-export const MAX_CORE_CAPACITY = 1600;
+/** Production default. Hosts may opt into the 100k experimental cap. */
+export const MAX_CORE_CAPACITY = 10_000;
+export const EXPERIMENTAL_MAX_CORE_CAPACITY = 100_000;
 
 /**
  * Screen-scaled core capacity. `viewScale` is the geometric zoom:
@@ -47,30 +51,32 @@ export function coreCapacityFor(
   viewScale = 1,
   bands = 1,
   boundaryShape?: number,
+  maxCapacity = MAX_CORE_CAPACITY,
 ): number {
-  const s = Math.min(2, Math.max(0.66, viewScale));
+  const s = Math.min(4, Math.max(0.05, viewScale));
   const area =
     bands <= 0 ? viewport.width * viewport.height : coreArea(viewport, bands, boundaryShape);
   const capacity = area / (TARGET_PX_PER_NODE * s * s);
-  return Math.round(Math.max(MIN_CORE_CAPACITY, Math.min(MAX_CORE_CAPACITY, capacity)));
+  const cap = Math.max(MIN_CORE_CAPACITY, Math.min(EXPERIMENTAL_MAX_CORE_CAPACITY, maxCapacity));
+  return Math.round(Math.max(MIN_CORE_CAPACITY, Math.min(cap, capacity)));
 }
 
-/** Rank boundaries of the exponential layers (log₁₀ steps). */
+/** Rank boundaries of the exponential layers (log₁₀ steps). Milestones
+ * already absorbed by the core disappear, so the 1k and 10k layers
+ * visibly recede as geometric zoom raises capacity past them. */
 export function shellOfRank(rank: number, coreCapacity: number): number {
   if (rank < coreCapacity) return 0; // core
-  if (rank < 1_000) return 1;
-  if (rank < 10_000) return 2;
-  if (rank < 100_000) return 3;
-  return 4;
+  const activeMilestones = [1_000, 10_000, 100_000, Infinity].filter(
+    (limit) => limit > coreCapacity,
+  );
+  const i = activeMilestones.findIndex((limit) => rank < limit);
+  return Math.max(1, i + 1);
 }
 
 /** How many shells a corpus of this size populates. */
 export function shellCount(totalNodes: number, coreCapacity: number): number {
   if (totalNodes <= coreCapacity) return 0;
-  if (totalNodes <= 1_000) return 1;
-  if (totalNodes <= 10_000) return 2;
-  if (totalNodes <= 100_000) return 3;
-  return 4;
+  return shellOfRank(totalNodes - 1, coreCapacity);
 }
 
 /** Per-shell display quotas: granular near, smeared far. */

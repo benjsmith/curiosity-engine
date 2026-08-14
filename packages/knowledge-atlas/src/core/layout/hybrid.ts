@@ -30,7 +30,6 @@ import {
   forceX,
   forceY,
 } from "d3-force";
-import { anchorAngle } from "../scene/landmarks.ts";
 import { coreRadius, coreRadiusAt, rimRadiusAt, type Viewport } from "../geometry.ts";
 import {
   aggregateRadius,
@@ -39,7 +38,7 @@ import {
   type LayoutAdapter,
   type LayoutContext,
 } from "./types.ts";
-import type { DiscoveryClass, LayoutPoint, LayoutResult, SceneData } from "../types.ts";
+import { DEFAULT_PHYSICS, type DiscoveryClass, type LayoutPoint, type LayoutResult, type SceneData } from "../types.ts";
 
 export { coreRadius, rimRadiusAt } from "../geometry.ts";
 
@@ -144,6 +143,21 @@ export const hybridLayout: LayoutAdapter = {
   },
 };
 
+/** Seed force nodes independently of input/type ordering. D3's default
+ * phyllotaxis preserves array runs, and CE data arrives grouped by page
+ * type; disconnected nodes therefore formed misleading type arcs even
+ * though no explicit type force existed. Stable id seeding lets links
+ * and repulsion determine the visible organization instead. */
+function seedGraphPositions(nodes: SimNode[], radius: number): void {
+  for (const node of nodes) {
+    if (node.x !== undefined && node.y !== undefined) continue;
+    const angle = hash01(node.id) * 2 * Math.PI;
+    const rho = Math.sqrt(hash01(`${node.id}:radius`)) * radius * 0.72;
+    node.x = Math.cos(angle) * rho;
+    node.y = Math.sin(angle) * rho;
+  }
+}
+
 // ── lensing halo (iteration-9) ───────────────────────────────────────
 // A wide flat region in the middle of the core with slight compression
 // near the boundary — not a fully convex fisheye. Node size scales
@@ -182,65 +196,50 @@ function haloSizes(
 // ── whole-wiki mode (≤ core capacity) ─────────────────────────────────
 
 function fullGraphLayout(scene: SceneData, ctx: LayoutContext): LayoutResult {
+  const physics = ctx.physics ?? DEFAULT_PHYSICS;
   const positions = new Map<string, LayoutPoint>();
   const nodes: SimNode[] = scene.nodes.map((n) => ({ id: n.id, r: nodeRadius(n.item.meta.degree) }));
 
-  // Stability: when the node set barely changed (a refocus inside the
-  // same wiki), keep every surviving position verbatim — the classic
-  // viewer does not reorganise on click.
-  if (ctx.previous) {
-    let survivors = 0;
-    for (const sn of nodes) if (ctx.previous.positions.has(sn.id)) survivors++;
-    if (survivors >= nodes.length * 0.7) {
-      const anchored: AnchoredNode[] = nodes.map((sn) => {
-        const prev = ctx.previous!.positions.get(sn.id);
-        if (prev) return { ...sn, x: prev.x, y: prev.y, x0: prev.x, y0: prev.y, survivor: true };
-        return { ...sn, x: 0, y: 0, x0: 0, y0: 0, survivor: false };
-      });
-      relaxAnchored(anchored, 60);
-      for (const a of anchored) positions.set(a.id, { x: a.x ?? 0, y: a.y ?? 0, r: a.r });
-      return { positions, displacement: meanDisplacement(positions, ctx.previous) };
+  // A Classic focus is purely visual: opening a page does not perturb
+  // the simulation. Preserve the canonical whole-wiki coordinates
+  // byte-for-byte when the same node set is requested again.
+  if (ctx.previous && nodes.every((sn) => ctx.previous!.positions.has(sn.id))) {
+    for (const sn of nodes) {
+      const prev = ctx.previous.positions.get(sn.id)!;
+      positions.set(sn.id, { x: prev.x, y: prev.y, r: sn.r });
     }
+    return { positions, displacement: 0 };
   }
 
   const links = scene.edges
     .map((e) => ({ source: e.source, target: e.target }))
     .filter((l) => scene.nodes.some((n) => n.id === l.source) && scene.nodes.some((n) => n.id === l.target));
-  // The classic CE viewer constants, verbatim (P0 parity at wiki scale).
+  // Classic parity is intentionally literal here: D3's deterministic
+  // phyllotaxis seed, input order, force constants, and 350 ticks. Do
+  // not viewport-fit or id-hash-seed this result. Atlas is a projection
+  // of the same flat coordinate field, not a second graph layout.
   const sim = forceSimulation(nodes as never[])
     .force(
       "link",
       forceLink(links as never[])
         .id((d) => (d as unknown as SimNode).id)
-        .distance(110)
+        .distance(physics.link)
         .strength(0.55),
     )
-    .force("charge", forceManyBody().strength(-420).distanceMax(500))
+    .force("charge", forceManyBody().strength(physics.charge).distanceMax(500))
     .force("center", forceCenter(0, 0).strength(0.04))
-    .force("collide", forceCollide((d) => (d as unknown as SimNode).r + 10))
+    .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
+    .alpha(1)
+    .alphaDecay(0.05)
     .stop();
-  for (let i = 0; i < 350; i++) sim.tick();
-
-  // Fit the cloud to the viewport (mildly anisotropic so wide screens
-  // fill like the reference; capped so the mesh doesn't distort).
-  let cx = 0;
-  let cy = 0;
+  // Preserve literal Classic parity for ordinary wikis. At overview
+  // scale, progressively reduce solver work; labels/edges are already
+  // absent there and the stable global clustering matters more than a
+  // fully converged individual-node packing.
+  const ticks = nodes.length > 10_000 ? 24 : nodes.length > 2_000 ? 60 : nodes.length > 800 ? 140 : 350;
+  for (let i = 0; i < ticks; i++) sim.tick();
   for (const sn of nodes) {
-    cx += sn.x ?? 0;
-    cy += sn.y ?? 0;
-  }
-  cx /= Math.max(1, nodes.length);
-  cy /= Math.max(1, nodes.length);
-  const xs = nodes.map((sn) => Math.abs((sn.x ?? 0) - cx)).sort((a, b) => a - b);
-  const ys = nodes.map((sn) => Math.abs((sn.y ?? 0) - cy)).sort((a, b) => a - b);
-  const p95 = (arr: number[]) => arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.95))] || 1;
-  const fx = (ctx.viewport.width / 2 - 60) / p95(xs);
-  const fy = (ctx.viewport.height / 2 - 50) / p95(ys);
-  const base = Math.min(fx, fy);
-  const kx = Math.min(fx, base * 1.6);
-  const ky = Math.min(fy, base * 1.6);
-  for (const sn of nodes) {
-    positions.set(sn.id, { x: ((sn.x ?? 0) - cx) * kx, y: ((sn.y ?? 0) - cy) * ky, r: sn.r });
+    positions.set(sn.id, { x: sn.x ?? 0, y: sn.y ?? 0, r: sn.r });
   }
   return { positions, displacement: meanDisplacement(positions, ctx.previous) };
 }
@@ -263,8 +262,11 @@ function fullCoreSolve(
       sn.y = prev.y;
     }
   }
+  seedGraphPositions(coreNodes, Rcore);
   const n = Math.max(1, coreNodes.length);
-  const linkDist = Math.max(30, (Rcore * 2.2) / Math.sqrt(n));
+  const physics = ctx.physics ?? DEFAULT_PHYSICS;
+  const linkDist = Math.max(12, (Rcore * 2.2) / Math.sqrt(n)) * (physics.link / DEFAULT_PHYSICS.link);
+  const charge = -Rcore * 1.15 * (Math.abs(physics.charge) / Math.abs(DEFAULT_PHYSICS.charge));
   const sim = forceSimulation(coreNodes as never[])
     .force(
       "link",
@@ -273,11 +275,12 @@ function fullCoreSolve(
         .distance(linkDist)
         .strength(0.55),
     )
-    .force("charge", forceManyBody().strength(-Rcore * 1.15).distanceMax(Rcore * 2))
+    .force("charge", forceManyBody().strength(charge).distanceMax(Rcore * 2))
     .force("center", forceCenter(0, 0).strength(0.05))
-    .force("collide", forceCollide((d) => (d as unknown as SimNode).r + 6))
+    .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
     .stop();
-  for (let i = 0; i < 350; i++) sim.tick();
+  const ticks = n > 10_000 ? 24 : n > 2_000 ? 60 : n > 800 ? 140 : 350;
+  for (let i = 0; i < ticks; i++) sim.tick();
 
   let cx = 0;
   let cy = 0;
@@ -306,7 +309,7 @@ function fullCoreSolve(
     const y = ((sn.y ?? 0) - cy) * ky;
     return { id: sn.id, r: sn.r, x, y, x0: x, y0: y, survivor: true };
   });
-  relaxAnchored(anchored, 80);
+  relaxAnchored(anchored, 80, physics.collide);
   clampIntoCore(anchored, ctx.viewport, bands, ctx.boundaryShape, positions);
   // Halo position compression — fresh solves only, so survivor grades
   // (which inherit these positions verbatim) never re-compress them.
@@ -365,13 +368,13 @@ function settleCore(
     const seed = { x: (k ? sx / k : 0) + Math.cos(a) * jitter, y: (k ? sy / k : 0) + Math.sin(a) * jitter };
     return { ...sn, x: seed.x, y: seed.y, x0: seed.x, y0: seed.y, survivor: false };
   });
-  relaxAnchored(anchored, 120);
+  relaxAnchored(anchored, 120, (ctx.physics ?? DEFAULT_PHYSICS).collide);
   clampIntoCore(anchored, ctx.viewport, bands, ctx.boundaryShape, positions);
 }
 
-function relaxAnchored(nodes: AnchoredNode[], ticks: number): void {
+function relaxAnchored(nodes: AnchoredNode[], ticks: number, collide = 6): void {
   const relax = forceSimulation(nodes as never[])
-    .force("collide", forceCollide((d) => (d as unknown as AnchoredNode).r + 6).strength(1))
+    .force("collide", forceCollide((d) => (d as unknown as AnchoredNode).r + collide).strength(1))
     .force("x", forceX((d: unknown) => (d as AnchoredNode).x0).strength((d: unknown) => ((d as AnchoredNode).survivor ? 0.55 : 0.08)))
     .force("y", forceY((d: unknown) => (d as AnchoredNode).y0).strength((d: unknown) => ((d as AnchoredNode).survivor ? 0.55 : 0.08)))
     .stop();
@@ -420,7 +423,10 @@ function hash01(id: string): number {
  * under their class sectors; everything else sits under its doc-type
  * sector, rows stacked outward — granular near the core, smeared at
  * the wall (the renderer stretches high-shell aggregates
- * tangentially).
+ * tangentially). Document type is visual encoding only, never a
+ * coordinate: individual nodes and hollow aggregates inherit the angle
+ * of their links/bundles into the core. Unconnected residuals receive a
+ * stable neutral spread.
  */
 function placeShells(
   scene: SceneData,
@@ -432,19 +438,45 @@ function placeShells(
 ): void {
   type P = { id: string; sector: number; shell: number; r: number; order: number; isAgg: boolean };
   const placements: P[] = [];
+  const relatedAngle = (id: string): number => {
+    let vx = 0;
+    let vy = 0;
+    let count = 0;
+    const addCore = (other: string) => {
+      if (!coreSet.has(other)) return;
+      const point = positions.get(other);
+      if (!point) return;
+      const angle = Math.atan2(point.y, point.x);
+      vx += Math.cos(angle);
+      vy += Math.sin(angle);
+      count++;
+    };
+    for (const edge of scene.edges) {
+      if (edge.source === id) addCore(edge.target);
+      else if (edge.target === id) addCore(edge.source);
+    }
+    for (const bundle of scene.bundles) {
+      if (bundle.source === id) addCore(bundle.target);
+      else if (bundle.target === id) addCore(bundle.source);
+    }
+    if (count > 0 && (vx !== 0 || vy !== 0)) return Math.atan2(vy, vx);
+    const previous = ctx.previous?.positions.get(id);
+    if (previous && (previous.x !== 0 || previous.y !== 0)) return Math.atan2(previous.y, previous.x);
+    return hash01(`boundary:${id}`) * 2 * Math.PI - Math.PI;
+  };
   for (const n of scene.nodes) {
     if (coreSet.has(n.id)) continue;
     const shell = Math.max(1, Math.min(4, n.shell ?? 1));
     const cls = horizonIds.get(n.id);
     const sector = cls
       ? CLASS_ORDER.indexOf(cls) * ((2 * Math.PI) / CLASS_ORDER.length) + Math.PI / CLASS_ORDER.length - Math.PI / 2
-      : anchorAngle(`type:${n.item.type}`);
+      : relatedAngle(n.id);
     placements.push({ id: n.id, sector, shell, r: nodeRadius(n.item.meta.degree), order: n.score, isAgg: false });
   }
   for (const a of scene.aggregates) {
     placements.push({
       id: a.id,
-      sector: anchorAngle(`type:${a.type}`),
+      sector: relatedAngle(a.id),
       shell: Math.max(1, Math.min(4, a.shell ?? 1)),
       r: aggregateRadius(a.count),
       order: a.count,
@@ -455,7 +487,9 @@ function placeShells(
   const COL_GAP = 34;
   const groups = new Map<string, P[]>();
   for (const p of placements) {
-    const key = `${p.sector.toFixed(3)}|${p.shell}`;
+    // Quantise only enough for linked material to share a local shelf;
+    // there are no global document-type lanes.
+    const key = `${p.sector.toFixed(2)}|${p.shell}`;
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
   }
   const SECTOR_ARC = 0.78;
@@ -487,13 +521,17 @@ function placeShells(
       const angle = p.sector + offset;
       const wallHere = rimRadiusAt(angle, ctx.viewport, ctx.boundaryShape);
       const clampedRho = Math.min(rho, wallHere - 10);
-      // Sizes shrink with shell — granular → smeared.
-      const shrink = 1 - 0.18 * (shell - 1) - 0.25 * (clampedRho / Math.max(wallHere, 1)) ** 2;
+      // Hyperbolic distance cue: apparent size falls exponentially by
+      // shell and again toward the wall. Individual far-layer nodes
+      // become sub-2px marks; large aggregates remain readable because
+      // their count-derived base radius is larger.
+      const wallDepth = clampedRho / Math.max(wallHere, 1);
+      const shrink = Math.exp(-0.32 * (shell - 1)) * (1 - 0.35 * wallDepth ** 2);
       placed.push({
         id: p.id,
         angle,
         rho: clampedRho,
-        r: Math.max(2, p.r * Math.max(0.35, shrink)),
+        r: Math.max(0.9, p.r * Math.max(0.16, shrink)),
         isAgg: p.isAgg,
         shell,
       });

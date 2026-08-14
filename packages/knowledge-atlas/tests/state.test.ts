@@ -5,6 +5,7 @@ import { Trails } from "../src/core/trails.ts";
 import { nextBand } from "../src/core/zoom.ts";
 import { HitTester } from "../src/core/hittest.ts";
 import { AtlasEngine } from "../src/core/engine.ts";
+import { GraphIndex } from "../src/core/graphindex.ts";
 import { focusLayout } from "../src/core/layout/focus.ts";
 import { hyperbolicLayout } from "../src/core/layout/hyperbolic.ts";
 import { forceLayout } from "../src/core/layout/force.ts";
@@ -13,6 +14,7 @@ import { buildScene } from "../src/core/scene/builder.ts";
 import { indexFromCEData } from "../src/datasources/curiosity.ts";
 import { workspaceSmallData, ontologyTree, workspaceSmall, denseSmallWorld as denseSmallWorldFixture } from "../fixtures/index.ts";
 import { ScaledDataSource, SCALED_TOTAL_LEAVES } from "../src/datasources/scaled.ts";
+import { LocalSceneSource } from "../src/datasources/local.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS, type SceneRequest } from "../src/core/types.ts";
 
 const g = indexFromCEData(workspaceSmallData());
@@ -184,6 +186,10 @@ describe("hybrid layout (P6)", () => {
     expect(small.nodes.length).toBeGreaterThan(280);
     const l = hybridLayout.layout(small, ctx);
     expect(l.positions.size).toBe(small.nodes.length);
+    // Atlas starts from the exact Classic force field; the boundary is
+    // a later screen projection, never a competing physics layout.
+    const classic = forceLayout.layout(small, ctx);
+    expect(JSON.stringify([...l.positions])).toBe(JSON.stringify([...classic.positions]));
     // Refocusing inside the full graph keeps every survivor put.
     const focus2 = small.nodes.find((n) => n.role === "neighbour")!.id;
     const s2 = await f.source.getScene(req(focus2));
@@ -196,7 +202,7 @@ describe("hybrid layout (P6)", () => {
       moved += Math.hypot(pos.x - q.x, pos.y - q.y);
       count++;
     }
-    expect(moved / Math.max(1, count)).toBeLessThan(5);
+    expect(moved / Math.max(1, count)).toBe(0);
   });
 
   it("is deterministic", async () => {
@@ -354,9 +360,55 @@ describe("hit testing", () => {
     expect(ht.nearestInDirection("a", "down")).toBe("c");
     expect(ht.nearestInDirection("a", "left")).toBeNull();
   });
+
+  it("keeps point and box queries local across a 10k overview", () => {
+    const ht = new HitTester();
+    const positions = new Map<string, { x: number; y: number; r: number }>();
+    const ids: string[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      const id = `grid-${i}`;
+      ids.push(id);
+      positions.set(id, { x: (i % 100) * 8, y: Math.floor(i / 100) * 8, r: 1.5 });
+    }
+    ht.update(positions, ids, []);
+    expect(ht.pointAt(400, 400, 1)?.id).toBe("grid-5050");
+    const boxed = ht.boxQuery(0, 0, 16, 16).map((hit) => hit.id);
+    expect(boxed).toContain("grid-0");
+    expect(boxed).toContain("grid-202");
+    expect(boxed).toHaveLength(9);
+  });
 });
 
 describe("engine", () => {
+  it("keeps a resident full graph across zoom-in and zoom-out", async () => {
+    const small = new GraphIndex();
+    for (let i = 0; i < 60; i++) {
+      small.addItem({ id: `small-${i}`, type: "concept", title: `small ${i}`, meta: {} });
+      if (i > 0) small.addEdge(`small-${i - 1}`, `small-${i}`, "wikilink");
+    }
+    const local = new LocalSceneSource(small, { seed: 42 });
+    let requests = 0;
+    const source = {
+      getScene: (...args: Parameters<typeof local.getScene>) => {
+        requests++;
+        return local.getScene(...args);
+      },
+      getItem: local.getItem.bind(local),
+      getExplanation: local.getExplanation.bind(local),
+    };
+    const engine = new AtlasEngine(source, { seed: 42, layout: "hybrid" });
+    engine.start("small-0");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(requests).toBe(1);
+    engine.setViewScale(0.8); // zoom out; all 60 still fit
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(requests).toBe(1);
+    engine.setViewScale(4); // zoom in past the full-graph threshold
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(requests).toBe(1);
+    engine.destroy();
+  });
+
   it("focus/back/forward drive scenes; stale requests dropped", async () => {
     const f = workspaceSmall();
     const engine = new AtlasEngine(f.source, { seed: 42 });

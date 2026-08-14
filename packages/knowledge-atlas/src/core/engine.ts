@@ -9,13 +9,13 @@ import { adaptiveLayout } from "./layout/adaptive.ts";
 import { adaptiveHybridLayout } from "./layout/adaptiveHybrid.ts";
 import { focusLayout } from "./layout/focus.ts";
 import { forceLayout } from "./layout/force.ts";
-import { hybridLayout, populatedShellBands } from "./layout/hybrid.ts";
+import { hybridLayout, isFullGraphScene, populatedShellBands } from "./layout/hybrid.ts";
 import { hyperbolicLayout } from "./layout/hyperbolic.ts";
 import { HitTester } from "./hittest.ts";
 import { Trails } from "./trails.ts";
 import { clampScale, nextBand } from "./zoom.ts";
 import { coreCapacityFor } from "./scene/shells.ts";
-import { DEFAULT_BUDGET, DEFAULT_LENS } from "./types.ts";
+import { DEFAULT_BUDGET, DEFAULT_LENS, DEFAULT_PHYSICS } from "./types.ts";
 import type { LayoutAdapter } from "./layout/types.ts";
 import type {
   AtlasConfig,
@@ -23,6 +23,7 @@ import type {
   AtlasDataSource,
   AtlasEvent,
   AtlasLens,
+  AtlasPhysics,
   AtlasState,
   DiscoveryClass,
   ExplanationRequest,
@@ -55,6 +56,7 @@ export class AtlasEngine implements AtlasController {
   private readonly source: AtlasDataSource;
   private readonly config: Required<Pick<AtlasConfig, "seed" | "horizonShare" | "keyboard">> & AtlasConfig;
   private readonly budget: SceneBudget;
+  private physics: AtlasPhysics;
   private listeners = new Set<(e: AtlasEvent) => void>();
 
   private focusId?: string;
@@ -71,6 +73,11 @@ export class AtlasEngine implements AtlasController {
    * the capacity rule: empty shells give their space to the core. One
    * scene of lag is fine — band count is a function of corpus size. */
   private lastShellBands = 1;
+  /** Once a bounded local corpus has been solved as one Classic graph,
+   * keep that canonical field resident. Zoom and pan project it into
+   * Atlas boundary space; they must not replace it with a newly ranked
+   * subgraph and thereby destroy spatial memory. */
+  private retainedFullGraphSize = 0;
   private status: AtlasState["status"] = "idle";
   private errorMsg?: string;
 
@@ -87,6 +94,7 @@ export class AtlasEngine implements AtlasController {
     this.source = source;
     this.config = { seed: 42, horizonShare: 0.15, keyboard: true, ...config };
     this.budget = { ...DEFAULT_BUDGET, ...config.budget };
+    this.physics = { ...DEFAULT_PHYSICS, ...config.physics };
     this.layoutKind = config.layout ?? "focus";
   }
 
@@ -111,7 +119,13 @@ export class AtlasEngine implements AtlasController {
   private effectiveCapacity(): number {
     return (
       this.config.coreCapacity ??
-      coreCapacityFor(this.viewport, this.viewScale, this.lastShellBands, this.config.boundaryShape)
+      coreCapacityFor(
+        this.viewport,
+        this.viewScale,
+        this.lastShellBands,
+        this.config.boundaryShape,
+        this.config.maxVisibleNodes,
+      )
     );
   }
 
@@ -122,12 +136,23 @@ export class AtlasEngine implements AtlasController {
     const ref = 1200 * 800;
     const k = Math.max(0.5, Math.min(2, Math.sqrt((this.viewport.width * this.viewport.height) / ref)));
     const capacity = this.effectiveCapacity();
+    const dense = capacity >= 2_000;
+    const edgeBudget =
+      capacity >= 5_000
+        ? 0
+        : capacity >= 2_000
+          ? Math.min(Math.round(this.budget.maxEdges * k), Math.round(capacity * 0.35))
+          : Math.max(Math.round(this.budget.maxEdges * k), Math.round(capacity * 2.2));
     return {
-      maxNodes: Math.max(Math.round(this.budget.maxNodes * k), capacity + 110),
+      maxNodes: Math.max(Math.round(this.budget.maxNodes * k), capacity, this.retainedFullGraphSize),
       maxAggregates: Math.round(this.budget.maxAggregates * k),
-      maxEdges: Math.max(Math.round(this.budget.maxEdges * k), Math.round(capacity * 2.2)),
+      maxEdges: edgeBudget,
       maxBundles: this.budget.maxBundles,
-      maxLabels: Math.round(this.budget.maxLabels * k),
+      maxLabels: dense
+        ? 0
+        : capacity >= 1_000 || this.viewport.width <= 480
+          ? Math.min(12, this.budget.maxLabels)
+          : Math.round(this.budget.maxLabels * k),
     };
   }
 
@@ -151,8 +176,17 @@ export class AtlasEngine implements AtlasController {
           coreCapacity: (this.lastRequestedCapacity = this.effectiveCapacity()),
           // Whole-viewport capacity: a wiki that fits the WHOLE screen
           // at this zoom renders as one classic full graph.
-          fullGraphCapacity:
-            this.config.coreCapacity ?? coreCapacityFor(this.viewport, this.viewScale, 0),
+          fullGraphCapacity: Math.max(
+            this.retainedFullGraphSize,
+            this.config.coreCapacity ??
+              coreCapacityFor(
+                this.viewport,
+                this.viewScale,
+                0,
+                this.config.boundaryShape,
+                this.config.maxVisibleNodes,
+              ),
+          ),
           budget: this.effectiveBudget(),
         },
         ac.signal,
@@ -173,6 +207,12 @@ export class AtlasEngine implements AtlasController {
 
   private applyScene(scene: SceneData, sceneBuildMs: number): void {
     this.scene = scene;
+    if (isFullGraphScene(scene)) {
+      this.retainedFullGraphSize = Math.max(
+        this.retainedFullGraphSize,
+        scene.stats?.totalNodes ?? scene.nodes.length,
+      );
+    }
     this.lastShellBands = populatedShellBands(scene);
     this.horizonClassOf.clear();
     for (const grp of scene.horizon) {
@@ -185,6 +225,7 @@ export class AtlasEngine implements AtlasController {
       previous: this.layoutResult ?? undefined,
       seed: this.config.seed,
       boundaryShape: this.config.boundaryShape,
+      physics: this.physics,
     });
     const layoutMs = performance.now() - layoutStart;
     this.hitTester.update(
@@ -199,7 +240,7 @@ export class AtlasEngine implements AtlasController {
       aggregateCount: scene.aggregates.length,
       edgeCount: scene.edges.length,
       bundleCount: scene.bundles.length,
-      labelCount: Math.min(scene.nodes.length, this.budget.maxLabels),
+      labelCount: Math.min(scene.nodes.length, this.effectiveBudget().maxLabels),
       horizonCount: scene.horizon.reduce((s, g) => s + g.candidates.length, 0),
       sceneBuildMs,
       layoutMs,
@@ -277,10 +318,35 @@ export class AtlasEngine implements AtlasController {
     this.viewScale = scale;
     if (this.config.coreCapacity !== undefined) return; // pinned
     const next = this.effectiveCapacity();
+    if (this.scene) {
+      const total = this.scene.stats?.totalNodes ?? this.scene.nodes.length;
+      const full = isFullGraphScene(this.scene);
+      // Once the whole graph is resident, geometric projection is the
+      // entire navigation operation. Rebuilding a smaller focus-ranked
+      // scene on zoom-in made tiny drags produce wholesale, irreversible
+      // rearrangements and broke parity with Classic.
+      if (full) {
+        this.lastRequestedCapacity = next;
+        return;
+      }
+      if (total <= next) {
+        this.requestScene();
+        return;
+      }
+    }
     // Rebuild only when the density band moves materially — a single
     // wheel notch shouldn't thrash the scene pipeline.
     const prev = this.lastRequestedCapacity || next;
     if (this.scene && Math.abs(next - prev) / prev >= 0.12) this.requestScene();
+  }
+
+  setPhysics(physics: Partial<AtlasPhysics>): void {
+    this.physics = { ...this.physics, ...physics };
+    if (!this.scene) return;
+    // Physics changes are an explicit request for a fresh solve; using
+    // the stability path would preserve positions and hide charge/link.
+    this.layoutResult = null;
+    this.applyScene(this.scene, this.stats?.sceneBuildMs ?? 0);
   }
 
   setLens(lens: AtlasLens): void {

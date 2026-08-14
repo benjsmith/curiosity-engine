@@ -208,31 +208,60 @@ test("phone viewport scales the core to a legible density (~50)", async ({ page 
   await page.screenshot({ path: `${SHOTS}/09-phone-density.png` });
 });
 
-test("lens-drag traversal from the boundary streams and settles", async ({ page }) => {
+test("geometric zoom-out admits 4k points and drops overview edges", async ({ page }) => {
+  test.setTimeout(60_000);
   await page.goto("/");
   await ready(page);
-  // mega-4k has populated shells (4k docs ≫ the 360-node core).
   await page.getByTestId("fixture-select").selectOption({ label: "mega-4k" });
   await ready(page);
   const canvas = page.getByTestId("atlas-canvas");
   const box = (await canvas.boundingBox())!;
-  const cy = box.y + box.height / 2;
-  const startX = box.x + box.width * 0.96; // deep in the boundary
-  await page.mouse.move(startX, cy);
-  await page.mouse.down();
-  for (let i = 1; i <= 10; i++) {
-    await page.mouse.move(startX - i * box.width * 0.035, cy, { steps: 1 });
-    await page.waitForTimeout(16);
-  }
-  await page.mouse.up();
-  // Momentum keeps the motion abstraction live briefly after release.
-  await page.screenshot({ path: `${SHOTS}/07-traversal-momentum.png` });
-  await page.waitForTimeout(2500); // friction settles, commits land
+  await page.mouse.move(box.x + box.width * 0.82, box.y + box.height * 0.5);
+  for (let i = 0; i < 24; i++) await page.mouse.wheel(0, 600);
+  await expect
+    .poll(async () => Number(await page.getByTestId("hud-nodes").textContent()), { timeout: 30_000 })
+    .toBe(4_000);
+  await expect(page.getByTestId("hud-edges")).toHaveText("0");
+  await page.screenshot({ path: `${SHOTS}/10-zoomout-4k.png` });
+});
+
+test("flat camera pan is reversible and the minimap can navigate", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto("/");
   await ready(page);
-  const nodes = Number(await page.getByTestId("hud-nodes").textContent());
-  expect(nodes).toBeGreaterThan(5);
-  expect(nodes).toBeLessThanOrEqual(470);
-  await page.screenshot({ path: `${SHOTS}/08-traversal-settled.png` });
+  // This fixture fits in one canonical force field at this viewport.
+  await page.getByTestId("fixture-select").selectOption({ label: "dense-smallworld" });
+  await ready(page);
+  const minimap = page.locator(".atlas-minimap");
+  await expect(minimap).toBeVisible();
+  const canvas = page.getByTestId("atlas-canvas");
+  const box = (await canvas.boundingBox())!;
+  const start = { x: box.x + box.width * 0.35, y: box.y + box.height * 0.38 };
+  const initial = await minimap.evaluate((el) => ({
+    x: Number((el as HTMLElement).dataset.cameraX),
+    y: Number((el as HTMLElement).dataset.cameraY),
+  }));
+
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 120, start.y - 70, { steps: 6 });
+  await page.mouse.move(start.x, start.y, { steps: 6 });
+  await page.mouse.up();
+  const returned = await minimap.evaluate((el) => ({
+    x: Number((el as HTMLElement).dataset.cameraX),
+    y: Number((el as HTMLElement).dataset.cameraY),
+  }));
+  expect(returned.x).toBeCloseTo(initial.x, 8);
+  expect(returned.y).toBeCloseTo(initial.y, 8);
+
+  const mapBox = (await minimap.boundingBox())!;
+  await page.mouse.click(mapBox.x + mapBox.width * 0.82, mapBox.y + mapBox.height * 0.28);
+  const navigated = await minimap.evaluate((el) => ({
+    x: Number((el as HTMLElement).dataset.cameraX),
+    y: Number((el as HTMLElement).dataset.cameraY),
+  }));
+  expect(Math.hypot(navigated.x - initial.x, navigated.y - initial.y)).toBeGreaterThan(10);
+  await page.screenshot({ path: `${SHOTS}/07-minimap-navigation.png` });
 });
 
 test("other fixtures render across layouts", async ({ page }) => {

@@ -207,6 +207,13 @@ export interface AtlasDataSource {
   getItem(id: string): Promise<KnowledgeItem | null>;
   getExplanation(request: ExplanationRequest): Promise<Explanation>;
   /**
+   * Optional local/remote overview for the flat minimap. It must be a
+   * whole-graph scene in stable order, but may omit edges at extreme
+   * scale. Sources that cannot provide one leave the minimap hidden
+   * until the main engine itself admits a whole-graph scene.
+   */
+  getOverviewScene?(focusId?: string): SceneData | Promise<SceneData | null> | null;
+  /**
    * Optional category → colour map supplied by the data itself (the
    * CE payload ships one). Adapters merge it under theme overrides so
    * any source — not just the CE one — can bring its own palette.
@@ -308,6 +315,8 @@ export interface AtlasController {
    * the capacity explicitly.
    */
   setViewScale(scale: number): void;
+  /** Re-solve force-based layouts with classic-viewer physics values. */
+  setPhysics(physics: Partial<AtlasPhysics>): void;
   setLens(lens: AtlasLens): void;
   setLayout(layout: LayoutKind): void;
   pin(id: string): void;
@@ -339,6 +348,12 @@ export type AtlasConfig = {
   /** Central-graph capacity (default 360 — the classic CE viewer scale). */
   coreCapacity?: number;
   /**
+   * Maximum individually visible nodes reached by geometric zoom-out.
+   * Defaults to 10,000; values up to 100,000 are accepted as an
+   * experimental Canvas/WebGL hand-off envelope.
+   */
+  maxVisibleNodes?: number;
+  /**
    * Boundary shape, 0..1: 0 = the circular family (a perfect circle
    * in a square region, an ellipse otherwise); 1 = almost a rectangle
    * with slightly rounded corners. Default ≈0.19 (the tuned squircle).
@@ -346,6 +361,8 @@ export type AtlasConfig = {
    * follows the resulting area (squarer shapes hold more points).
    */
   boundaryShape?: number;
+  /** Classic-viewer force controls. */
+  physics?: Partial<AtlasPhysics>;
   /** Default "focus". */
   layout?: LayoutKind;
   budget?: Partial<SceneBudget>;
@@ -355,6 +372,18 @@ export type AtlasConfig = {
   /** Default true. */
   keyboard?: boolean;
   typeMeta?: Record<string, { label?: string; landmark?: boolean; order?: number }>;
+};
+
+export type AtlasPhysics = {
+  charge: number;
+  link: number;
+  collide: number;
+};
+
+export const DEFAULT_PHYSICS: AtlasPhysics = {
+  charge: -420,
+  link: 110,
+  collide: 10,
 };
 
 export type AtlasThemeToken =
@@ -381,6 +410,10 @@ export type LayoutResult = {
   positions: Map<string, LayoutPoint>;
   /** Mean movement vs previous layout for shared ids (telemetry). */
   displacement: number;
+  /** Nodes projected into Atlas's hollow boundary during this frame.
+   * This is camera-dependent presentation state, never scene/layout
+   * membership, so the canonical flat coordinates remain untouched. */
+  boundaryIds?: ReadonlySet<string>;
 };
 
 export const DEFAULT_BUDGET: SceneBudget = {

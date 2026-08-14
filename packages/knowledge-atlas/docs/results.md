@@ -483,3 +483,102 @@ hybrid) and the classic viewer-graph reference:
 5. Keep the Canvas renderer; measurements show scene build, not
    drawing, is the cost centre (optimise MMR/bridge checks if dense
    graphs become common).
+
+## Production takeover decision (2026-08-13)
+
+The prototype is integrated into Curiosity Engine with a deliberately
+narrower rollout than the earlier default-flip proposal:
+
+- The classic D3 graph remains the default and the only visible graph
+  mode for wikis with 360 pages or fewer.
+- Above 360 pages, the graph controls expose a `view: classic` /
+  `view: atlas` chooser. The choice persists in the browser, but an
+  Atlas preference is ignored again when a smaller wiki is opened.
+- `?viewer=atlas` and `?viewer=classic` are explicit per-load overrides
+  at any corpus size, preserving comparison, diagnostics and the
+  embedding e2e path.
+- Atlas uses the human-feedback-derived `hybrid` layout: the classic
+  force graph remains the primary surface and compressed hyperbolic
+  structure appears only at the screen edges. The existing label and
+  physics controls stay live in this mode.
+- Wheel and pinch are one pointer-anchored geometric zoom everywhere in
+  the plot. They enlarge/shrink central nodes and change how much corpus
+  is admitted, but do not enlarge the boundary's share of the screen.
+  Dragging anywhere is a pure affine camera pan.
+- Wheel input uses a continuous low-gain curve and density-driven scene
+  rebuilds wait 120ms for the gesture to settle. Camera feedback remains
+  immediate, preventing trackpad events from outrunning the layout. A
+  fully visible wiki stays resident across zoom, pan and refocus.
+- Document type is no longer a spatial coordinate. Central nodes are
+  laid out from the same node order, edges, radii and D3 force constants
+  as Classic, and boundary nodes or hollow aggregates inherit the angle
+  of their links/bundles into the graph. Type remains visible through
+  colour and aggregate identity; discovery sectors remain because they
+  encode navigation intent.
+- The default density envelope is 10,000 visible nodes. Labels are
+  reduced around 1,000 and suppressed at 2,000; ordinary edges become
+  sparse at 2,000 and are omitted at 5,000, leaving clustering to carry
+  relatedness at overview scale. Crossing the 1k and 10k capacity
+  milestones removes those already-absorbed boundary layers.
+- `maxVisibleNodes` may be raised as far as 100,000 for experiments, but
+  100k remains a renderer-validation target rather than a production
+  promise; 10k is the supported default.
+- Narrow phone graph panes apply a 0.62 node-size factor at rest, easing
+  continuously back to desktop sizing by a 700px short dimension.
+- Host telemetry chrome remains deferred. The engine's
+  `subscribe`/`getSnapshot`/controller surface is retained, so adding a
+  telemetry bar later does not require another engine change.
+
+The 360-page boundary matches the prototype's desktop full-graph
+capacity. Below it, bounded scenes do not buy enough to justify another
+visible mode; above it, the Atlas starts representing material the
+classic all-at-once force graph cannot keep legible.
+
+## Navigation and Classic-parity revision (2026-08-14)
+
+Direct testing of the integrated viewer exposed two orientation bugs:
+Atlas was solving a different central force graph from Classic, and a
+small drag could commit a new focus-ranked scene. The corrected model is
+now deliberately simpler:
+
+- A whole-wiki Atlas scene is the canonical Classic D3 force field:
+  identical graph-member ordering, edges, radii, force constants,
+  alpha decay and 350 ordinary-wiki prewarm ticks. Atlas bends only the
+  screen projection near the fixed boundary; it does not maintain a
+  second central layout.
+- Refocusing is visual and preserves whole-graph coordinates exactly.
+  Once a whole graph has been admitted, zooming back in cannot replace
+  it with a newly ranked partial graph.
+- Pointer drag changes only camera `x/y`, one screen pixel per pointer
+  pixel. Equal opposite movements return exactly; there is no momentum,
+  spring-back or hidden lens commit.
+- A no-edge, flat-space minimap renders the same canonical node field,
+  shows the current central window, and supports click/drag navigation.
+- The Switchbay Classic renderer's remount cleanup and label-layer
+  suppression during zoom/physics movement are now present in the CE
+  viewer. The wiki browser also has Switchbay's collapse/expand-all
+  control.
+
+## Boundary inspection and shared overview revision (2026-08-14)
+
+- Deliberately dwelling on any boundary node forces its label above the
+  normal label-mode, type-filter, collision, and overview-density gates.
+  The label appears on a compact theme-aware pill so it remains legible
+  over a dense edge field.
+- Hover intent starts at roughly 45–50 ms at the near boundary and
+  rises gradually with boundary depth and represented corpus size,
+  capped at 110 ms. Moving to another point cancels the previous timer,
+  preventing stale tooltip races while scanning dense outer layers.
+- Farther nodes shrink exponentially through the compressed field.
+  Hollow count aggregates retain a larger count-derived base size, so a
+  million-document region stays selectable without pretending every
+  represented document is nearby.
+- The minimap automatically reduces dot radius/opacity and samples
+  deterministically as density rises. Its node field is cached, so pan
+  and zoom repaint only the viewport rectangle.
+- Classic now has the same line-free minimap, built from its live D3
+  force coordinates. It supports click/drag navigation and makes the
+  canonical layout a visible invariant across the view switch.
+- Atlas observes the host's `data-theme` attribute and repaints the
+  canvas, tooltip, and cached minimap immediately. A Classic/Atlas
+  round trip is no longer needed after changing light/dark mode.

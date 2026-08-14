@@ -5,9 +5,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  EXPERIMENTAL_MAX_CORE_CAPACITY,
   MAX_CORE_CAPACITY,
   MIN_CORE_CAPACITY,
   coreCapacityFor,
+  shellCount,
+  shellOfRank,
 } from "../src/core/scene/shells.ts";
 import { buildScene } from "../src/core/scene/builder.ts";
 import { hybridLayout, populatedShellBands } from "../src/core/layout/hybrid.ts";
@@ -18,6 +21,8 @@ import { workspaceSmallData } from "../fixtures/index.ts";
 import { absorbTowardType, applyCorePan, commitLensTarget, ABSORB_CAP } from "../src/interaction/lens.ts";
 import type { AtlasEngine } from "../src/core/engine.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS, type SceneRequest } from "../src/core/types.ts";
+import { projectCamera, responsiveNodeScale, wheelZoomFactor } from "../src/interaction/camera.ts";
+import { boundaryHoverDelay, projectedBoundaryDepth } from "../src/interaction/hover.ts";
 
 describe("coreCapacityFor (legible density)", () => {
   it("scales with the CORE's screen area: phone ~50, desktop ~250, big screens more", () => {
@@ -42,14 +47,147 @@ describe("coreCapacityFor (legible density)", () => {
     const base = coreCapacityFor(v, 1);
     expect(coreCapacityFor(v, 0.7)).toBeGreaterThan(base * 1.5);
     expect(coreCapacityFor(v, 1.5)).toBeLessThan(base * 0.6);
-    // Extreme zooms clamp — capacity can't be driven unbounded.
-    expect(coreCapacityFor(v, 0.1)).toBe(coreCapacityFor(v, 0.66));
-    expect(coreCapacityFor(v, 10)).toBe(coreCapacityFor(v, 2));
+    // Production zoom-out reaches the 10k display envelope and stops.
+    expect(coreCapacityFor(v, 0.1)).toBe(MAX_CORE_CAPACITY);
+    expect(coreCapacityFor(v, 10)).toBe(coreCapacityFor(v, 4));
+    // 100k is an explicit experimental opt-in, never the default.
+    expect(coreCapacityFor({ width: 8000, height: 8000 }, 0.1, 0, undefined, EXPERIMENTAL_MAX_CORE_CAPACITY))
+      .toBe(EXPERIMENTAL_MAX_CORE_CAPACITY);
   });
 
   it("never leaves the legibility clamp", () => {
     expect(coreCapacityFor({ width: 100, height: 100 })).toBe(MIN_CORE_CAPACITY);
     expect(coreCapacityFor({ width: 8000, height: 8000 })).toBe(MAX_CORE_CAPACITY);
+  });
+});
+
+describe("receding milestone shells", () => {
+  it("drops the 1k and 10k layers as geometric zoom absorbs them", () => {
+    expect(shellCount(80_000, 360)).toBe(3);
+    expect(shellCount(80_000, 1_200)).toBe(2);
+    expect(shellCount(80_000, 12_000)).toBe(1);
+    expect(shellOfRank(9_000, 1_200)).toBe(1);
+    expect(shellOfRank(20_000, 12_000)).toBe(1);
+  });
+});
+
+describe("relational boundary placement", () => {
+  it("does not use document type as a spatial coordinate", () => {
+    const item = (id: string) => ({ id, type: "same-type", title: id, meta: {} });
+    const boundaryScene = {
+      focus: item("left"),
+      nodes: [
+        { id: "left", item: item("left"), role: "focus", score: 2 },
+        { id: "right", item: item("right"), role: "context", score: 1 },
+      ],
+      aggregates: [
+        { id: "agg-left", label: "left group", type: "same-type", count: 10, memberIds: [], residual: 10, shell: 1 },
+        { id: "agg-right", label: "right group", type: "same-type", count: 10, memberIds: [], residual: 10, shell: 1 },
+      ],
+      edges: [],
+      bundles: [
+        { id: "b-left", source: "agg-left", target: "left", type: "related", count: 3 },
+        { id: "b-right", source: "agg-right", target: "right", type: "related", count: 3 },
+      ],
+      horizon: [],
+      landmarks: [],
+    } as unknown as Parameters<typeof hybridLayout.layout>[0];
+    const previous = {
+      positions: new Map([
+        ["left", { x: -90, y: 0, r: 8 }],
+        ["right", { x: 90, y: 0, r: 8 }],
+      ]),
+      displacement: 0,
+    };
+    const placed = hybridLayout.layout(boundaryScene, { viewport, seed: 42, previous });
+    const left = placed.positions.get("agg-left")!;
+    const right = placed.positions.get("agg-right")!;
+    expect(left.x).toBeLessThan(0);
+    expect(right.x).toBeGreaterThan(0);
+  });
+});
+
+describe("fixed-boundary camera", () => {
+  it("uses a cancellable reading-speed dwell that rises with depth and corpus density", () => {
+    const near = boundaryHoverDelay(0, 383);
+    const denseNear = boundaryHoverDelay(0, 1_000_000);
+    const denseFar = boundaryHoverDelay(1, 1_000_000);
+    expect(near).toBeGreaterThanOrEqual(45);
+    expect(near).toBeLessThanOrEqual(50);
+    expect(denseNear).toBeGreaterThan(near);
+    expect(denseFar).toBeGreaterThan(denseNear);
+    expect(denseFar).toBeLessThanOrEqual(110);
+  });
+
+  it("measures hover depth in projected screen geography", () => {
+    const v = { width: 1000, height: 700 };
+    const angle = 0;
+    const core = coreRadiusAt(angle, v, 1);
+    const rim = rimRadiusAt(angle, v);
+    expect(projectedBoundaryDepth({ x: core, y: 0, r: 2 }, v)).toBeCloseTo(0, 5);
+    expect(projectedBoundaryDepth({ x: rim, y: 0, r: 2 }, v)).toBeCloseTo(1, 5);
+  });
+
+  it("maps wheel deltas continuously at lower gain", () => {
+    expect(wheelZoomFactor(0)).toBe(1);
+    expect(wheelZoomFactor(2)).toBeGreaterThan(0.998);
+    expect(wheelZoomFactor(100)).toBeGreaterThan(0.94);
+    expect(wheelZoomFactor(100)).toBeLessThan(1);
+    expect(wheelZoomFactor(-100)).toBeCloseTo(1 / wheelZoomFactor(100), 6);
+  });
+
+  it("zooms core nodes while shell geography stays fixed", () => {
+    const mini = {
+      nodes: [
+        { id: "core", shell: undefined },
+        { id: "rim", shell: 1 },
+      ],
+      aggregates: [{ id: "agg" }],
+    } as unknown as Parameters<typeof projectCamera>[1];
+    const raw = {
+      positions: new Map([
+        ["core", { x: 10, y: 20, r: 8 }],
+        ["rim", { x: 100, y: 120, r: 5 }],
+        ["agg", { x: 140, y: 150, r: 12 }],
+      ]),
+      displacement: 0,
+    };
+    const out = projectCamera(raw, mini, { x: 3, y: -2, scale: 2 }, true, 0.75);
+    expect(out.positions.get("core")).toEqual({ x: 23, y: 38, r: 12 });
+    expect(out.positions.get("rim")).toEqual({ x: 100, y: 120, r: 3.75 });
+    expect(out.positions.get("agg")).toEqual({ x: 140, y: 150, r: 12 });
+  });
+
+  it("uses smaller default nodes on a phone viewport", () => {
+    expect(responsiveNodeScale({ width: 390, height: 844 })).toBe(0.62);
+    expect(responsiveNodeScale({ width: 1280, height: 800 })).toBe(1);
+  });
+
+  it("warps a resident full graph at the rim without breaking reversible pan", () => {
+    const mini = {
+      nodes: [
+        { id: "centre", shell: undefined },
+        { id: "far", shell: undefined },
+      ],
+      aggregates: [],
+    } as unknown as Parameters<typeof projectCamera>[1];
+    const raw = {
+      positions: new Map([
+        ["centre", { x: 0, y: 0, r: 8 }],
+        ["far", { x: 900, y: 0, r: 8 }],
+      ]),
+      displacement: 0,
+    };
+    const camera = { x: 0, y: 0, scale: 1 };
+    const before = projectCamera(raw, mini, camera, false, 1, { width: 800, height: 600 }, undefined, true);
+    expect(before.boundaryIds?.has("far")).toBe(true);
+    expect(before.positions.get("far")!.r).toBeLessThan(before.positions.get("centre")!.r * 0.4);
+    camera.x += 73;
+    projectCamera(raw, mini, camera, false, 1, { width: 800, height: 600 }, undefined, true);
+    camera.x -= 73;
+    const returned = projectCamera(raw, mini, camera, false, 1, { width: 800, height: 600 }, undefined, true);
+    expect(returned.positions.get("centre")).toEqual(before.positions.get("centre"));
+    expect(returned.positions.get("far")).toEqual(before.positions.get("far"));
   });
 });
 

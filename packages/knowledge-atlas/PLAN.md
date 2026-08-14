@@ -1,13 +1,14 @@
 # Knowledge Atlas Viewer — Implementation Plan
 
-Status: **planning complete — implementation not started**
-Branch: `claude/knowledge-atlas-viewer-plan-o2rff9`
+Status: **prototype implemented — size-gated Curiosity Engine integration complete**
+Integrated on: `main` (developed across the former Atlas prototype branches)
 Written: 2026-08-06, after inspection of `benjsmith/curiosity-engine` (this repo)
 and `benjsmith/switchbay` (read-only clone).
 
-This document is the single source of truth for the coding session(s) that
-follow. A fresh agent should be able to implement the module from this file
-plus the two repos, without re-deriving any decision recorded here.
+This document records the decisions that produced the implemented module.
+For the evaluated result and current production decision, read
+`docs/results.md`; use this plan when changing architecture rather than as a
+claim that the implementation is still pending.
 
 ---
 

@@ -27,6 +27,13 @@ function req(overrides: Partial<SceneRequest> = {}): SceneRequest {
 }
 
 describe("budgets", () => {
+  it("first paint is a graph scene, not a twelve-dot type launcher", () => {
+    const scene = buildScene(g, req({ focusId: undefined }), 42);
+    expect(scene.focus).toBeTruthy();
+    expect(scene.nodes.length).toBeGreaterThan(12);
+    expect(scene.edges.length).toBeGreaterThan(0);
+  });
+
   it("never exceeds the budget on any fixture/seed", async () => {
     for (const seed of [1, 42, 99]) {
       for (const f of allFixtures(seed)) {

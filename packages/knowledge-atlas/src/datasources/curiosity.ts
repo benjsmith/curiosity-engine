@@ -15,8 +15,9 @@
  */
 
 import { GraphIndex } from "../core/graphindex.ts";
+import { buildScene } from "../core/scene/builder.ts";
 import { LocalSceneSource } from "./local.ts";
-import type { KnowledgeItem } from "../core/types.ts";
+import { DEFAULT_LENS, type KnowledgeItem, type SceneData } from "../core/types.ts";
 
 /** Schema of wiki_render.py's data.json (see PLAN §2.1). */
 export type CEData = {
@@ -130,41 +131,32 @@ export function ceItem(p: {
 
 export function indexFromCEData(data: CEData): GraphIndex {
   const g = new GraphIndex();
-  // pages is the item store; nodes only add degree info.
-  const nodeById = new Map(data.nodes.map((n) => [normalizeId(n.id), n]));
-  for (const page of Object.values(data.pages)) {
-    const node = nodeById.get(normalizeId(page.id));
-    g.addItem(ceItem({ ...page, degree: node?.degree }));
-  }
-  // Nodes without a pages entry shouldn't exist, but tolerate them.
+  const pageById = new Map(
+    Object.values(data.pages).map((page) => [normalizeId(page.id), page] as const),
+  );
+  // Preserve the exact data.nodes order used by Classic's D3
+  // simulation. D3's deterministic phyllotaxis seed is index-based,
+  // so iterating pages first produces a different atlas even when all
+  // force constants are identical.
+  const seen = new Set<string>();
   for (const n of data.nodes) {
-    if (!g.items.has(normalizeId(n.id))) g.addItem(ceItem(n));
+    const id = normalizeId(n.id);
+    const page = pageById.get(id) ?? data.pages[id] ?? data.pages[n.id];
+    g.addItem(ceItem(page ? { ...page, degree: n.degree } : n));
+    seen.add(id);
+  }
+  // Page-only records are tolerated after graph members, matching the
+  // Classic viewer's graph-first ordering while retaining old caches.
+  for (const page of Object.values(data.pages)) {
+    const id = normalizeId(page.id);
+    if (!seen.has(id)) g.addItem(ceItem(page));
   }
   for (const e of data.edges) {
     g.addEdge(edgeEndpoint(e.source), edgeEndpoint(e.target), e.type, e.confidence ?? 1);
   }
-  // Derive shared-source edges when the payload lacks --atlas-edges
-  // enrichment: pages citing >=2 common vault sources get a low-
-  // confidence "co-cited" relation (discovery signal, tier-5 edge).
-  const hasEnrichment = data.edges.some((e) => e.type !== "wikilink" && e.type !== "depicts");
-  if (!hasEnrichment) {
-    const seen = new Set<string>();
-    for (const [, citers] of g.bySource) {
-      if (citers.length < 2 || citers.length > 50) continue; // hub sources are uninformative
-      for (let i = 0; i < citers.length; i++) {
-        for (let j = i + 1; j < citers.length; j++) {
-          const a = citers[i];
-          const b = citers[j];
-          const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-          if (seen.has(key)) continue;
-          if (g.sharedSources(a, b).length >= 2) {
-            seen.add(key);
-            g.addEdge(a, b, "co-cited", 0.5);
-          }
-        }
-      }
-    }
-  }
+  // Do not invent force-bearing edges here. Atlas discovery can score
+  // shared sources directly; adding implicit co-citation links made its
+  // central physics diverge from Classic on the same payload.
   return g;
 }
 
@@ -177,5 +169,29 @@ export class CuriosityDataSource extends LocalSceneSource {
   constructor(data: CEData, opts: { seed?: number } = {}) {
     super(indexFromCEData(data), opts);
     this.palette = { ...data.palette };
+  }
+
+  /** Canonical flat whole-wiki scene for the interactive minimap. */
+  getOverviewScene(focusId?: string): SceneData {
+    const maxEdges = this.graph.size >= 5_000 ? 0 : this.graph.edges.length;
+    return buildScene(
+      this.graph,
+      {
+        focusId,
+        lens: DEFAULT_LENS,
+        viewport: { width: 1200, height: 800 },
+        semanticScale: 2,
+        coreCapacity: this.graph.size,
+        fullGraphCapacity: this.graph.size,
+        budget: {
+          maxNodes: this.graph.size,
+          maxAggregates: 0,
+          maxEdges,
+          maxBundles: 0,
+          maxLabels: 0,
+        },
+      },
+      this.seed,
+    );
   }
 }

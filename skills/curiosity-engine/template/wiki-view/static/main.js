@@ -20,18 +20,25 @@
   Sidebar.init(data);
   Subgraph.init(data);
   Modal.init(data);
-  /* Experimental Knowledge Atlas viewer (flag-gated, off by default):
-   * when enabled it takes over the #graph pane and returns a
-   * Graph-compatible facade; every other module is untouched. See
-   * static/atlas.js for the flag and packages/knowledge-atlas for the
-   * engine source. */
+  /* Knowledge Atlas is an opt-in for large wikis. When selected it
+   * takes over the #graph pane and returns a Graph-compatible facade;
+   * every other module is untouched. static/atlas.js owns eligibility,
+   * persistence and the host-level viewer chooser. */
   let graphApi = Graph;
-  if (window.AtlasViewer && AtlasViewer.enabled() && window.KnowledgeAtlas) {
+  let viewerMode = 'classic';
+  if (window.AtlasViewer && AtlasViewer.enabled(data) && window.KnowledgeAtlas) {
     const atlas = AtlasViewer.init(data);
-    if (atlas) graphApi = atlas;
+    if (atlas) {
+      graphApi = atlas;
+      viewerMode = 'atlas';
+    }
     else Graph.init(data);
   } else {
     Graph.init(data);
+  }
+  document.body.dataset.viewer = viewerMode;
+  if (window.AtlasViewer && AtlasViewer.initChoice) {
+    AtlasViewer.initChoice(data, viewerMode);
   }
   _maybeShowScanStaleBanner(data);
 

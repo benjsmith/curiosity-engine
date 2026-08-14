@@ -31,7 +31,7 @@ Seams: [`docs/extension-points.md`](docs/extension-points.md).
 ```sh
 pnpm install
 pnpm dev        # experiment harness on http://localhost:5199
-pnpm test       # vitest unit suite (44 tests)
+pnpm test       # vitest unit suite (94 tests)
 pnpm e2e        # Playwright against the harness (self-starting)
 pnpm run build  # dist/: ESM (core + react) + self-contained IIFE
 ```
@@ -41,11 +41,31 @@ Chromium: `PW_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm e2e`.
 
 ## Embed
 
-- **Curiosity Engine**: already wired, flag-gated —
-  `http://localhost:8090/?viewer=atlas` on the built-in viewer. See
+- **Curiosity Engine**: already wired as a size-gated option. Wikis
+  above 360 pages get a `view: classic` / `view: atlas` chooser in the
+  built-in viewer; classic stays the default until selected. The
+  explicit `http://localhost:8090/?viewer=atlas` override works at any
+  size for development and comparison. See
   [`examples/curiosity-engine/`](examples/curiosity-engine/README.md).
 - **Switchbay / any React host**: see
   [`examples/switchbay/AtlasTab.tsx`](examples/switchbay/AtlasTab.tsx).
+
+The hybrid layout keeps a classic force graph in the centre and fixes
+its compressed boundary layers to the screen edge. Document type is a
+colour/count cue, not a spatial lane: hollow boundary groups sit where
+their graph links meet the centre. Wheel/pinch zoom is geometric and
+low-gain everywhere. Dragging is a pure, reversible flat camera pan;
+the corner minimap (available in both Atlas and Classic) shows the same
+whole-wiki force field, the current central window, and accepts
+click/drag navigation. Once the whole wiki
+has been solved, refocus, pan, and zoom retain that canonical field.
+The default visible-node ceiling is 10k (`maxVisibleNodes` can opt into
+experiments up to 100k), with automatic label and edge suppression at
+overview density. Boundary-node labels appear after a short,
+distance-aware hover dwell; deep nodes and minimap marks shrink with
+represented distance/density. Light/dark changes repaint a mounted
+Atlas immediately. `controller.setPhysics(...)` and the live label
+props/control surface remain available in Atlas mode.
 - **Any page**: `dist/knowledge-atlas.iife.js` exposes
   `window.KnowledgeAtlas.mount(container, { data, onOpenItem })`.
 

@@ -26,6 +26,7 @@
 window.Graph = (function () {
   let g = null;
   let svg = null;
+  let zoomSurface = null;
   let nodes = null;
   let edges = null;
   let simulation = null;
@@ -38,11 +39,17 @@ window.Graph = (function () {
   let nodeSel = null;
   let edgeSel = null;
   let textSel = null;
+  let textLayer = null;
+  let _labelsHidden = false;
   let focusId = null;       // hover OR modal target; null = idle
   let focusOrigin = null;   // 'hover' | 'modal' — for ordering rules
   let _autoVisibleIds = new Set();    // cache: ids whose labels show in auto mode
   let _autoRecomputeScheduled = false;
   let _isDragging = false;            // suppress hover-focus changes mid-drag
+  let _isZooming = false;
+  let _zoomSettleTimer = null;
+  let classicMinimap = null;
+  const ZOOM_SETTLE_MS = 120;
 
   // Type canonicalization — frontmatter uses singular forms, subdir
   // names plural; collapse to a single key per type so the user-facing
@@ -125,6 +132,11 @@ window.Graph = (function () {
   // Values bumped from previous round for more spread between clusters.
   const PHYSICS_DEFAULTS = { charge: -420, link: 110, collide: 10 };
   const PHYSICS = Object.assign({}, PHYSICS_DEFAULTS);
+  // Switchbay performance work: hide the entire label layer during
+  // active motion and through the low-alpha settle tail. This avoids
+  // hundreds of text transforms and collision/opacity writes per frame.
+  const LABEL_HIDE_ALPHA = 0.03;
+  const LABEL_SHOW_ALPHA = 0.008;
 
   // Minimum on-screen sizes for a label to ever be considered.
   const MIN_NODE_RADIUS_FOR_LABEL_PX = 6;
@@ -142,7 +154,223 @@ window.Graph = (function () {
     return palette[type] || palette.default || '#7a7a7a';
   }
 
+  /* A line-free, density-adaptive overview of the same canonical force
+   * field shown by Classic. The base node field is cached; camera moves
+   * repaint only the viewport box, while live physics marks the cache
+   * dirty at most once per animation frame. */
+  function createClassicMinimap(container, palette) {
+    const canvas = document.createElement('canvas');
+    const base = document.createElement('canvas');
+    canvas.className = 'atlas-minimap classic-minimap';
+    canvas.tabIndex = 0;
+    canvas.setAttribute('role', 'application');
+    canvas.setAttribute('aria-label', 'Classic graph overview map; click or drag to move the main view');
+    canvas.title = 'Whole-wiki overview — click or drag to navigate';
+    canvas.style.cssText = [
+      'position:absolute', 'right:12px', 'bottom:12px', 'width:190px', 'height:128px',
+      'z-index:4', 'border:1px solid rgba(127,127,127,.42)', 'border-radius:8px',
+      'box-shadow:0 3px 14px rgba(0,0,0,.24)', 'cursor:crosshair', 'touch-action:none',
+    ].join(';');
+    container.appendChild(canvas);
+
+    let map = null;
+    let frame = 0;
+    let layoutDirty = true;
+    let cacheKey = '';
+
+    function colours() {
+      const light = document.documentElement.dataset.theme === 'light';
+      return light
+        ? { bg: '#fafafa', accent: '#2f6fed' }
+        : { bg: '#101014', accent: '#7aa2ff' };
+    }
+
+    function hash(value) {
+      let h = 2166136261;
+      for (let i = 0; i < value.length; i++) {
+        h ^= value.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    }
+
+    function rebuild(cssW, cssH, dpr, theme) {
+      const points = (nodes || []).filter(d => Number.isFinite(d.x) && Number.isFinite(d.y));
+      if (points.length < 2) { map = null; return; }
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const d of points) {
+        minX = Math.min(minX, d.x); minY = Math.min(minY, d.y);
+        maxX = Math.max(maxX, d.x); maxY = Math.max(maxY, d.y);
+      }
+      const spanX = Math.max(1, maxX - minX);
+      const spanY = Math.max(1, maxY - minY);
+      const pad = 7;
+      const scale = Math.min((cssW - pad * 2) / spanX, (cssH - pad * 2) / spanY);
+      minX -= ((cssW - pad * 2) / scale - spanX) / 2;
+      minY -= ((cssH - pad * 2) / scale - spanY) / 2;
+      map = { minX, minY, scale, pad };
+
+      base.width = Math.round(cssW * dpr);
+      base.height = Math.round(cssH * dpr);
+      const ctx = base.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = theme.bg;
+      ctx.globalAlpha = 0.94;
+      ctx.fillRect(0, 0, cssW, cssH);
+      const area = Math.max(1, (cssW - pad * 2) * (cssH - pad * 2));
+      const maxMarks = Math.max(1500, Math.round(area * 0.45));
+      const stride = Math.max(1, Math.ceil(points.length / maxMarks));
+      const radius = Math.max(0.28, Math.min(2.2, Math.sqrt(area / points.length) * 0.18));
+      const density = points.length / area;
+      const alpha = Math.max(0.18, Math.min(0.86, 1.4 / Math.sqrt(Math.max(1, density))));
+      for (const d of points) {
+        if (stride > 1 && hash(d.id) % stride !== 0) continue;
+        ctx.fillStyle = colourFor(d.type, palette);
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.arc(pad + (d.x - minX) * scale, pad + (d.y - minY) * scale, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function draw() {
+      frame = 0;
+      if (!svg || !nodes || nodes.length < 2) { canvas.hidden = true; return; }
+      canvas.hidden = false;
+      const graphRect = svg.node().getBoundingClientRect();
+      const compact = Math.min(graphRect.width, graphRect.height) <= 520;
+      const cssW = compact ? 126 : 190;
+      const cssH = compact ? 88 : 128;
+      canvas.style.width = cssW + 'px';
+      canvas.style.height = cssH + 'px';
+      const dpr = window.devicePixelRatio || 1;
+      const pixelW = Math.round(cssW * dpr);
+      const pixelH = Math.round(cssH * dpr);
+      if (canvas.width !== pixelW) canvas.width = pixelW;
+      if (canvas.height !== pixelH) canvas.height = pixelH;
+      const theme = colours();
+      const nextKey = pixelW + 'x' + pixelH + '|' + theme.bg;
+      if (layoutDirty || nextKey !== cacheKey) {
+        rebuild(cssW, cssH, dpr, theme);
+        layoutDirty = false;
+        cacheKey = nextKey;
+      }
+      const ctx = canvas.getContext('2d');
+      if (!ctx || !map) return;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, pixelW, pixelH);
+      ctx.drawImage(base, 0, 0);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const k = Math.max(0.001, zoomTransform.k);
+      const worldCx = -zoomTransform.x / k;
+      const worldCy = -zoomTransform.y / k;
+      const halfW = graphRect.width / (2 * k);
+      const halfH = graphRect.height / (2 * k);
+      const x = map.pad + (worldCx - halfW - map.minX) * map.scale;
+      const y = map.pad + (worldCy - halfH - map.minY) * map.scale;
+      const w = halfW * 2 * map.scale;
+      const h = halfH * 2 * map.scale;
+      ctx.fillStyle = theme.accent;
+      ctx.globalAlpha = 0.08;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = theme.accent;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.95;
+      ctx.strokeRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+      canvas.dataset.cameraX = String(zoomTransform.x);
+      canvas.dataset.cameraY = String(zoomTransform.y);
+      canvas.dataset.cameraScale = String(k);
+    }
+
+    function schedule(dirty) {
+      if (dirty) layoutDirty = true;
+      if (!frame) frame = requestAnimationFrame(draw);
+    }
+
+    function navigate(ev) {
+      if (!map || !zoomBehavior || !svg) return;
+      const rect = canvas.getBoundingClientRect();
+      const worldX = (ev.clientX - rect.left - map.pad) / map.scale + map.minX;
+      const worldY = (ev.clientY - rect.top - map.pad) / map.scale + map.minY;
+      const k = Math.max(0.15, zoomTransform.k);
+      svg.call(zoomBehavior.transform, d3.zoomIdentity.translate(-worldX * k, -worldY * k).scale(k));
+    }
+    function zoomOverview(ev) {
+      if (!zoomBehavior || !svg) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      // Match d3-zoom's native wheel gain and keep the current world-space
+      // centre fixed. The minimap is part of the plotting area, so hovering it
+      // must never make zoom appear to stop.
+      const units = ev.deltaMode === 1 ? 0.05 : (ev.deltaMode ? 1 : 0.002);
+      const delta = -ev.deltaY * units * (ev.ctrlKey ? 10 : 1);
+      const oldK = Math.max(0.001, zoomTransform.k);
+      const nextK = Math.max(0.15, Math.min(4, oldK * Math.pow(2, delta)));
+      if (nextK === oldK) return;
+      const worldCx = -zoomTransform.x / oldK;
+      const worldCy = -zoomTransform.y / oldK;
+      svg.call(zoomBehavior.transform,
+        d3.zoomIdentity.translate(-worldCx * nextK, -worldCy * nextK).scale(nextK));
+    }
+    canvas.addEventListener('pointerdown', ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      canvas.setPointerCapture(ev.pointerId);
+      navigate(ev);
+    });
+    canvas.addEventListener('pointermove', ev => {
+      if (canvas.hasPointerCapture(ev.pointerId)) navigate(ev);
+    });
+    canvas.addEventListener('pointerup', ev => {
+      if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+    });
+    canvas.addEventListener('pointercancel', ev => {
+      if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+    });
+    canvas.addEventListener('wheel', zoomOverview, { passive: false });
+    const themeObserver = new MutationObserver(() => schedule(true));
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    schedule(true);
+    return {
+      schedule,
+      destroy() {
+        if (frame) cancelAnimationFrame(frame);
+        themeObserver.disconnect();
+        canvas.remove();
+      },
+    };
+  }
+
+  function scheduleMinimap(layoutChanged) {
+    if (classicMinimap) classicMinimap.schedule(layoutChanged);
+  }
+
   function init(data) {
+    // IIFE state survives a re-mount in embedding hosts. Stop the old
+    // simulation and clear indexes so it cannot double-render or focus
+    // a node from the previous workspace.
+    if (simulation) {
+      simulation.on('tick', null);
+      simulation.on('end', null);
+      simulation.stop();
+    }
+    if (classicMinimap) classicMinimap.destroy();
+    classicMinimap = null;
+    nodeById.clear();
+    neighbours.clear();
+    focusId = null;
+    focusOrigin = null;
+    _autoVisibleIds = new Set();
+    _autoRecomputeScheduled = false;
+    _isDragging = false;
+    _isZooming = false;
+    if (_zoomSettleTimer) clearTimeout(_zoomSettleTimer);
+    _zoomSettleTimer = null;
+    _labelsHidden = false;
+    zoomTransform = d3.zoomIdentity;
+
     nodes = data.nodes.map(n => Object.assign({}, n));
     edges = data.edges.map(e => Object.assign({}, e));
     nodes.forEach(n => nodeById.set(n.id, n));
@@ -158,6 +386,15 @@ window.Graph = (function () {
 
     const container = document.querySelector('#graph');
     svg = d3.select(container).append('svg');
+    // Give the entire plotting viewport an explicit hit target. SVG roots
+    // normally receive pointer input over unpainted space, but that becomes
+    // unreliable after compositing/layer changes in some browsers. Keeping a
+    // transparent surface behind the graph makes wheel/pinch zoom and pan work
+    // identically over nodes, edges, and genuinely empty space.
+    zoomSurface = svg.append('rect')
+      .attr('class', 'zoom-surface')
+      .attr('fill', 'transparent')
+      .attr('pointer-events', 'all');
     g = svg.append('g').attr('class', 'viewport');
 
     // ── Layer order ──
@@ -196,7 +433,8 @@ window.Graph = (function () {
       .attr('r', d => d.r = nodeRadius(d))
       .attr('fill', d => colourFor(d.type, palette));
 
-    textSel = g.append('g').attr('class', 'node-labels')
+    textLayer = g.append('g').attr('class', 'node-labels');
+    textSel = textLayer
       .selectAll('text')
       .data(nodes, d => d.id)
       .enter().append('text')
@@ -262,7 +500,16 @@ window.Graph = (function () {
     // wiki) doesn't manifest as a stutter.
     simulation.on('tick', tick);
     simulation.alpha(0.15).alphaDecay(0.05).restart();
-    simulation.on('end', () => scheduleAutoRecompute());
+    simulation.on('end', () => {
+      // Definitive settle signal: restore labels even if the final
+      // low-alpha tick was coalesced by the browser.
+      if (_labelsHidden && textLayer) {
+        textLayer.attr('display', null);
+        _labelsHidden = false;
+        if (textSel) textSel.attr('transform', d => `translate(${d.x},${d.y})`);
+      }
+      scheduleAutoRecompute();
+    });
 
     // Drag — Obsidian-style click-and-hold to move. Release lets physics
     // take over again (no pinning). clickDistance(5) means small pointer
@@ -295,13 +542,36 @@ window.Graph = (function () {
         if (event.type === 'wheel') return true;
         return !event.target.closest || !event.target.closest('.node');
       })
+      .on('start', () => {
+        _isZooming = true;
+        if (_zoomSettleTimer) clearTimeout(_zoomSettleTimer);
+        _zoomSettleTimer = null;
+        if (!_labelsHidden && textLayer) {
+          textLayer.attr('display', 'none');
+          _labelsHidden = true;
+        }
+      })
       .on('zoom', (ev) => {
         zoomTransform = ev.transform;
         g.attr('transform', ev.transform);
-        scheduleAutoRecompute();
-        applyLabelOpacity();
+        scheduleMinimap(false);
+      })
+      .on('end', () => {
+        if (_zoomSettleTimer) clearTimeout(_zoomSettleTimer);
+        _zoomSettleTimer = setTimeout(() => {
+          _zoomSettleTimer = null;
+          _isZooming = false;
+          if (simulation && simulation.alpha() > LABEL_HIDE_ALPHA) return;
+          if (_labelsHidden && textLayer) {
+            textLayer.attr('display', null);
+            _labelsHidden = false;
+            textSel.attr('transform', d => `translate(${d.x},${d.y})`);
+          }
+          scheduleAutoRecompute();
+        }, ZOOM_SETTLE_MS);
       });
     svg.call(zoomBehavior);
+    classicMinimap = createClassicMinimap(container, palette);
 
     svg.on('click', () => {
       if (focusOrigin === 'hover') setFocus(null);
@@ -473,6 +743,19 @@ window.Graph = (function () {
       .attr('x2', d => d.target.x)
       .attr('y2', d => d.target.y);
     nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+    scheduleMinimap(true);
+    if (_isZooming) return;
+    const alpha = simulation ? simulation.alpha() : 0;
+    if (_labelsHidden) {
+      if (alpha > LABEL_SHOW_ALPHA) return;
+      if (textLayer) textLayer.attr('display', null);
+      _labelsHidden = false;
+      scheduleAutoRecompute();
+    } else if (alpha > LABEL_HIDE_ALPHA) {
+      if (textLayer) textLayer.attr('display', 'none');
+      _labelsHidden = true;
+      return;
+    }
     textSel.attr('transform', d => `translate(${d.x},${d.y})`);
   }
 
@@ -480,13 +763,22 @@ window.Graph = (function () {
     if (!svg) return;
     const r = svg.node().getBoundingClientRect();
     svg.attr('viewBox', [-r.width / 2, -r.height / 2, r.width, r.height]);
+    if (zoomSurface) {
+      zoomSurface
+        .attr('x', -r.width / 2)
+        .attr('y', -r.height / 2)
+        .attr('width', r.width)
+        .attr('height', r.height);
+    }
     if (simulation) simulation.alpha(0.3).restart();
     scheduleAutoRecompute();
     applyLabelOpacity();
+    scheduleMinimap(true);
   }
 
   /* setFocus / clear: idempotent. Pass null to clear. */
   function setFocus(id, origin) {
+    if (id != null && !nodeById.has(id)) id = null;
     if (id === focusId) {
       if (origin) focusOrigin = origin;   // upgrade hover→modal etc.
       return;
@@ -548,7 +840,7 @@ window.Graph = (function () {
    * lookups only. Auto-mode visibility is precomputed in
    * `_autoVisibleIds` and reused until zoom/layout settles. */
   function applyLabelOpacity() {
-    if (!textSel) return;
+    if (!textSel || _isZooming || _labelsHidden) return;
     const hasFocus = focusId != null;
     const focusSet = hasFocus
       ? (() => { const s = new Set(neighbours.get(focusId) || []); s.add(focusId); return s; })()
@@ -586,10 +878,11 @@ window.Graph = (function () {
    * the candidate count which is fine at <300 candidates, but we don't
    * want to run it on every tick. */
   function scheduleAutoRecompute() {
-    if (_autoRecomputeScheduled) return;
+    if (_autoRecomputeScheduled || _isZooming) return;
     _autoRecomputeScheduled = true;
     requestAnimationFrame(() => {
       _autoRecomputeScheduled = false;
+      if (_isZooming) return;
       recomputeAutoVisible();
       applyLabelOpacity();
     });

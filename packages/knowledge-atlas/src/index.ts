@@ -13,11 +13,26 @@ export { focusLayout } from "./core/layout/focus.ts";
 export { forceLayout } from "./core/layout/force.ts";
 export { hyperbolicLayout } from "./core/layout/hyperbolic.ts";
 export { hybridLayout, coreRadius, rimRadiusAt, partitionCore, isFullGraphScene } from "./core/layout/hybrid.ts";
-export { shellOfRank, shellCount, DEFAULT_CORE_CAPACITY } from "./core/scene/shells.ts";
+export {
+  shellOfRank,
+  shellCount,
+  DEFAULT_CORE_CAPACITY,
+  MAX_CORE_CAPACITY,
+  EXPERIMENTAL_MAX_CORE_CAPACITY,
+} from "./core/scene/shells.ts";
 export { adaptiveLayout, classifyTopology } from "./core/layout/adaptive.ts";
 export { adaptiveHybridLayout } from "./core/layout/adaptiveHybrid.ts";
 export type { LayoutAdapter, LayoutContext } from "./core/layout/types.ts";
 export { CanvasRenderer } from "./renderer/canvas.ts";
+export {
+  clampCameraScale,
+  wheelZoomFactor,
+  projectCamera,
+  responsiveNodeScale,
+  MIN_CAMERA_SCALE,
+  MAX_CAMERA_SCALE,
+} from "./interaction/camera.ts";
+export { boundaryHoverDelay, projectedBoundaryDepth } from "./interaction/hover.ts";
 export { resolveTheme, typeColour } from "./renderer/theme.ts";
 export type { Frame, SceneRenderer, Camera } from "./renderer/types.ts";
 export {

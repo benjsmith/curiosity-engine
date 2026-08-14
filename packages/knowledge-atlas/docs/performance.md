@@ -45,6 +45,19 @@ only on interaction/scene events). Label placement is greedy AABB in
 score order, capped by `maxLabels`; the text-measure cache makes
 re-draws label-cost-free.
 
+Pointer hit testing uses a uniform screen-space grid rebuilt with each
+projected layout. A hover probe inspects only neighbouring cells rather
+than linearly scanning all visible marks, including in the 10k overview
+envelope. Directional keyboard navigation remains a deliberate O(n)
+operation because it is infrequent.
+
+The line-free minimap caches its whole-graph node field. Camera motion
+copies that small bitmap and redraws only the viewport box. At very high
+density it deterministically samples to a screen-area budget and reduces
+dot radius/opacity; its draw cost therefore follows minimap pixels rather
+than corpus size. Classic uses the same strategy, invalidating the cache
+only while D3 physics is moving or when size/theme changes.
+
 ## Memory
 
 The engine holds one scene + two layouts (current/previous) + the
@@ -53,6 +66,12 @@ trail. Local sources hold their GraphIndex (items + adjacency): the
 focus neighbourhood (a few hundred nodes) per scene and discards it.
 
 ## Traversal at cloud scale (the 100M-doc question)
+
+> Historical design note: this is the `curiosity-cloud` /
+> `switchbay-cloud` scaling analysis from iteration 8. The current
+> local Atlas uses a pure reversible camera pan plus minimap for direct
+> manipulation; `LensTraversal` remains an experimental remote-corpus
+> primitive rather than the default pointer gesture.
 
 Iteration 8 asked: if the corpus is a 100-million-doc curiosity-cloud
 index served by switchbay-cloud, and the renderer is a PWA on a

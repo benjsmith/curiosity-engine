@@ -32,12 +32,10 @@ export class AggregateTooltip {
       "display:none",
       "padding:8px 10px",
       "border-radius:8px",
-      `background:${theme.tokens.aggregateFill}`,
-      `border:1px solid ${theme.tokens.line}`,
-      `color:${theme.tokens.text}`,
       "font:12px/1.45 system-ui, sans-serif",
       "box-shadow:0 4px 14px rgba(0,0,0,0.35)",
     ].join(";");
+    this.setTheme(theme);
     host.appendChild(this.el);
     if (onActivate) {
       this.el.addEventListener("click", (ev) => {
@@ -45,6 +43,12 @@ export class AggregateTooltip {
         if (this.currentAggId) onActivate(this.currentAggId);
       });
     }
+  }
+
+  setTheme(theme: ResolvedTheme): void {
+    this.el.style.background = theme.tokens.aggregateFill;
+    this.el.style.border = `1px solid ${theme.tokens.line}`;
+    this.el.style.color = theme.tokens.text;
   }
 
   show(agg: RenderAggregate, x: number, y: number, hostRect: { width: number; height: number }): void {

@@ -179,6 +179,21 @@ window.Sidebar = (function () {
 
   // Click delegation: handle group-toggle buttons and row clicks here.
   document.addEventListener('click', (ev) => {
+    // Match Switchbay's browser: if anything is expanded, collapse all;
+    // otherwise expand all. Search stays flat, but the chosen state is
+    // persisted for when the grouped view returns.
+    const allBtn = ev.target.closest && ev.target.closest('[data-action="toggle-all-groups"]');
+    if (allBtn && allRecords) {
+      const types = [...new Set(allRecords.map(r => canonicalType(r.type)))];
+      if (!types.length) return;
+      const anyExpanded = types.some(t => !collapsed.has(t));
+      collapsed = anyExpanded ? new Set(types) : new Set();
+      try {
+        localStorage.setItem('curiosity-engine.collapsed-types', JSON.stringify([...collapsed]));
+      } catch (e) {}
+      if (!searchEl || !searchEl.value.trim()) renderGrouped();
+      return;
+    }
     const header = ev.target.closest && ev.target.closest('[data-action="toggle-group"]');
     if (header) {
       const t = header.dataset.type;

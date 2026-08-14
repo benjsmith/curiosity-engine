@@ -51,6 +51,21 @@ export function buildScene(
   const coreCapacity = Math.min(req.coreCapacity ?? DEFAULT_CORE_CAPACITY, budget.maxNodes);
 
   if (!req.focusId || !g.items.has(req.focusId)) {
+    // Atlas is a classic graph with edge geography, including on first
+    // paint. The old no-focus overview showed only twelve dots plus one
+    // bubble per type, which made the centre feel like a launcher rather
+    // than the user's wiki. Pick a deterministic, well-connected entry
+    // point and run the normal graph/shell pipeline; no trail step is
+    // created because this selection lives entirely in the data source.
+    const entry = [...g.items.values()]
+      .map((item) => ({
+        id: item.id,
+        score:
+          (0.5 + 0.5 * Math.min(1, (item.meta.sources?.length ?? 0) / 3)) *
+          (g.degree(item.id) > 0 ? 1 : 0.5),
+      }))
+      .sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1))[0];
+    if (entry) return buildScene(g, { ...req, focusId: entry.id }, seed, totalNodes);
     return overviewScene(g, req, budget);
   }
   const focusId = req.focusId;

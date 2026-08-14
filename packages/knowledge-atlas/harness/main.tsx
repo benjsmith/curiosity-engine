@@ -114,7 +114,7 @@ function App() {
           value={layout}
           onChange={(e) => setLayout(e.target.value as LayoutKind)}
         >
-          <option value="hybrid">hybrid (P6: force core + type rim)</option>
+          <option value="hybrid">hybrid (classic field + relation rim)</option>
           <option value="adaptive-hybrid">adaptive hybrid (P7: gridlike core when it fits)</option>
           <option value="focus">focus (P1)</option>
           <option value="force">force (P0 baseline)</option>
@@ -213,6 +213,7 @@ function App() {
           <h3>Telemetry</h3>
           <div className="hud" data-testid="hud">
             <span>nodes</span><b data-testid="hud-nodes">{stats?.nodeCount ?? "–"}</b>
+            <span>edges</span><b data-testid="hud-edges">{stats?.edgeCount ?? "–"}</b>
             <span>aggregates</span><b>{stats?.aggregateCount ?? "–"}</b>
             <span>edges</span><b>{stats?.edgeCount ?? "–"}</b>
             <span>horizon</span><b data-testid="hud-horizon">{stats?.horizonCount ?? "–"}</b>
