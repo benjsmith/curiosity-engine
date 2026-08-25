@@ -23,6 +23,8 @@ export type MotionOverlay = {
   intensity: number;
   /** Estimated docs streamed past so far in this gesture. */
   odometer: number;
+  /** Instantaneous flow in nodes/second. */
+  rate?: number;
   /** Streak animation phase (advances with flow, not time). */
   phase: number;
 };

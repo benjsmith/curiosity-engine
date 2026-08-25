@@ -25,7 +25,7 @@ bash <skill_path>/scripts/viewer.sh open
 Three files in `template/wiki-view/`:
 
 - `static/vendor/knowledge-atlas.js` — the vendored IIFE bundle
-  (engine + Canvas renderer + CE adapter, 56 KB min / 20 KB gzip,
+  (engine + Canvas renderer + CE adapter, ~96 KB min / ~34 KB gzip,
   zero dependencies), exposing `window.KnowledgeAtlas.mount`.
 - `static/atlas.js` — the glue: counts wiki pages, owns the >360-page
   eligibility rule and persisted chooser, mounts the atlas into

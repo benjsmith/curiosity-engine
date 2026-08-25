@@ -14,7 +14,7 @@ import { hyperbolicLayout } from "./layout/hyperbolic.ts";
 import { HitTester } from "./hittest.ts";
 import { Trails } from "./trails.ts";
 import { clampScale, nextBand } from "./zoom.ts";
-import { coreCapacityFor } from "./scene/shells.ts";
+import { coreCapacityFor, viewScaleToFit } from "./scene/shells.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS, DEFAULT_PHYSICS } from "./types.ts";
 import type { LayoutAdapter } from "./layout/types.ts";
 import type {
@@ -137,12 +137,29 @@ export class AtlasEngine implements AtlasController {
     const k = Math.max(0.5, Math.min(2, Math.sqrt((this.viewport.width * this.viewport.height) / ref)));
     const capacity = this.effectiveCapacity();
     const dense = capacity >= 2_000;
+    // Zoom-out used to take capacity≥5000 → maxEdges=0, then retain
+    // that edgeless full graph. Keep edges whenever the full wiki is
+    // (or is about to be) resident. Cold 10k overview still omits them.
+    const hostFloor = this.budget.maxEdges;
+    const sceneTotal = this.scene
+      ? (this.scene.stats?.totalNodes ?? this.scene.nodes.length)
+      : 0;
+    const corpus = this.config.corpusSize ?? 0;
+    const promotingFull = corpus > 0 && corpus <= capacity;
+    const sceneHasEdges = (this.scene?.edges.length ?? 0) > 0;
+    const fullResident =
+      this.retainedFullGraphSize > 0
+      || (this.scene != null && isFullGraphScene(this.scene) && sceneHasEdges)
+      || (sceneTotal > 0 && sceneTotal <= capacity)
+      || promotingFull;
     const edgeBudget =
-      capacity >= 5_000
-        ? 0
-        : capacity >= 2_000
-          ? Math.min(Math.round(this.budget.maxEdges * k), Math.round(capacity * 0.35))
-          : Math.max(Math.round(this.budget.maxEdges * k), Math.round(capacity * 2.2));
+      fullResident
+        ? Math.max(hostFloor, Math.round(this.budget.maxEdges * k))
+        : capacity >= 5_000
+          ? 0
+          : capacity >= 2_000
+            ? Math.min(Math.round(this.budget.maxEdges * k), Math.round(capacity * 0.35))
+            : Math.max(Math.round(this.budget.maxEdges * k), Math.round(capacity * 2.2));
     return {
       maxNodes: Math.max(Math.round(this.budget.maxNodes * k), capacity, this.retainedFullGraphSize),
       maxAggregates: Math.round(this.budget.maxAggregates * k),
@@ -207,7 +224,7 @@ export class AtlasEngine implements AtlasController {
 
   private applyScene(scene: SceneData, sceneBuildMs: number): void {
     this.scene = scene;
-    if (isFullGraphScene(scene)) {
+    if (isFullGraphScene(scene) && (scene.edges.length > 0 || this.budget.maxEdges === 0)) {
       this.retainedFullGraphSize = Math.max(
         this.retainedFullGraphSize,
         scene.stats?.totalNodes ?? scene.nodes.length,
@@ -281,6 +298,12 @@ export class AtlasEngine implements AtlasController {
     });
     this.emit({ kind: "focus-changed", id, origin });
     this.emit({ kind: "trail-changed", trail: this.trails.state() });
+    // A retained full-graph scene is the whole wiki — highlighting
+    // another node must not rebuild (that snapped first paint back to
+    // type-cluster shells at viewScale=1).
+    if (this.scene && isFullGraphScene(this.scene) && this.retainedFullGraphSize > 0) {
+      return;
+    }
     this.requestScene();
   }
 
@@ -446,6 +469,7 @@ export class AtlasEngine implements AtlasController {
     return {
       focusId: this.focusId,
       semanticScale: this.semanticScale,
+      viewScale: this.viewScale,
       lens: this.lens,
       pinned: [...this.trails.pinned],
       selection: [...this.selection],
@@ -491,6 +515,12 @@ export class AtlasEngine implements AtlasController {
 
   /** Kick off the first scene (host calls once after wiring events). */
   start(initialFocus?: string): void {
+    const n = this.config.corpusSize;
+    if (n && n > 0 && (this.layoutKind === "hybrid" || this.layoutKind === "adaptive-hybrid")) {
+      // Fit the wiki as one Classic field so the first frame is the
+      // individual-node log-rim, not twelve type bubbles.
+      this.viewScale = viewScaleToFit(n, this.viewport, this.config.maxVisibleNodes);
+    }
     if (initialFocus) this.focus(initialFocus, "system");
     else this.requestScene();
   }

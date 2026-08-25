@@ -2,6 +2,30 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-26 — v1.4.0 — Knowledge Atlas first paint is the whole wiki
+
+**Migration:** none — after installing this skill version, rebuild or reopen
+the viewer (`viewer.sh` or refresh the workspace bundle). `update.sh --yes`
+copies the new `atlas.js` glue and vendored IIFE. **Breaking:** none.
+Classic remains the default; Atlas is still optional and size-gated.
+
+The hybrid Knowledge Atlas now opens as one Classic field of individual
+nodes plus a log-compressed rim, instead of twelve type-cluster bubbles
+that only resolved after the first wheel or resize. The host pins
+`corpusSize` / `coreCapacity` / `maxVisibleNodes` to the wiki and
+disables aggregate placeholders (`budget.maxAggregates: 0`). When the
+whole wiki is resident, every Classic edge is kept.
+
+Boundary drag is lens traversal only above ~100 nodes/s; slower rim
+drags pan so the graph actually slides. The rate HUD (`≈ N nodes/s`)
+is drawn at the top of the canvas so it is not buried under the types
+picker. The IIFE assigns `globalThis.KnowledgeAtlas` for hosts that
+import the bundle as a script.
+
+Vendored IIFE sha256
+`631f0930e852ae52f1d2a837c871daa357b2e8d6f65143e01a78567de36c6dd0`
+(`@curiosity/knowledge-atlas` 0.2.0). 99 Atlas unit tests.
+
 ## 2026-08-25 — v1.3.1 — Curator is a role: CLAUDE.md / AGENTS.md no longer force schema.md on every agent
 
 **Migration:** after installing this skill version, run `setup.sh` in each

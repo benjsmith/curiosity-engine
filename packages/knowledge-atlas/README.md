@@ -31,7 +31,7 @@ Seams: [`docs/extension-points.md`](docs/extension-points.md).
 ```sh
 pnpm install
 pnpm dev        # experiment harness on http://localhost:5199
-pnpm test       # vitest unit suite (94 tests)
+pnpm test       # vitest unit suite (99 tests)
 pnpm e2e        # Playwright against the harness (self-starting)
 pnpm run build  # dist/: ESM (core + react) + self-contained IIFE
 ```

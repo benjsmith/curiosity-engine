@@ -10,10 +10,17 @@ import { AtlasMinimap } from "./renderer/minimap.ts";
 import { resolveTheme } from "./renderer/theme.ts";
 import { CuriosityDataSource, type CEData } from "./datasources/curiosity.ts";
 import { coreRadius, isFullGraphScene, populatedShellBands } from "./core/layout/hybrid.ts";
+import { viewScaleToFit } from "./core/scene/shells.ts";
 import { hybridLayout } from "./core/layout/hybrid.ts";
 import { clampCameraScale, projectCamera, responsiveNodeScale, wheelZoomFactor } from "./interaction/camera.ts";
 import { boundaryHoverDelay, projectedBoundaryDepth } from "./interaction/hover.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
+import {
+  LensTraversal,
+  shellTotalsFromLayout,
+  shellTotalsFromScene,
+} from "./interaction/traversal.ts";
+import type { MotionOverlay } from "./renderer/types.ts";
 import { DEFAULT_PHYSICS, type AtlasConfig, type AtlasEvent, type AtlasPhysics, type LayoutResult } from "./core/types.ts";
 import type { Camera } from "./renderer/types.ts";
 
@@ -39,8 +46,11 @@ export type MountHandle = {
 };
 
 export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
+  const corpusSize =
+    opts.config?.corpusSize ??
+    (Array.isArray(opts.data.nodes) ? opts.data.nodes.length : Object.keys(opts.data.pages || {}).length);
   const source = new CuriosityDataSource(opts.data, { seed: opts.config?.seed });
-  const engine = new AtlasEngine(source, opts.config);
+  const engine = new AtlasEngine(source, { ...opts.config, corpusSize });
   const renderer = new CanvasRenderer();
 
   const canvas = document.createElement("canvas");
@@ -89,6 +99,30 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const layoutKind = opts.config?.layout ?? "focus";
   const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
   const boundaryShape = opts.config?.boundaryShape;
+  let motion: MotionOverlay | undefined;
+  let traverseRaf = 0;
+  let lastTraverseAt = 0;
+  const traversal = new LensTraversal(
+    engine,
+    viewport,
+    () => {
+      const snap = engine.snapshot();
+      if (snap.scene && isFullGraphScene(snap.scene) && projectedForHover) {
+        return shellTotalsFromLayout(
+          projectedForHover.positions.values(),
+          viewport,
+          boundaryShape,
+        );
+      }
+      return shellTotalsFromScene(snap.scene);
+    },
+    (type) => {
+      camera.scale = clampCameraScale(camera.scale * 0.88);
+      scheduleDensity();
+      void type;
+    },
+    boundaryShape,
+  );
   let overviewLayout: LayoutResult | undefined;
   let overviewScene = null as ReturnType<typeof engine.snapshot>["scene"];
   let overviewTimer = 0;
@@ -116,6 +150,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     if (!snap.scene || !snap.layout) return;
     const full = isFullGraphScene(snap.scene);
     const bands = Math.max(1, populatedShellBands(snap.scene));
+    traversal.setCoreBands(bands);
     const layout = snap.layout;
     const nodeScale = responsiveNodeScale(viewport);
     const projected = projectCamera(
@@ -174,6 +209,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       boundaryShape,
       labelMode: labelState.mode,
       labelTypes: labelState.types,
+      motion,
     });
     canvas.dataset.hoverId = hoverId ?? "";
     if (full) {
@@ -221,9 +257,13 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   const off = engine.on((e) => {
     if (e.kind === "scene-ready") {
       clearHoverIntent(true);
-      cancelAnimationFrame(raf);
-      animStart = performance.now();
-      raf = requestAnimationFrame(animate);
+      if (traversal.isActive()) {
+        draw(1);
+      } else {
+        cancelAnimationFrame(raf);
+        animStart = performance.now();
+        raf = requestAnimationFrame(animate);
+      }
       if (!isFullGraphScene(engine.snapshot().scene!)) ensureOverview();
     }
     if (e.kind === "item-open-requested") opts.onOpenItem?.(e.id);
@@ -239,13 +279,34 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   };
   let dragging = false;
   let dragMoved = false;
+  let traversing = false;
+  let traversalChecked = false;
+  let pressPos = { x: 0, y: 0 };
   let last = { x: 0, y: 0 };
+  const tickTraversal = (now: number) => {
+    traverseRaf = 0;
+    const frame = traversal.tick(now);
+    motion = frame.active && frame.intensity > 0.01
+      ? {
+          angle: frame.angle,
+          intensity: frame.intensity,
+          odometer: frame.odometer,
+          rate: frame.rate,
+          phase: frame.phase,
+        }
+      : undefined;
+    draw(1);
+    if (frame.active) {
+      traverseRaf = requestAnimationFrame(tickTraversal);
+    }
+  };
   // Touch: pinch = semantic zoom, double-tap = open (see React adapter).
   const pointers = new Map<number, { x: number; y: number }>();
   let pinchDist = 0;
   let pinched = false;
   let lastTap = { t: 0, x: 0, y: 0 };
   let lastClickFocus = { id: "", t: 0 };
+  let userZoomed = false;
   const clearHoverIntent = (clearVisible = false) => {
     clearTimeout(hoverTimer);
     hoverTimer = 0;
@@ -299,6 +360,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
   };
   const onDown = (ev: PointerEvent) => {
     clearHoverIntent(true);
+    try { canvas.setPointerCapture(ev.pointerId); } catch { /* ignore */ }
     pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
@@ -309,7 +371,10 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     }
     dragging = true;
     dragMoved = false;
+    traversing = false;
+    traversalChecked = false;
     last = { x: ev.clientX, y: ev.clientY };
+    pressPos = toScene(ev);
     if (ev.pointerType === "touch") {
       tooltip.hide();
       const p = toScene(ev);
@@ -340,6 +405,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
           y: (a.y + b.y) / 2 - rect.top - viewport.height / 2,
         };
         const old = camera.scale;
+        userZoomed = true;
         camera.scale = clampCameraScale(old * Math.max(0.94, Math.min(1.06, ratio)));
         const k = camera.scale / old;
         camera.x = anchor.x - (anchor.x - camera.x) * k;
@@ -354,11 +420,28 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       const dx = ev.clientX - last.x;
       const dy = ev.clientY - last.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+      if (dragMoved && isHybrid && !traversalChecked) {
+        traversalChecked = true;
+        traversal.setViewport(viewport);
+        if (traversal.start(pressPos.x, pressPos.y, performance.now())) {
+          traversing = true;
+          lastTraverseAt = performance.now();
+        }
+      }
       if (dragMoved) {
+        // Boundary hyperspace still pans so points stream through the
+        // rim. Overlay/commits fire only above MIN_HYPERSPACE_RATE.
         camera.x += dx;
         camera.y += dy;
-        draw(1);
         last = { x: ev.clientX, y: ev.clientY };
+        if (traversing) {
+          const now = performance.now();
+          traversal.drag(dx, dy, Math.max(8, now - lastTraverseAt));
+          lastTraverseAt = now;
+          if (!traverseRaf) traverseRaf = requestAnimationFrame(tickTraversal);
+        } else {
+          draw(1);
+        }
       }
       return;
     }
@@ -384,8 +467,16 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     }
     if (pinched) return;
     const wasDrag = dragMoved;
+    const wasTraverse = traversing;
     dragging = false;
     dragMoved = false;
+    traversing = false;
+    traversalChecked = false;
+    if (wasTraverse) {
+      traversal.release();
+      if (!traverseRaf) traverseRaf = requestAnimationFrame(tickTraversal);
+      return;
+    }
     if (wasDrag) {
       return;
     }
@@ -427,6 +518,15 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       pinchDist = 0;
       dragging = false;
       dragMoved = false;
+      traversalChecked = false;
+      if (traversing) {
+        traversing = false;
+        traversal.cancel();
+        motion = undefined;
+        if (traverseRaf) cancelAnimationFrame(traverseRaf);
+        traverseRaf = 0;
+        draw(1);
+      }
     }
   };
   const onDbl = (ev: MouseEvent) => {
@@ -445,14 +545,13 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     ev.preventDefault();
     clearHoverIntent(true);
     if (isHybrid) {
-      // One geometric zoom model across the plotting area. The graph
-      // zooms around the pointer; the boundary remains fixed geography.
-      const anchor = toScene(ev);
+      const p = toScene(ev);
       const old = camera.scale;
+      userZoomed = true;
       camera.scale = clampCameraScale(old * wheelZoomFactor(ev.deltaY, ev.deltaMode));
       const k = camera.scale / old;
-      camera.x = anchor.x - (anchor.x - camera.x) * k;
-      camera.y = anchor.y - (anchor.y - camera.y) * k;
+      camera.x = p.x - (p.x - camera.x) * k;
+      camera.y = p.y - (p.y - camera.y) * k;
       scheduleDensity();
       draw(1);
       return;
@@ -468,15 +567,24 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
 
   const ro = new ResizeObserver(() => {
     viewport = { width: container.clientWidth, height: container.clientHeight };
+    if (!userZoomed && corpusSize > 0 && viewport.width > 0 && viewport.height > 0) {
+      const fitted = viewScaleToFit(corpusSize, viewport, opts.config?.maxVisibleNodes);
+      if (fitted > 0) camera.scale = fitted;
+    }
     engine.resize(viewport.width, viewport.height);
+    traversal.setViewport(viewport);
+    // Keep camera.scale as the user's zoom. Do not reset to 1 — that
+    // undid start()'s viewScaleToFit and snapped back to type clusters.
     engine.setViewScale(camera.scale);
     draw(1);
   });
   ro.observe(container);
 
   engine.resize(viewport.width, viewport.height);
-  engine.setViewScale(camera.scale);
   engine.start(opts.initialFocus);
+  const fitted = engine.getState().viewScale;
+  if (fitted > 0) camera.scale = fitted;
+  engine.setViewScale(camera.scale);
 
   return {
     engine,
@@ -500,6 +608,8 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     destroy: () => {
       destroyed = true;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(traverseRaf);
+      traversal.cancel();
       clearTimeout(longPressTimer);
       clearTimeout(densityTimer);
       clearTimeout(overviewTimer);

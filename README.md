@@ -23,7 +23,7 @@ Everything the skill does, in one line each:
 
 - **Eleven wiki page types** with per-type floors enforced mechanically: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures`, `notes`, `todos`, `projects`.
 - **Citation-preserving ratchet**: `score_diff.py` rejects any edit that drops a citation or adds one whose source doesn't FTS5-match the claim. The wiki never regresses.
-- **Built-in graph viewer** at `localhost:8090` — D3 force graph, type-grouped browser, fuzzy search, click-to-open modal with a hop-by-hop subgraph navigator. Or open `wiki/` as an Obsidian vault. Or use VS Code + Foam.
+- **Built-in graph viewer** at `localhost:8090` — D3 force graph, type-grouped browser, fuzzy search, click-to-open modal with a hop-by-hop subgraph navigator. Wikis above 360 pages can switch to the Knowledge Atlas (full individual-node field + log rim). Or open `wiki/` as an Obsidian vault. Or use VS Code + Foam.
 - **Multimodal table & figure extraction** from PDFs. Per-table `tab-*.md` pages, with row data mirrored to a queryable SQLite store. Numeric literal-transcription mode for scientific work.
 - **Identifier resolution** for chemicals (PubChem) and gene symbols (MyGene.info). Cached locally; lazy lookup at synthesis time only.
 - **Class tables** — entity-instance data (deals, patients, contracts, matters) with schemas declared on entity pages, rows citing vault provenance. Queryable via `tables.py`; joinable with the kuzu graph.

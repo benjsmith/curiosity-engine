@@ -11,6 +11,7 @@ import {
   coreCapacityFor,
   shellCount,
   shellOfRank,
+  viewScaleToFit,
 } from "../src/core/scene/shells.ts";
 import { buildScene } from "../src/core/scene/builder.ts";
 import { hybridLayout, populatedShellBands } from "../src/core/layout/hybrid.ts";
@@ -23,6 +24,19 @@ import type { AtlasEngine } from "../src/core/engine.ts";
 import { DEFAULT_BUDGET, DEFAULT_LENS, type SceneRequest } from "../src/core/types.ts";
 import { projectCamera, responsiveNodeScale, wheelZoomFactor } from "../src/interaction/camera.ts";
 import { boundaryHoverDelay, projectedBoundaryDepth } from "../src/interaction/hover.ts";
+
+describe("viewScaleToFit", () => {
+  it("zooms out so a 2k wiki fits as one full graph on a desktop", () => {
+    const vp = { width: 1280, height: 800 };
+    const s = viewScaleToFit(2000, vp);
+    expect(s).toBeLessThan(1);
+    expect(coreCapacityFor(vp, s, 0)).toBeGreaterThanOrEqual(2000);
+  });
+
+  it("stays at 1 when the wiki already fits", () => {
+    expect(viewScaleToFit(80, { width: 1280, height: 800 })).toBe(1);
+  });
+});
 
 describe("coreCapacityFor (legible density)", () => {
   it("scales with the CORE's screen area: phone ~50, desktop ~250, big screens more", () => {

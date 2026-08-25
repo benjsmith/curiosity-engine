@@ -15,5 +15,13 @@ export default defineConfig({
     emptyOutDir: false,
     sourcemap: false,
     minify: true,
+    rollupOptions: {
+      output: {
+        // Vite ESM-import of this file would otherwise keep
+        // `var KnowledgeAtlas` module-scoped. Hosts (Switch Bay)
+        // look for window.KnowledgeAtlas.
+        footer: "globalThis.KnowledgeAtlas = KnowledgeAtlas;",
+      },
+    },
   },
 });

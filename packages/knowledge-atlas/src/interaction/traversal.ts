@@ -32,6 +32,12 @@ function bandsOfTotals(totals: readonly number[]): number {
 export const MAX_DOCS_PER_SECOND = 250_000; // absolute display-flow cap
 export const COMMIT_INTERVAL_MS = 320; // ≈3 real scene commits/sec
 /**
+ * Hyperspace (motion overlay + scene commits) only above this flow.
+ * Slower boundary drags stay a camera pan so the graph actually
+ * slides through the rim instead of freezing under streaks.
+ */
+export const MIN_HYPERSPACE_RATE = 100;
+/**
  * Momentum decay. Iteration-10 feedback: several seconds to stop felt
  * unresponsive — this half-life (~115 ms) plus the raised stop
  * threshold settles a full-speed flick in roughly half a second.
@@ -60,6 +66,8 @@ export type TraversalFrame = {
   intensity: number;
   /** Total docs streamed past this gesture (estimate, monotonic). */
   odometer: number;
+  /** Instantaneous flow in docs/second (post-cap). */
+  rate: number;
   /** Streak animation phase (advances with flow). */
   phase: number;
 };
@@ -135,6 +143,8 @@ export class LensTraversal {
   private released = false;
   private lastCommit = 0;
   private lastTick = 0;
+  /** Visual core bands (adapter). When unset, start() uses shell totals. */
+  private visualBands: number | null = null;
 
   constructor(
     engine: AtlasEngine,
@@ -154,13 +164,22 @@ export class LensTraversal {
     this.viewport = v;
   }
 
-  /** Begin a gesture at layout-space (x, y); returns false inside the core. */
-  start(x: number, y: number, now: number): boolean {
+  /** Core bands the renderer is drawing. Full-graph hybrid is 1 — do
+   *  not let rim occupancy shrink the core and steal pans. */
+  setCoreBands(n: number): void {
+    this.visualBands = Number.isFinite(n) && n > 0 ? Math.max(1, Math.round(n)) : 1;
+  }
+
+  /** Begin a gesture at layout-space (x, y). False inside the visual
+   *  core (those drags stay camera pans). `force` still starts from
+   *  the core — adapters must not use it for wheel zoom. */
+  start(x: number, y: number, now: number, force = false): boolean {
     const rho = Math.hypot(x, y);
     const angle = Math.atan2(y, x);
     const totals = this.shellTotals();
-    const bands = bandsOfTotals(totals);
-    if (rho <= coreRadiusAt(angle, this.viewport, bands, this.boundaryShape) * 1.03) return false;
+    const bands = this.visualBands ?? Math.max(1, bandsOfTotals(totals));
+    const inner = coreRadiusAt(angle, this.viewport, bands, this.boundaryShape) * 1.03;
+    if (!force && rho <= inner) return false;
     this.active = true;
     this.released = false;
     this.angle = angle;
@@ -199,7 +218,10 @@ export class LensTraversal {
     const dt = Math.max(0, Math.min(100, now - this.lastTick));
     this.lastTick = now;
     if (!this.active) {
-      return { active: false, angle: this.angle, intensity: 0, odometer: this.odometer, phase: this.phase };
+      return {
+        active: false, angle: this.angle, intensity: 0,
+        odometer: this.odometer, rate: 0, phase: this.phase,
+      };
     }
     if (this.released) {
       this.flow *= Math.pow(FRICTION_PER_MS, dt);
@@ -207,9 +229,13 @@ export class LensTraversal {
     this.odometer += (this.flow * dt) / 1000;
     this.phase += (dt / 1000) * (2 + 30 * this.intensityOf(this.flow));
 
-    // Rate-limited real commits: the graph actually steps through the
-    // lens at most every COMMIT_INTERVAL_MS while flow persists.
-    if (commit && this.flow > 0 && now - this.lastCommit >= COMMIT_INTERVAL_MS) {
+    // Rate-limited real commits: only when the drag is actually
+    // streaming (≥ MIN_HYPERSPACE_RATE). Slower boundary drags pan.
+    if (
+      commit
+      && this.flow >= MIN_HYPERSPACE_RATE
+      && now - this.lastCommit >= COMMIT_INTERVAL_MS
+    ) {
       this.lastCommit = now;
       const bands = bandsOfTotals(this.shellTotals());
       const res = commitLensTarget(
@@ -230,14 +256,19 @@ export class LensTraversal {
       angle: this.angle,
       intensity: this.intensityOf(this.flow),
       odometer: this.odometer,
+      rate: this.flow,
       phase: this.phase,
     };
+  }
+
+  isActive(): boolean {
+    return this.active;
   }
 
   private intensityOf(flow: number): number {
     // Log response against the corpus-scaled cap so a 400-doc wiki and
     // a 100M corpus both reach full streaks at their own top speed.
-    if (flow <= 0) return 0;
+    if (flow < MIN_HYPERSPACE_RATE) return 0;
     return Math.min(1, Math.log10(1 + flow) / Math.log10(1 + this.flowCap));
   }
 }
@@ -251,5 +282,34 @@ export function shellTotalsFromScene(scene: {
   if (!scene) return totals;
   for (const n of scene.nodes) if (n.shell) totals[Math.min(4, n.shell)] += 1;
   for (const a of scene.aggregates) if (a.shell) totals[Math.min(4, a.shell)] += a.count;
+  return totals;
+}
+
+/** For a full-graph warp: count on-screen nodes already in the rim
+ *  and bucket them by log-depth so traversal has real gears. */
+export function shellTotalsFromLayout(
+  positions: Iterable<{ x: number; y: number }>,
+  viewport: Viewport,
+  boundaryShape?: number,
+): number[] {
+  const totals = [0, 0, 0, 0, 0];
+  const cum = [0, 0.5, 0.8, 0.95, 1.0];
+  for (const p of positions) {
+    const rho = Math.hypot(p.x, p.y);
+    const angle = Math.atan2(p.y, p.x);
+    const inner = coreRadiusAt(angle, viewport, 1, boundaryShape) * 1.03;
+    if (rho <= inner) continue;
+    const wall = rimRadiusAt(angle, viewport, boundaryShape);
+    const gap = Math.max(24, wall - inner);
+    const t = Math.min(1, Math.max(0, (rho - inner) / gap));
+    let shell = 4;
+    for (let k = 1; k <= 4; k++) {
+      if (t <= cum[k]) {
+        shell = k;
+        break;
+      }
+    }
+    totals[shell] += 1;
+  }
   return totals;
 }

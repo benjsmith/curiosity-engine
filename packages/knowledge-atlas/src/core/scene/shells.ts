@@ -46,6 +46,21 @@ export const EXPERIMENTAL_MAX_CORE_CAPACITY = 100_000;
  * zooming in shows fewer, larger nodes. `bands` is the number of
  * populated shell bands (0 = whole-viewport full-graph mode).
  */
+/** Geometric zoom so `totalNodes` fit as one full-graph scene.
+ *  First paint used the default scale=1 capacity (~360 on a laptop),
+ *  so large wikis opened as type-cluster shells and only became the
+ *  individual-node log-boundary after the user zoomed out. */
+export function viewScaleToFit(
+  totalNodes: number,
+  viewport: { width: number; height: number },
+  maxCapacity = MAX_CORE_CAPACITY,
+): number {
+  const needed = Math.max(MIN_CORE_CAPACITY, Math.min(maxCapacity, Math.max(1, totalNodes)));
+  const area = Math.max(1, viewport.width * viewport.height);
+  const s = Math.sqrt(area / (TARGET_PX_PER_NODE * needed));
+  return Math.max(0.08, Math.min(1, s));
+}
+
 export function coreCapacityFor(
   viewport: { width: number; height: number },
   viewScale = 1,

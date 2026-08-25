@@ -11,9 +11,16 @@ import { CanvasRenderer } from "../renderer/canvas.ts";
 import { AtlasMinimap } from "../renderer/minimap.ts";
 import { resolveTheme } from "../renderer/theme.ts";
 import { coreRadius, isFullGraphScene, populatedShellBands } from "../core/layout/hybrid.ts";
+import { viewScaleToFit } from "../core/scene/shells.ts";
 import { clampCameraScale, projectCamera, responsiveNodeScale, wheelZoomFactor } from "../interaction/camera.ts";
 import { boundaryHoverDelay, projectedBoundaryDepth } from "../interaction/hover.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "../interaction/tooltip.ts";
+import {
+  LensTraversal,
+  shellTotalsFromLayout,
+  shellTotalsFromScene,
+} from "../interaction/traversal.ts";
+import type { MotionOverlay } from "../renderer/types.ts";
 import type { AtlasController, AtlasEvent, LayoutResult } from "../core/types.ts";
 import type { KnowledgeAtlasProps } from "./props.ts";
 import type { Camera } from "../renderer/types.ts";
@@ -112,6 +119,45 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       const layoutKind = props.config?.layout ?? "focus";
       const isHybrid = layoutKind === "hybrid" || layoutKind === "adaptive-hybrid";
       const boundaryShape = props.config?.boundaryShape;
+      let motion: MotionOverlay | undefined;
+      let traverseRaf = 0;
+      let lastTraverseAt = 0;
+      let traversing = false;
+      const traversal = new LensTraversal(
+        engine,
+        viewport,
+        () => {
+          const snap = engine.snapshot();
+          if (snap.scene && isFullGraphScene(snap.scene) && projectedForHover) {
+            return shellTotalsFromLayout(
+              projectedForHover.positions.values(),
+              viewport,
+              boundaryShape,
+            );
+          }
+          return shellTotalsFromScene(snap.scene);
+        },
+        () => {
+          camera.scale = clampCameraScale(camera.scale * 0.88);
+          scheduleDensity();
+        },
+        boundaryShape,
+      );
+      const tickTraversal = (now: number) => {
+        traverseRaf = 0;
+        const frame = traversal.tick(now);
+        motion = frame.active && frame.intensity > 0.01
+          ? {
+              angle: frame.angle,
+              intensity: frame.intensity,
+              odometer: frame.odometer,
+              rate: frame.rate,
+              phase: frame.phase,
+            }
+          : undefined;
+        draw(1);
+        if (frame.active) traverseRaf = requestAnimationFrame(tickTraversal);
+      };
       let overviewLayout: LayoutResult | undefined;
       let overviewScene = engine.snapshot().scene;
       let densityTimer = 0;
@@ -130,6 +176,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         const bands = Math.max(1, populatedShellBands(snap.scene));
         const rCore = coreRadius(viewport, bands);
         const full = isFullGraphScene(snap.scene);
+        traversal.setCoreBands(Math.max(1, bands));
         const layout = snap.layout;
         const nodeScale = responsiveNodeScale(viewport);
         const projected = projectCamera(
@@ -188,6 +235,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           boundaryShape,
           labelMode: labelRef.current.mode,
           labelTypes: labelRef.current.types,
+          motion,
         });
         canvas.dataset.hoverId = hoverId ?? "";
         if (full) {
@@ -214,9 +262,13 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       const off = engine.on((e: AtlasEvent) => {
         if (e.kind === "scene-ready") {
           clearHoverIntent(true);
-          cancelAnimationFrame(raf);
-          animStart = performance.now();
-          raf = requestAnimationFrame(animate);
+          if (traversal.isActive()) {
+            draw(1);
+          } else {
+            cancelAnimationFrame(raf);
+            animStart = performance.now();
+            raf = requestAnimationFrame(animate);
+          }
           const focus = engine.snapshot().scene?.focus;
           if (liveRef.current && focus) {
             liveRef.current.textContent = `Focused: ${focus.title} (${focus.type})`;
@@ -237,6 +289,9 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       let dragging = false;
       let dragMoved = false;
       let last = { x: 0, y: 0 };
+      let traversalChecked = false;
+      let pressPos = { x: 0, y: 0 };
+      // traversing lives next to LensTraversal above
       // Touch: two-finger pinch drives SEMANTIC zoom (the wheel
       // equivalent) and double-tap opens (the dblclick equivalent).
       const pointers = new Map<number, { x: number; y: number }>();
@@ -247,6 +302,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       // second click of a double-click can land on empty canvas. Track
       // the last click-focused node and let dblclick fall back to it.
       let lastClickFocus = { id: "", t: 0 };
+      let userZoomed = false;
       const clearHoverIntent = (clearVisible = false) => {
         clearTimeout(hoverTimer);
         hoverTimer = 0;
@@ -313,7 +369,10 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         }
         dragging = true;
         dragMoved = false;
+        traversing = false;
+        traversalChecked = false;
         last = { x: ev.clientX, y: ev.clientY };
+        pressPos = toScene(ev);
         canvas.setPointerCapture(ev.pointerId);
         // Touch-and-hold on a grouping bubble shows its annotation.
         if (ev.pointerType === "touch") {
@@ -349,6 +408,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
                 y: (a.y + b.y) / 2 - rect.top - viewport.height / 2,
               };
               const old = camera.scale;
+              userZoomed = true;
               camera.scale = clampCameraScale(old * Math.max(0.94, Math.min(1.06, ratio)));
               const k = camera.scale / old;
               camera.x = anchor.x - (anchor.x - camera.x) * k;
@@ -365,11 +425,26 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           const dx = ev.clientX - last.x;
           const dy = ev.clientY - last.y;
           if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+          if (dragMoved && isHybrid && !traversalChecked) {
+            traversalChecked = true;
+            traversal.setViewport(viewport);
+            if (traversal.start(pressPos.x, pressPos.y, performance.now())) {
+              traversing = true;
+              lastTraverseAt = performance.now();
+            }
+          }
           if (dragMoved) {
             camera.x += dx;
             camera.y += dy;
-            draw(1);
             last = { x: ev.clientX, y: ev.clientY };
+            if (traversing) {
+              const now = performance.now();
+              traversal.drag(dx, dy, Math.max(8, now - lastTraverseAt));
+              lastTraverseAt = now;
+              if (!traverseRaf) traverseRaf = requestAnimationFrame(tickTraversal);
+            } else {
+              draw(1);
+            }
           }
           return;
         }
@@ -397,9 +472,17 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         }
         if (pinched) return;
         const wasDrag = dragMoved;
+        const wasTraverse = traversing;
         dragging = false;
         dragMoved = false;
+        traversing = false;
+        traversalChecked = false;
         if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+        if (wasTraverse) {
+          traversal.release();
+          if (!traverseRaf) traverseRaf = requestAnimationFrame(tickTraversal);
+          return;
+        }
         if (wasDrag) {
           return;
         }
@@ -451,12 +534,13 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         ev.preventDefault();
         clearHoverIntent(true);
         if (isHybrid) {
-          const anchor = toScene(ev);
+          const p = toScene(ev);
           const old = camera.scale;
+          userZoomed = true;
           camera.scale = clampCameraScale(old * wheelZoomFactor(ev.deltaY, ev.deltaMode));
           const k = camera.scale / old;
-          camera.x = anchor.x - (anchor.x - camera.x) * k;
-          camera.y = anchor.y - (anchor.y - camera.y) * k;
+          camera.x = p.x - (p.x - camera.x) * k;
+          camera.y = p.y - (p.y - camera.y) * k;
           scheduleDensity();
           draw(1);
           return;
@@ -514,6 +598,15 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           pinchDist = 0;
           dragging = false;
           dragMoved = false;
+          traversalChecked = false;
+          if (traversing) {
+            traversing = false;
+            traversal.cancel();
+            motion = undefined;
+            if (traverseRaf) cancelAnimationFrame(traverseRaf);
+            traverseRaf = 0;
+            draw(1);
+          }
         }
       };
       canvas.addEventListener("pointerdown", onPointerDown);
@@ -527,18 +620,28 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
 
       const ro = new ResizeObserver(() => {
         viewport = { width: host.clientWidth, height: host.clientHeight };
+        const n = props.config?.corpusSize ?? 0;
+        if (!userZoomed && n > 0 && viewport.width > 0 && viewport.height > 0) {
+          const fitted = viewScaleToFit(n, viewport, props.config?.maxVisibleNodes);
+          if (fitted > 0) camera.scale = fitted;
+        }
         engine.resize(viewport.width, viewport.height);
+        traversal.setViewport(viewport);
         engine.setViewScale(camera.scale);
         draw(1);
       });
       ro.observe(host);
 
       engine.resize(viewport.width, viewport.height);
-      engine.setViewScale(camera.scale);
       engine.start(props.initialFocus);
+      const fitted = engine.getState().viewScale;
+      if (fitted > 0) camera.scale = fitted;
+      engine.setViewScale(camera.scale);
 
       return () => {
         cancelAnimationFrame(raf);
+        cancelAnimationFrame(traverseRaf);
+        traversal.cancel();
         redrawRef.current = null;
         ro.disconnect();
         canvas.removeEventListener("pointerdown", onPointerDown);

@@ -202,15 +202,25 @@
     if (!container || !window.KnowledgeAtlas) return null;
     container.innerHTML = '';
 
+    var corpusSize = pageCount(data);
     var handle = window.KnowledgeAtlas.mount(container, {
       data: data,
-      // Classic force graph in the centre; compressed, fixed-screen
-      // boundary geography only at the edges.
+      // Hybrid: Classic field in the core, log-compressed individual
+      // nodes on the rim. corpusSize makes the first frame that view
+      // (not type-cluster bubbles). Pin capacity to this corpus so
+      // first mount, remount, and viewport changes all render the
+      // same individual-node scene. The rate HUD is drawn at the TOP
+      // of the canvas (`fillText` y = -height/2+22).
       config: {
         layout: 'hybrid',
-        // When the whole wiki is resident, retain every Classic edge so
-        // the central force field is genuinely the same graph.
-        budget: { maxEdges: Math.max(900, (data.edges || []).length) },
+        corpusSize: corpusSize,
+        coreCapacity: Math.max(1, corpusSize),
+        maxVisibleNodes: Math.max(1, corpusSize),
+        budget: {
+          maxNodes: Math.max(1, corpusSize),
+          maxAggregates: 0,
+          maxEdges: Math.max(900, (data.edges || []).length),
+        },
       },
       onOpenItem: function (id) {
         window.location.hash = '#page=' + encodeURIComponent(id);

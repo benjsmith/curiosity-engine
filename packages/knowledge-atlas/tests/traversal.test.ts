@@ -11,8 +11,10 @@ import {
   FRICTION_PER_MS,
   LensTraversal,
   MAX_DOCS_PER_SECOND,
+  MIN_HYPERSPACE_RATE,
   docsPerPixel,
   flowCapFor,
+  shellTotalsFromLayout,
   shellTotalsFromScene,
 } from "../src/interaction/traversal.ts";
 import { coreRadiusAt, rimRadiusAt } from "../src/core/geometry.ts";
@@ -91,7 +93,29 @@ describe("LensTraversal", () => {
     const t = new LensTraversal(engine, VIEW, () => TOTALS);
     expect(t.start(10, 10, 0)).toBe(false);
     expect(t.start(coreRadiusAt(0, VIEW, 4) * 0.9, 0, 0)).toBe(false);
+    expect(t.start(coreRadiusAt(0, VIEW, 4) * 0.95, 0, 0)).toBe(false);
     expect(t.start(rhoAt(0.5), 0, 0)).toBe(true);
+  });
+
+  it("honours the visual core bands so a full-graph rim does not shrink the pan zone", () => {
+    const { engine } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    t.setCoreBands(1);
+    const visualInner = coreRadiusAt(0, VIEW, 1) * 1.03;
+    expect(t.start(visualInner * 0.98, 0, 0)).toBe(false);
+    expect(t.start(visualInner * 1.05, 0, 0)).toBe(true);
+  });
+
+  it("withholds hyperspace commits and intensity below 100 docs/s", () => {
+    const { engine, commits } = stubEngine();
+    const t = new LensTraversal(engine, VIEW, () => TOTALS);
+    t.start(rhoAt(0.15), 0, 0);
+    t.drag(-1, 0, 200);
+    const f = t.tick(COMMIT_INTERVAL_MS + 16);
+    expect(f.rate).toBeLessThan(MIN_HYPERSPACE_RATE);
+    expect(f.intensity).toBe(0);
+    expect(commits()).toBe(0);
+    t.cancel();
   });
 
   it("enforces the speed limit no matter how violent the drag", () => {
@@ -230,5 +254,21 @@ describe("shellTotalsFromScene", () => {
     expect(totals[3]).toBe(5_000);
     expect(totals[4]).toBe(9);
     expect(shellTotalsFromScene(null)).toEqual([0, 0, 0, 0, 0]);
+  });
+});
+
+describe("shellTotalsFromLayout", () => {
+  it("buckets rim positions by log depth and ignores the core", () => {
+    const inner = coreRadiusAt(0, VIEW, 1) * 1.03;
+    const wall = rimRadiusAt(0, VIEW);
+    const pts = [
+      { x: 10, y: 0 },
+      { x: inner + 4, y: 0 },
+      { x: inner + 0.9 * (wall - inner), y: 0 },
+    ];
+    const totals = shellTotalsFromLayout(pts, VIEW);
+    expect(totals.reduce((a, b) => a + b, 0)).toBe(2);
+    expect(totals[1]).toBeGreaterThan(0);
+    expect(totals[4] + totals[3] + totals[2]).toBeGreaterThan(0);
   });
 });

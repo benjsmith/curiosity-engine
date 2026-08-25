@@ -1,6 +1,6 @@
 {
   "name": "@curiosity/knowledge-atlas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Embeddable knowledge-atlas viewer engine: framework-independent core, Canvas renderer, React adapter, Curiosity Engine data adapter.",
   "license": "MIT",

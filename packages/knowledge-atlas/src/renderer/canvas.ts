@@ -462,12 +462,19 @@ export class CanvasRenderer implements SceneRenderer {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
-    if (m.odometer >= 1) {
+    const rate = m.rate ?? 0;
+    if (rate >= 1 || m.odometer >= 1) {
       ctx.fillStyle = T.text;
-      ctx.font = "600 12px system-ui, sans-serif";
+      ctx.font = "600 13px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "alphabetic";
-      ctx.fillText(`≈ ${formatDocs(m.odometer)} docs streaming past`, 0, height / 2 - 18);
+      const label = rate >= 1
+        ? `≈ ${formatDocs(rate)} nodes/s`
+        : `≈ ${formatDocs(m.odometer)} nodes`;
+      // Origin is canvas centre after translate. Bottom (height/2-18)
+      // sits under the host types picker in a narrow pane; top matches
+      // the Switch Bay-proven overlay.
+      ctx.fillText(label, 0, -height / 2 + 22);
     }
     ctx.restore();
   }

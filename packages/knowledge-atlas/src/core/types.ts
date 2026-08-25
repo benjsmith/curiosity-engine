@@ -253,6 +253,8 @@ export type TrailState = {
 export type AtlasState = {
   focusId?: string;
   semanticScale: number;
+  /** Geometric density scale (hybrid first-paint / wheel). */
+  viewScale: number;
   lens: AtlasLens;
   pinned: string[];
   selection: string[];
@@ -363,6 +365,10 @@ export type AtlasConfig = {
   boundaryShape?: number;
   /** Classic-viewer force controls. */
   physics?: Partial<AtlasPhysics>;
+  /** Host-known corpus size. When set, hybrid first paint uses a
+   *  view-scale that fits the whole graph (individual nodes + log
+   *  rim) instead of the type-cluster overview. */
+  corpusSize?: number;
   /** Default "focus". */
   layout?: LayoutKind;
   budget?: Partial<SceneBudget>;
