@@ -2,6 +2,22 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-08-25 — v1.3.1 — Curator is a role: CLAUDE.md / AGENTS.md no longer force schema.md on every agent
+
+**Migration:** after installing this skill version, run `setup.sh` in each
+workspace (or `update.sh --yes`, which does that). It refreshes `CLAUDE.md`
+and adds `AGENTS.md`. **Breaking:** none. Skipping the refresh leaves the
+old "read schema.md before any operation" line; the wiki and CURATE loop
+are unchanged.
+
+VS Code `/create-agent` was copying the CURATE loop into unrelated agents
+because workspace `CLAUDE.md` said to read `.curator/schema.md` before
+*any* operation. Schema.md stays the curator protocol. The workspace
+mirrors now say: load it only for the curiosity-engine skill, named
+Curator/Auto agents, or when the user asked to maintain the wiki.
+`template/AGENTS.md` is the Copilot-facing copy of that split.
+`setup.sh` refreshes both files from templates.
+
 ## 2026-08-14 — v1.3.0 — Knowledge Atlas viewer and shared graph navigation
 
 **Migration:** none — rebuild or reopen the viewer to receive the new static

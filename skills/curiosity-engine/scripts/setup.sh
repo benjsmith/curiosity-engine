@@ -994,6 +994,7 @@ fi
 #     sources/ entities/ concepts/ analyses/ evidence/ facts/
 #   .curator/              curator state, NOT tracked by wiki's git
 #   CLAUDE.md              workspace instructions (mirrors SKILL.md)
+#   AGENTS.md              Copilot /create-agent scoped rules (not CURATE)
 #   .claude/settings.json  auto-allow permissions
 mkdir -p vault/raw wiki/{sources,entities,concepts,analyses,evidence,facts,tables,figures,notes,todos,projects}
 touch vault/.gitkeep vault/raw/.gitkeep
@@ -1239,6 +1240,7 @@ for stale in .curator/sweep.py .curator/sweep.py.bak .curator/.skill_path; do
 done
 
 refresh_template_md "$TEMPLATE_DIR/CLAUDE.md" "CLAUDE.md"
+refresh_template_md "$TEMPLATE_DIR/AGENTS.md" "AGENTS.md"
 
 # Generate Claude Code settings inline. Auto-allows:
 #   - git commands scoped via `git -C wiki <cmd>` AND `git -C */wiki <cmd>`

@@ -215,7 +215,12 @@ Existing CE workspaces are unaffected. Step 1 of detection short-circuits to the
 
 **Figure asset PNGs** (`wiki/figures/_assets/`) — Binary files for `wiki/figures/*.md` pages. Lives inside the wiki at a `_`-prefixed subfolder (the `_` signals "supporting files, not content") so assets are inside the Obsidian vault scope; the static viewer mirrors the folder into its bundle so `<img>` tags resolve over HTTP without any reconfiguration. NOT git-tracked: `wiki/.gitignore` excludes `/figures/_assets/` because the binaries are regenerable from vault PDFs via `figures.py regen`. A fresh clone re-materialises the folder on the first setup.sh run.
 
-Read `.curator/schema.md` before any operation.
+When this skill is running a curator operation (CURATE, INGEST, SWEEP,
+LINK, LINT, or wiki maintenance the user asked for), read
+`.curator/schema.md` first. That file is the curator protocol, not the
+default for every agent sharing the folder — workspace `CLAUDE.md` and
+`AGENTS.md` say so, so `/create-agent` and other tools do not copy the
+CURATE loop into unrelated agents.
 
 ## Curator config
 
@@ -937,6 +942,12 @@ Integrity + regen: `uv run python3 <skill_path>/scripts/figures.py check wiki` l
 
 `score_diff` floor for new `figures/*` pages is ≥1 citation, 0 wikilinks (frontmatter `relates_to` carries linkage), ≥10 words — captions are terse by design.
 
-## CLAUDE.md mirror
+## CLAUDE.md / AGENTS.md mirror
 
-`template/CLAUDE.md` is dropped into each workspace on setup. It mirrors the bash-discipline, layout, and naming sections of this file so a subagent spawned inside the workspace inherits the same rules. If the two drift, SKILL.md wins — regenerate the workspace `CLAUDE.md` from the template.
+`template/CLAUDE.md` and `template/AGENTS.md` are dropped into each
+workspace on setup (`setup.sh` refreshes both). CLAUDE.md mirrors the
+bash-discipline, layout, and naming sections of this file so a subagent
+spawned inside the workspace inherits the same rules. AGENTS.md is the
+Copilot / VS Code `/create-agent` facing file: curator is a role, not
+the default. If they drift, SKILL.md wins for skill sessions —
+regenerate from the templates via `setup.sh`.
