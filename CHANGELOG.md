@@ -2,7 +2,7 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
-## Unreleased — graph search, and one mark per hit
+## 2026-09-01 — v1.5.0 — Graph search, and one mark per hit
 
 **Migration:** none — rebuild the viewer bundle (`viewer.sh build`) so
 the new `static/search.js` is copied in. **Breaking:** none.
