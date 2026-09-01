@@ -40,6 +40,9 @@
   if (window.AtlasViewer && AtlasViewer.initChoice) {
     AtlasViewer.initChoice(data, viewerMode);
   }
+  /* Graph search marks the canvas and the page list together. Wired
+   * after the viewer so it talks to whichever one took the pane. */
+  if (window.GraphSearch) GraphSearch.init(data, graphApi);
   _maybeShowScanStaleBanner(data);
 
   /* refetchData — called after the Edit module saves a page. Pulls a

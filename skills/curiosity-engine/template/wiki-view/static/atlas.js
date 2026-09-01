@@ -47,6 +47,9 @@
       if (typeState) typeState.textContent = types.size + '/12';
       handle.setLabels(mode, Array.from(types));
     }
+    // setLabels re-renders the resident scene (no rebuild, no layout
+    // churn) — the cheapest repaint the engine API exposes.
+    var repaint = paintLabels;
     function setMode(next) {
       mode = next;
       document.documentElement.dataset.labels = mode;
@@ -129,7 +132,53 @@
       }
     });
     paintLabels();
-    return { setMode: setMode, cycleMode: cycleMode };
+    return { setMode: setMode, cycleMode: cycleMode, repaint: repaint };
+  }
+
+  /* Drop the scene's "current focus" decoration.
+   *
+   * The scene builder always designates one node as the focus — accent
+   * ring, its edges lit at priority 1 — and when the host has no focus
+   * it picks a deterministic entry node instead. A wiki that stays
+   * resident as one full-graph scene never rebuilds on focus changes,
+   * so that mark is stuck on a page the user never chose for the whole
+   * session, trailing lit edges. Roles are read by the renderer per
+   * frame and by the layout only while solving, which has already
+   * happened by scene-ready — so demoting them afterwards changes the
+   * picture and nothing else. */
+  function stripFocusMark(engine) {
+    var snap = engine && engine.snapshot ? engine.snapshot() : null;
+    var scene = snap && snap.scene;
+    if (!scene) return false;
+    var changed = false;
+    (scene.nodes || []).forEach(function (n) {
+      if (n.role === 'focus') { n.role = 'neighbour'; changed = true; }
+    });
+    (scene.edges || []).forEach(function (e) {
+      if (e.priority === 1) { e.priority = 5; changed = true; }
+    });
+    return changed;
+  }
+
+  /* Search hits wear the dashed halo — the renderer's "pinned" mark,
+   * read straight off engine state at draw time.
+   *
+   * What this must NOT do is call pin()/unpin(): those ask for a scene
+   * rebuild each, so a 40-hit query fires dozens of async rebuilds per
+   * keystroke, and a rebuild landing after the search is cleared
+   * repaints the stale halos — hits then stay highlighted for good.
+   * Writing the array and asking for one repaint touches no scene at
+   * all. Selection is cleared alongside: its solid accent ring is a
+   * second, competing highlight on the same nodes. */
+  function highlightSearch(handle, repaint, ids) {
+    var engine = handle.engine;
+    if (engine.trails && Array.isArray(engine.trails.pinned)) {
+      engine.trails.pinned = (ids || []).slice();
+    }
+    if (engine.select) engine.select([], 'replace');
+    if (repaint) repaint();
+    var host = document.getElementById('graph');
+    if (host) host.dataset.searchHits = String((ids || []).length);
   }
 
   function pageCount(data) {
@@ -225,14 +274,27 @@
       onOpenItem: function (id) {
         window.location.hash = '#page=' + encodeURIComponent(id);
       },
+      onEvent: function (event) {
+        // Every scene arrives carrying a focus mark. Take it off before
+        // the user sees it; the engine's own scene-ready paint runs
+        // after this callback, so no extra repaint is needed here.
+        if (event && event.kind === 'scene-ready' && handle) {
+          stripFocusMark(handle.engine);
+        }
+      },
     });
     var controls = initAtlasControls(handle);
+    // Covers a scene that landed before onEvent was wired.
+    if (stripFocusMark(handle.engine)) controls.repaint();
 
     return {
       focus: function (pageId) {
         handle.engine.focus(pageId, 'system');
       },
       clearFocus: function () {},
+      highlightSearch: function (ids) {
+        highlightSearch(handle, controls.repaint, ids);
+      },
       setLabelMode: controls.setMode,
       cycleLabelMode: controls.cycleMode,
       destroy: function () {

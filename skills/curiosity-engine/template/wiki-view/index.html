@@ -55,6 +55,13 @@
 
   <main id="graph-pane">
     <div id="graph"></div>
+    <div class="graph-search">
+      <input id="graph-search-input" type="search" placeholder="Search wiki…" autocomplete="off" spellcheck="false" aria-label="Search the graph">
+      <span id="graph-search-count" class="graph-search-count" hidden></span>
+      <button id="graph-search-clear" class="icon-btn graph-search-clear" title="Clear search" aria-label="Clear search" hidden>
+        <svg viewBox="0 0 16 16" width="12" height="12"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </div>
     <div class="graph-controls">
       <button id="viewer-mode" class="ctrl-btn hidden" title="Switch graph viewer" aria-label="Switch graph viewer">
         <span class="ctrl-label">view:</span><span id="viewer-mode-state">classic</span>
@@ -153,6 +160,7 @@
        vendored like d3/fuse. -->
   <script src="static/vendor/knowledge-atlas.js"></script>
   <script src="static/atlas.js"></script>
+  <script src="static/search.js"></script>
   <script src="static/main.js"></script>
 </body>
 </html>
