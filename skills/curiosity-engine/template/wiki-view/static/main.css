@@ -431,6 +431,10 @@ body[data-sidebar="collapsed"] .sidebar-restore { display: inline-flex; }
   font-variant-numeric: tabular-nums;
 }
 .graph-search-clear { flex: 0 0 auto; }
+/* `.icon-btn` sets `display`, which outranks the UA sheet's
+ * `[hidden] { display: none }` — without this the clear button and
+ * the hit count show over an empty search box. */
+.graph-search [hidden] { display: none; }
 
 .graph-controls {
   position: absolute;

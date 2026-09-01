@@ -201,10 +201,12 @@
     }
   }
 
+  /* A stored preference is honoured at any wiki size. `eligible()` says
+   * when Atlas starts *paying off*, which is a good default — it is not
+   * a reason to overrule someone who has already chosen. */
   function atlasEnabled(data) {
     var explicit = queryChoice();
     if (explicit) return explicit === 'atlas';
-    if (!eligible(data)) return false;
     try {
       return localStorage.getItem(STORAGE_KEY) === 'atlas';
     } catch (e) {
@@ -212,14 +214,17 @@
     }
   }
 
-  /* The selector is host chrome rather than engine chrome. It appears
-   * only when Atlas's bounded-scene model adds value. Changing mode is
-   * deliberately a reload: it leaves the classic graph lifecycle and
-   * Atlas canvas teardown independent and keeps hash routing intact. */
+  /* The selector is host chrome rather than engine chrome. It is offered
+   * whenever the engine is loaded, so a mid-size wiki can still opt in:
+   * hiding it below MIN_ATLAS_PAGES left no way to try Atlas at all, and
+   * the threshold is a rule of thumb, not a capability boundary.
+   * Changing mode is deliberately a reload: it leaves the classic graph
+   * lifecycle and Atlas canvas teardown independent and keeps hash
+   * routing intact. */
   function initChoice(data, activeMode) {
     var button = document.getElementById('viewer-mode');
     var state = document.getElementById('viewer-mode-state');
-    if (!button || !state || !eligible(data)) return;
+    if (!button || !state || !window.KnowledgeAtlas) return;
 
     state.textContent = activeMode;
     button.title = activeMode === 'atlas'

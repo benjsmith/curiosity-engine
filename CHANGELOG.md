@@ -26,6 +26,16 @@ viewer fighting the reader:
 - **No edge recolouring.** Accent-striping every edge that touches a hit
   turns a broad query into a wall of accent lines.
 
+### The Classic / Atlas chooser is always offered
+
+The `view:` button was hidden below `MIN_ATLAS_PAGES` (360), and a
+stored preference was ignored below it too — so a 356-page wiki had no
+way to try Atlas at all, and no way to stay in it. The threshold is a
+rule of thumb about when Atlas starts paying off, not a capability
+boundary: the chooser now appears whenever the engine is loaded, and a
+choice already made is honoured at any size. Classic remains the
+default.
+
 ### Atlas: the stuck focus mark is gone
 
 The scene builder always designates one node as the focus — accent ring,
