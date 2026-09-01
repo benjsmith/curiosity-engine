@@ -50,7 +50,6 @@ window.GraphSearch = (function () {
     var input = document.getElementById('graph-search-input');
     var clearBtn = document.getElementById('graph-search-clear');
     var countEl = document.getElementById('graph-search-count');
-    var host = document.getElementById('graph-pane');
     if (!input || !clearBtn) return;
 
     var timer = 0;
@@ -91,14 +90,12 @@ window.GraphSearch = (function () {
       ev.stopPropagation();
       if (input.value) { input.value = ''; applyNow(''); } else input.blur();
     });
-    if (host) {
-      host.addEventListener('keydown', function (ev) {
-        if (!(ev.metaKey || ev.ctrlKey) || ev.key.toLowerCase() !== 'f') return;
-        ev.preventDefault();
-        input.focus();
-        input.select();
-      });
-    }
+    /* No ⌘F / Ctrl-F binding. The box is on screen already, and the
+     * listener only fired when focus happened to be inside the graph
+     * pane — everywhere else the browser's own find bar opened, so the
+     * shortcut gave you two search boxes instead of one. Claiming it
+     * reliably means intercepting at the document, which takes
+     * find-in-page away from the sidebar list and the open page. */
     paint('');
   }
 

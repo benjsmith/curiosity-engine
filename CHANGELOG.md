@@ -14,7 +14,14 @@ dashed halo while the rest of the field recedes; the page list marks the
 same hits and opens the type groups holding them, so the two surfaces
 always agree about what matched. Substring match over id, title, path,
 type and page properties — which also finds a page by the source file it
-came from. `⌘F` / `Ctrl-F` focuses it, Escape or `×` clears.
+came from. Escape or `×` clears it.
+
+There is no `⌘F` binding. The box is on screen already, and a listener
+scoped to the graph pane only fired when focus happened to be there —
+everywhere else the browser's own find bar opened, so the shortcut
+produced two search boxes. Claiming it reliably means intercepting at
+the document, which takes find-in-page away from the sidebar list and
+the open page.
 
 Three things it deliberately does not do, each of which reads as the
 viewer fighting the reader:
