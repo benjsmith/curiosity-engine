@@ -2,6 +2,63 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-09-01 — v1.5.0 — Graph search, and one mark per hit
+
+**Migration:** none — rebuild the viewer bundle (`viewer.sh build`) so
+the new `static/search.js` is copied in. **Breaking:** none.
+
+### Graph search (new)
+
+A search box over the canvas, in both viewers. Matching nodes wear a
+dashed halo while the rest of the field recedes; the page list marks the
+same hits and opens the type groups holding them, so the two surfaces
+always agree about what matched. Substring match over id, title, path,
+type and page properties — which also finds a page by the source file it
+came from. Escape or `×` clears it.
+
+There is no `⌘F` binding. The box is on screen already, and a listener
+scoped to the graph pane only fired when focus happened to be there —
+everywhere else the browser's own find bar opened, so the shortcut
+produced two search boxes. Claiming it reliably means intercepting at
+the document, which takes find-in-page away from the sidebar list and
+the open page.
+
+Three things it deliberately does not do, each of which reads as the
+viewer fighting the reader:
+
+- **No auto-zoom to the hits.** The camera stays where you put it.
+- **No forced labels.** Labels stay on whatever the `labels` control and
+  the type filter say; hovering a hit names it. Labelling 40 hits at once
+  buries the canvas in overlapping text.
+- **No edge recolouring.** Accent-striping every edge that touches a hit
+  turns a broad query into a wall of accent lines.
+
+### The Classic / Atlas chooser is always offered
+
+The `view:` button was hidden below `MIN_ATLAS_PAGES` (360), and a
+stored preference was ignored below it too — so a 356-page wiki had no
+way to try Atlas at all, and no way to stay in it. The threshold is a
+rule of thumb about when Atlas starts paying off, not a capability
+boundary: the chooser now appears whenever the engine is loaded, and a
+choice already made is honoured at any size. Classic remains the
+default.
+
+### Atlas: the stuck focus mark is gone
+
+The scene builder always designates one node as the focus — accent ring,
+its edges lit — and picks a deterministic entry node when the host has no
+focus. A wiki that stays resident as one full-graph scene never rebuilds
+on focus changes, so that ring sat on a page nobody chose for the whole
+session, trailing lit edges. The host now demotes the mark as each scene
+lands; roles are read by the renderer per frame and by the layout only
+while solving, so this changes the picture and nothing else.
+
+Atlas search highlights via the renderer's pinned mark, written directly
+and repainted once. Going through `pin()`/`unpin()` would request a scene
+rebuild per hit — dozens of async rebuilds per keystroke, and a rebuild
+landing after the search was cleared repainted stale halos, leaving hits
+highlighted for good.
+
 ## 2026-08-26 — v1.4.0 — Knowledge Atlas first paint is the whole wiki
 
 **Migration:** none — after installing this skill version, rebuild or reopen

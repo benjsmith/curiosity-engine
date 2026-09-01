@@ -218,6 +218,12 @@ body[data-sidebar="collapsed"] #sidebar > * { display: none; }
   background: var(--bg-elev);
   color: var(--accent);
 }
+/* Graph-view search hit — the page list marks what the canvas marks,
+ * so the two surfaces always agree about what matched. */
+.sidebar-row[data-search-hit="true"] {
+  background: color-mix(in oklab, var(--accent), transparent 82%);
+}
+.sidebar-row[data-search-hit="true"] .row-title { color: var(--accent); }
 .row-title {
   white-space: nowrap;
   overflow: hidden;
@@ -358,7 +364,22 @@ body[data-sidebar="collapsed"] .sidebar-restore { display: inline-flex; }
  */
 .node[data-vis="hidden"]     { opacity: 0; pointer-events: none; }
 .node[data-vis="dim"]        { opacity: 0.18; }
-.node[data-vis="focus"] circle { stroke: var(--accent); stroke-width: 2px; }
+.node[data-vis="focus"] > circle.node-body { stroke: var(--accent); stroke-width: 2px; }
+
+/* Search hits wear a halo and nothing else: a dashed ring standing off
+ * the node, the same mark the Atlas renderer uses for pinned nodes. The
+ * node keeps its own fill and stroke — an extra accent outline reads as
+ * a second, competing highlight. `r` is refreshed on zoom (graph.js) so
+ * the standoff holds in screen px. */
+.node > circle.search-ring { display: none; fill: none; pointer-events: none; }
+.node.search-hit > circle.search-ring {
+  display: inline;
+  stroke: var(--text);
+  stroke-width: 1.2px;
+  stroke-dasharray: 2 2;
+  opacity: 0.95;
+  vector-effect: non-scaling-stroke;
+}
 .node:not([data-vis]),
 .node[data-vis="visible"]    { opacity: 1; }
 
@@ -372,6 +393,48 @@ body[data-sidebar="collapsed"] .sidebar-restore { display: inline-flex; }
 .edge[data-vis="hidden"]     { opacity: 0; }
 .edge[data-vis="dim"]        { stroke-opacity: 0.06; }
 .edge[data-vis="focus"]      { stroke: var(--accent); stroke-opacity: 0.9; }
+
+/* Graph search — centred over the canvas, out of the way of the
+ * bottom-left controls and the modal. */
+.graph-search {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: min(420px, calc(100% - 120px));
+  padding: 4px 8px 4px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+#graph-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+#graph-search-input::placeholder { color: var(--text-faint); }
+#graph-search-input::-webkit-search-cancel-button { display: none; }
+.graph-search-count {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.graph-search-clear { flex: 0 0 auto; }
+/* `.icon-btn` sets `display`, which outranks the UA sheet's
+ * `[hidden] { display: none }` — without this the clear button and
+ * the hit count show over an empty search box. */
+.graph-search [hidden] { display: none; }
 
 .graph-controls {
   position: absolute;

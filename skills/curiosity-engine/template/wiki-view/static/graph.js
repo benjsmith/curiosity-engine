@@ -43,6 +43,7 @@ window.Graph = (function () {
   let _labelsHidden = false;
   let focusId = null;       // hover OR modal target; null = idle
   let focusOrigin = null;   // 'hover' | 'modal' — for ordering rules
+  let searchHits = null;    // Set of ids from the graph search; null = idle
   let _autoVisibleIds = new Set();    // cache: ids whose labels show in auto mode
   let _autoRecomputeScheduled = false;
   let _isDragging = false;            // suppress hover-focus changes mid-drag
@@ -50,6 +51,8 @@ window.Graph = (function () {
   let _zoomSettleTimer = null;
   let classicMinimap = null;
   const ZOOM_SETTLE_MS = 120;
+  // Screen-px standoff between a search hit and its halo ring.
+  const SEARCH_RING_GAP = 6;
 
   // Type canonicalization — frontmatter uses singular forms, subdir
   // names plural; collapse to a single key per type so the user-facing
@@ -430,8 +433,15 @@ window.Graph = (function () {
         });
 
     nodeSel.append('circle')
+      .attr('class', 'node-body')
       .attr('r', d => d.r = nodeRadius(d))
       .attr('fill', d => colourFor(d.type, palette));
+
+    // Search halo. Hidden by CSS until the node is a hit; `r` is
+    // re-derived on zoom so the standoff holds in screen px.
+    nodeSel.append('circle')
+      .attr('class', 'search-ring')
+      .attr('r', d => nodeRadius(d) + SEARCH_RING_GAP);
 
     textLayer = g.append('g').attr('class', 'node-labels');
     textSel = textLayer
@@ -801,11 +811,38 @@ window.Graph = (function () {
             d3.zoomIdentity.translate(tx, ty).scale(k));
   }
 
+  /* Keep the search halo a constant distance from the node on screen.
+   * The ring lives in the zoomed layer, so its radius is divided by the
+   * current zoom — otherwise hits found while zoomed out wear a halo
+   * too tight to see, which is exactly when they need one. */
+  function sizeSearchRings() {
+    if (!nodeSel) return;
+    const k = (zoomTransform && zoomTransform.k) || 1;
+    const gap = SEARCH_RING_GAP / k;
+    nodeSel.select('circle.search-ring').attr('r', d => nodeRadius(d) + gap);
+  }
+
   /* Compute per-node + per-edge visibility. Called on every focus
    * change and zoom end (label opacity is split out into its own
    * loop that runs every tick). */
   function applyVisibility() {
     if (!g) return;
+    const searching = searchHits && searchHits.size > 0;
+    if (searching) {
+      // Hits stay lit and wear the halo; everything else recedes. Edges
+      // are NOT recoloured: accent-striping every edge that touches a
+      // hit turns a 40-hit query into a canvas of green spaghetti, and
+      // Atlas doesn't paint them either. The halo is the whole signal.
+      nodeSel.attr('data-vis', d =>
+        (searchHits.has(d.id) || d.id === focusId) ? 'visible' : 'dim');
+      nodeSel.classed('search-hit', d => searchHits.has(d.id));
+      sizeSearchRings();
+      edgeSel.attr('data-vis', 'dim');
+      applyLabelOpacity();
+      return;
+    }
+    if (nodeSel) nodeSel.classed('search-hit', false);
+
     const hasFocus = focusId != null;
     const focusSet = hasFocus
       ? (() => { const s = new Set(neighbours.get(focusId) || []); s.add(focusId); return s; })()
@@ -841,36 +878,53 @@ window.Graph = (function () {
    * `_autoVisibleIds` and reused until zoom/layout settles. */
   function applyLabelOpacity() {
     if (!textSel || _isZooming || _labelsHidden) return;
+    const searching = searchHits && searchHits.size > 0;
     const hasFocus = focusId != null;
     const focusSet = hasFocus
       ? (() => { const s = new Set(neighbours.get(focusId) || []); s.add(focusId); return s; })()
       : null;
 
     textSel.style('opacity', function(d) {
+      // The hovered (or modal) node always names itself. During a search
+      // this is how a hit gets read: hover it. Labelling every hit at
+      // once buries the graph in overlapping text.
+      if (hasFocus && d.id === focusId) return 1;
+
       // Types the user has filtered out → label only on direct hover.
       // Defaults to concept/entity/note/todo; user toggles others via
       // the label-types popover.
-      if (!isLabelTypeAllowed(d.type)) {
-        return (hasFocus && d.id === focusId) ? 1 : 0;
-      }
+      if (!isLabelTypeAllowed(d.type)) return 0;
 
-      // Focus + 1-hop neighbours always show full opacity.
-      if (hasFocus && focusSet.has(d.id)) return 1;
+      // Focus + 1-hop neighbours always show full opacity. Not during a
+      // search — hovering a hit would then also label its neighbourhood.
+      if (!searching && hasFocus && focusSet.has(d.id)) return 1;
 
-      // Decide raw visibility (would-be-shown, ignoring dim).
+      // Decide raw visibility (would-be-shown, ignoring dim). A search
+      // does not override this: labels stay on whatever auto/on/off the
+      // user picked.
       let visible;
       if (labelMode === 'on')       visible = true;
       else if (labelMode === 'off') visible = false;
       else                          visible = _autoVisibleIds.has(d.id);
       if (!visible) return 0;
 
-      // Visible non-neighbour during a focus state → dim the label so
-      // attention follows the highlighted neighbourhood. Labels live in
+      // Visible non-hit / non-neighbour during a search or focus state →
+      // dim the label so attention follows the highlight. Labels live in
       // a separate layer now so they don't inherit the node-group dim
       // CSS — apply equivalent opacity here.
+      if (searching) return searchHits.has(d.id) ? 1 : 0.18;
       if (hasFocus) return 0.18;
       return 1;
     });
+  }
+
+  /* Highlight only — the camera stays where the user put it. An
+   * auto-fit to the hits reads as the graph running away from you. */
+  function highlightSearch(ids) {
+    searchHits = (ids && ids.length) ? new Set(ids) : null;
+    const host = document.getElementById('graph');
+    if (host) host.dataset.searchHits = String(ids ? ids.length : 0);
+    applyVisibility();
   }
 
   /* scheduleAutoRecompute coalesces zoom/resize/tick/end events into a
@@ -977,6 +1031,7 @@ window.Graph = (function () {
     focus: focusOnPage,
     setLabelMode,
     cycleLabelMode,
+    highlightSearch,
     clearFocus: () => setFocus(null),
   };
 })();
