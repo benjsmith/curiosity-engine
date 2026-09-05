@@ -13,7 +13,16 @@
 
 Record of a one-shot test of the (now-retired) ITERATE and EVOLVE mechanics on a seeded scratch wiki. The scratch wiki is kept at `~/Documents/curiosity-test` so it can be poked at afterward.
 
-**Current regression suite** (repo root, not inside the skill install): `python3 -m unittest discover tests` — ships `tests/test_entity_gate.py` for the v0.8.3 entity-resolution abstention gate (fixture workspace, no network), `tests/test_okf_export.py` for the OKF exporter (`okf_export.py`; fixture wiki projected to an Open Knowledge Format bundle, assertions on the emitted files + JSON manifest, no network), `tests/test_bootstrap.py` for bootstrap densify (caption routing, floors, vault-path normalize, catalog link filter, pack partition; no network / no LLM).
+**Current regression suite** (repo root, not inside the skill install): `python3 -m unittest discover tests` — ships `tests/test_entity_gate.py` for the v0.8.3 entity-resolution abstention gate (fixture workspace, no network), `tests/test_okf_export.py` for the OKF exporter (`okf_export.py`; fixture wiki projected to an Open Knowledge Format bundle, assertions on the emitted files + JSON manifest, no network), `tests/test_bootstrap.py` for bootstrap densify (caption routing, floors, vault-path normalize, catalog link filter, pack partition; no network / no LLM), and `tests/test_structured_datasets.py` for the v1.6.0 structured-dataset path (JSON/JSONL extraction shapes and failure policy, pointer collisions, null/missing/precision fidelity, Markdown escaping, hostile content, rows beyond the Markdown cap, metadata/record separation, model proposals and human-schema protection, conflict/duplicate handling, replay and interrupted imports, plus an end-to-end ingest → promotion → model → validated class rows → cited wiki artifacts fixture; temporary workspaces, no network / no LLM).
+
+Some suites need third-party imports that are not in the ambient interpreter; run them through `uv`:
+
+```
+uv run --with pyyaml --with openpyxl --with numpy \
+  python3 -m unittest discover tests
+```
+
+Individual suites run by module name (`python3 -m unittest tests.test_structured_datasets`). Note `discover` needs the plain `discover tests` form — `-s tests -t .` fails, because there is no `tests/__init__.py`.
 
 ## Setup
 
