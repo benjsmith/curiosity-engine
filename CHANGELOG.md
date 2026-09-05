@@ -2,6 +2,24 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-09-05 — v1.6.1 — Testing docs name the dataset suite
+
+**Migration:** none. **Breaking:** none. Documentation only — no script,
+config, or contract change.
+
+`docs/testing.md` listed the regression suites by name but had not been
+updated for `tests/test_structured_datasets.py`, so the v1.6.0 suite was
+invisible to anyone reading the testing doc to find out what is covered.
+
+It also documented `python3 -m unittest discover tests` without saying
+that several suites import third-party packages (`pyyaml`, `openpyxl`,
+`numpy`) that are not in the ambient interpreter — so the documented
+command fails on a clean machine with an import error rather than a
+useful message. The `uv run --with ...` form is now spelled out, along
+with running an individual suite by module name, and a note that the
+`-s tests -t .` variant of `discover` fails because there is no
+`tests/__init__.py`.
+
 ## 2026-09-05 — v1.6.0 — Structured datasets: JSON/JSONL as evidence
 
 **Migration:** none — additive. New config keys under `auto_mode`
