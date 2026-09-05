@@ -217,6 +217,9 @@ ALLOWED_FM_KEYS = frozenset({
     # annotate the `[tab]` wiki pages produced by
     # `sweep.py promote-extracted-tables`.
     "has_tables", "tables_extracted", "tables_present", "tables_filtered",
+    "structured_version", "structured_format", "structured_options", "structured_settings",
+    "data_complete", "preview_truncated", "records_accepted", "records_rejected",
+    "collection_path", "collection_kind", "record_encoding", "table_content_sha",
     # `cid_glyphs` counts `(cid:NN)` artifacts — glyphs the PDF's font
     # carried no Unicode mapping for. Non-zero means part of the text is
     # structurally present but unreadable, which is why the source is

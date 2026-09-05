@@ -2,6 +2,133 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-09-05 — v1.6.0 — Structured datasets: JSON/JSONL as evidence
+
+**Migration:** none — additive. New config keys under `auto_mode`
+(`max_depth`, `max_fields`, `max_cell_bytes`, `max_records`, `max_cells`)
+default to values that preserve existing behaviour, and `setup.sh`'s
+additive merge brings them in. `.json` / `.jsonl` join the default ingest
+extensions; existing UTF-8 JSON extractions are left in place with their
+citations intact. **Breaking:** none.
+
+CE can now recognise datasets in a corpus, preserve their literal records,
+and propose a data model that connects to the rest of the wiki. The whole
+design rests on one separation:
+
+**Literal extraction · model proposal · knowledge curation are three
+different things, and the system never lets one impersonate another.**
+Extraction is code-only — no LLM, no semantic inference, no unit
+conversion. Anything semantic is a *proposal* until a human accepts it
+through the existing citation ratchet. That is what makes inferred meaning
+distinguishable from source data at every later step.
+
+This is JSON/JSONL support, not general unstructured-data modelling.
+
+### What it is not
+
+External operational databases stay authoritative. There are no
+connectors, no synchronisation, and no write-back — a supplied export is
+treated as **dated evidence**, not a live mirror. A purely tabular
+workload with no knowledge-curation purpose belongs in a database, not
+here. No parquet, no SQLite dumps, no ETL orchestration, no automatic
+CURATE waves, and no retrieval-ranking changes.
+
+### Extraction (`structured_data.py`)
+
+Envelope detection is deliberately shallow and fully specified: an array
+of objects, object-per-line JSONL, or a root object whose *immediate*
+members include object-record arrays (each becomes a collection; every
+other key becomes a metadata view). Anything else falls back to UTF-8 text
+and is reported as unsupported. There is no recursive search for "the real
+records" — that guess is exactly the inference this layer refuses to make.
+
+Fidelity is the point:
+
+- Columns are RFC 6901 JSON pointers, so nesting is reversible and
+  collisions cannot occur — `{"a":{"b":1}}` → `/a/b`, `{"a/b":1}` → `/a~1b`.
+- Every cell is a JSON literal, so `null`, `""`, `false`, `0` and `"0"`
+  stay distinct; an absent field renders `⟨missing⟩`, which no JSON value
+  can collide with.
+- Numbers keep their original lexeme. `1.2300e-12` and
+  `900719925474099312345` survive exactly; nothing is routed through a
+  binary float, and `"001"` keeps its leading zeros.
+
+No silent record loss: a malformed JSON file, a bad JSONL line, a
+non-object JSONL record, or a duplicate object key rejects the whole file
+and names the line. A rejected drop-mode file is retained, not deleted.
+
+### Previews are not record storage
+
+The Markdown body is a **bounded preview** for humans, FTS and promotion.
+The complete representation is the retained original plus the recorded
+extractor version and options — replayed under SHA-256 verification. That
+was chosen over writing a second extraction artifact precisely because a
+second copy can drift from the original.
+
+So `data_complete` (about the source) and `preview_truncated` (about the
+Markdown) are reported separately, and promotion populates
+`_extracted_tables` from a hash-verified replay of the original rather
+than from the truncated preview. Scrub runs over decoded values across the
+whole file, including records that never appear in the preview.
+
+### Promotion
+
+The `[tab]` public contract is unchanged: `tables_present` /
+`tables_extracted` discovery, ≤100 rows full GFM, >100 rows a 10-row
+snapshot plus column summary, full rows in `.curator/tables.db`, standard
+naming, source-stub backlinks, WikiLink/Cites edges, numeric-review
+protection.
+
+Two additive changes. The PDF false-positive filter is now format-aware —
+it still guards PDF output, but a one-column or one-row JSON collection is
+real data rather than misdetected prose. And unchanged-detection now
+includes a content hash, so *changed values in an unchanged number of
+rows* are detected instead of skipped.
+
+### Model proposal (`datasets.py`) — non-operative by construction
+
+`profile` reports observed properties only, over the full accepted
+collection: type counts, nullability, distinct counts, uniqueness,
+duplicates, sample literals. It asserts no business meaning.
+
+A spec must supply the two judgments code cannot derive — `grain` (what
+one row represents) and `membership_evidence` (why these files are one
+dataset). Collections are never merged because column names match, and
+units are never inferred from a suggestive field name. `propose` writes
+nothing to the wiki; if the entity page already declares a table, that
+human schema is authoritative and inference is blocked outright.
+
+`apply` goes through the existing gates — scrub, citation verification,
+`score_diff` — and rechecks the entity content hash immediately before an
+atomic replace, so a page edited during review is never clobbered.
+
+### Validated import (`tables.py import-dataset`)
+
+Rows reach class tables only through `tables.py`; no direct class-table
+SQL, no destructive migrations. Atomic and per-row validated. Existing
+rows are never overwritten — a conflicting primary key aborts the whole
+import. Replay is idempotent, every row keeps its origin in
+`_dataset_lineage`, and a git-trackable manifest lands in
+`wiki/_data/imports/` that is itself a replayable plan. Generated
+`record_id` values are labelled technical IDs, never natural keys.
+
+SQL has one NULL, so absent and explicit-null collapse in the class table;
+the fields that were *absent* for a row are recorded in
+`_dataset_lineage.missing_json`, so the distinction the extractor
+preserved is not lost at the import layer.
+
+### Docs and tests
+
+New `docs/datasets.md` (rules, guarantees, failure policy, limits, worked
+example, limitations) and a `SKILL.md` § DATASET operation.
+`tests/test_structured_datasets.py` covers extraction shapes and failure
+policy, nesting and precision, hostile content, data beyond the Markdown
+cap, metadata/record separation, multi-file modelling, human-edit
+protection, duplicate/conflict handling, repeat/change/replay,
+interrupted imports, and an end-to-end fixture running ingest → promotion
+→ model → validated class rows → cited, connected wiki artifacts. 220
+tests green across the repo.
+
 ## 2026-09-01 — v1.5.0 — Graph search, and one mark per hit
 
 **Migration:** none — rebuild the viewer bundle (`viewer.sh build`) so

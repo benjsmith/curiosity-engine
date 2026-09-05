@@ -34,6 +34,8 @@ GUARDED=(
     "$SCRIPT_DIR/embedder.py"
     "$SCRIPT_DIR/sweep.py"
     "$SCRIPT_DIR/tables.py"
+    "$SCRIPT_DIR/structured_data.py"
+    "$SCRIPT_DIR/datasets.py"
     "$SCRIPT_DIR/shape_check.py"
     "$SCRIPT_DIR/figures.py"
     "$SCRIPT_DIR/restyle.py"

@@ -1507,9 +1507,148 @@ def cmd_extracted_list(source_stub: Optional[str]) -> int:
 
 # ---- CLI ----
 
+def _dataset_columns(schema):
+    """Strict, additive import contract; legacy row commands are unchanged."""
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", schema.get("name", "")):
+        raise ValueError("invalid dataset table name")
+    raw = schema.get("columns", [])
+    cols = _normalize_columns(schema)
+    names = [c["name"] for c in cols]
+    if not cols or len(cols) != len(raw) or len(set(names)) != len(names):
+        raise ValueError("invalid or duplicate columns")
+    for c in cols:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", c["name"]):
+            raise ValueError("invalid/reserved column name")
+        if c["type"] not in _SQLITE_TYPE_MAP:
+            raise ValueError("unsupported column type")
+    if sum(c["pk"] for c in cols) != 1:
+        raise ValueError("dataset import requires one primary key; use a technical key for composite identity")
+    return cols
+
+
+def _dataset_validate(payload, columns, provenance):
+    ok, reason = _validate_row(payload, columns)
+    if not ok:
+        raise ValueError(reason)
+    for c in columns:
+        value = payload.get(c["name"])
+        if value is None:
+            if not c["nullable"] or c["pk"]:
+                raise ValueError(f"null/missing required field: {c['name']}")
+            continue
+        dtype = _sqlite_type(c["type"])
+        if c["type"] in ("bool", "boolean"):
+            valid = type(value) is bool
+        elif dtype == "INTEGER":
+            valid = type(value) is int and -(2**63) <= value < 2**63
+        elif dtype == "REAL":
+            import math
+            valid = type(value) in (int, float) and math.isfinite(value)
+        elif dtype == "TEXT":
+            valid = isinstance(value, str)
+        else:
+            valid = False
+        if not valid:
+            raise ValueError(f"type mismatch: {c['name']} expects {c['type']}")
+        if c["type"] == "json":
+            from structured_data import loads
+            loads(value)
+    violations = check_row(columns, {**payload, "_provenance": provenance}) if has_shape_constraints(columns) else []
+    if violations:
+        raise ValueError("shape violation: " + "; ".join(violations))
+
+
+def cmd_import_dataset(plan_path: Path, dry_run: bool = False) -> int:
+    """Atomic insert/replay. Existing conflicting rows are never overwritten.
+
+    Manifests live in wiki/_data/imports (git-track with accepted pages).
+    Row origins/missing fields remain queryable in _dataset_lineage.
+    """
+    import datasets
+    conn = None
+    try:
+        plan = json.loads(plan_path.read_text())
+        columns = _dataset_columns(plan["table"])
+        name = plan["table"]["name"]
+        pk = _primary_key_col(columns)
+        records = list(datasets.rows_for_plan(plan))
+        names = [c["name"] for c in columns]
+        schema_hash = _schema_hash(plan["table"])
+        conn = _connect()
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        info = _load_table_schema(conn, name)
+        if not info or info[1] != schema_hash:
+            raise ValueError("schema not synced to reviewed entity; run tables.py sync first")
+        live = {r[1]: r for r in conn.execute(f'PRAGMA table_info("{name}")')}
+        if any(c["name"] not in live or live[c["name"]][2].upper() != _sqlite_type(c["type"])
+               or bool(live[c["name"]][5]) != c["pk"] for c in columns):
+            raise ValueError("live schema drift")
+        conn.execute("""CREATE TABLE IF NOT EXISTS _dataset_lineage (
+            table_name TEXT NOT NULL, row_id TEXT NOT NULL, origin_json TEXT NOT NULL,
+            mapping_json TEXT NOT NULL, missing_json TEXT NOT NULL, plan_hash TEXT NOT NULL,
+            PRIMARY KEY(table_name, row_id, origin_json))""")
+        canonical = json.dumps(plan, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        plan_hash = hashlib.sha256(canonical.encode()).hexdigest()
+        inserted = unchanged = 0
+        fragment = ", ".join(f'"{n}"' for n in names)
+        for payload, origin in records:
+            provenance = "vault:" + str(Path(origin["extraction"]).relative_to("vault"))
+            _dataset_validate(payload, columns, provenance)
+            row_id = payload[pk]
+            prior = conn.execute(f'SELECT {fragment} FROM "{name}" WHERE "{pk}" = ?', (row_id,)).fetchone()
+            vals = [payload.get(n) for n in names]
+            if prior is not None:
+                if list(prior) != vals:
+                    raise ValueError(f"conflicting existing/duplicate primary key: {row_id}")
+                unchanged += 1
+            else:
+                placeholders = ", ".join("?" for _ in range(len(vals) + 3))
+                conn.execute(f'INSERT INTO "{name}" ({fragment}, "_provenance", "_inserted_at", "_schema_version") '
+                             f'VALUES ({placeholders})',
+                             vals + [provenance, datetime.now(timezone.utc).isoformat(), schema_hash])
+                _bump_change_counter(conn, name)
+                inserted += 1
+            conn.execute("INSERT OR IGNORE INTO _dataset_lineage VALUES (?, ?, ?, ?, ?, ?)",
+                         (name, str(row_id), json.dumps(origin, sort_keys=True),
+                          json.dumps(plan["mapping"], sort_keys=True),
+                          json.dumps([n for n in names if n not in payload]), plan_hash))
+        # Recheck immediately before publication: never apply a stale plan.
+        if datasets.digest(plan["entity_page"]) != plan["entity_sha256"]:
+            raise ValueError("entity changed during import")
+        manifest = Path("wiki/_data/imports") / (plan_hash + ".json")
+        if dry_run:
+            conn.rollback()
+        else:
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            if manifest.exists():
+                if manifest.read_text() != canonical + "\n":
+                    raise ValueError("replay manifest modified")
+            else:
+                # An interruption can leave an unused manifest, never committed
+                # rows without a replay recipe. Exclusive write prevents clobber.
+                with manifest.open("x") as stream:
+                    stream.write(canonical + "\n")
+            conn.commit()
+        print(json.dumps({"table": name, "inserted": inserted, "unchanged": unchanged,
+                          "dry_run": dry_run, "manifest": str(manifest)}))
+        return 0
+    except (ValueError, OSError, KeyError, TypeError, sqlite3.Error) as exc:
+        if conn is not None:
+            conn.rollback()
+        print(json.dumps({"error": str(exc), "applied": False}))
+        return 2
+    finally:
+        if conn is not None:
+            conn.close()
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p_dataset = sub.add_parser("import-dataset", help="validate and atomically import/replay a dataset plan")
+    p_dataset.add_argument("--plan", required=True, type=Path)
+    p_dataset.add_argument("--dry-run", action="store_true")
 
     p_sync = sub.add_parser("sync", help="sync schema from entity page")
     p_sync.add_argument("entity_path", type=Path)
@@ -1602,6 +1741,8 @@ def main() -> int:
                        help="backup_id from list-backups (e.g. bk-7f3a2c)")
 
     args = ap.parse_args()
+    if args.cmd == "import-dataset":
+        return cmd_import_dataset(args.plan, args.dry_run)
     if args.cmd == "sync":
         return cmd_sync(args.entity_path, confirm_human=args.confirm_human)
     if args.cmd == "insert":

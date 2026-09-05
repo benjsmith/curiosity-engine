@@ -90,7 +90,7 @@ a workspace; originals stay in-place, only .extracted.md goes to vault):
                                 (default: ".").
   --ingest-extensions <list>    Comma-separated file extensions to
                                 include (default: .pdf,.md,.txt,.docx,
-                                .pptx,.csv,.xlsx,.html,.rst).
+                                .pptx,.csv,.xlsx,.html,.rst,.json,.jsonl).
   --no-initial-scan             Skip the initial scan at end of setup.
 
 See docs/code-knowledge.md for the full design.
@@ -503,6 +503,7 @@ EOF
     for root in "${SKILL_ROOTS[@]}"; do
         cat >> "$SETTINGS_LOCAL" <<EOF
       "Bash(uv run python3 $root/scripts/lint_scores.py:*)",
+      "Bash(uv run python3 $root/scripts/datasets.py:*)",
       "Bash(uv run python3 $root/scripts/vault_search.py:*)",
       "Bash(uv run python3 $root/scripts/vault_index.py:*)",
       "Bash(uv run python3 $root/scripts/local_ingest.py:*)",
@@ -733,7 +734,7 @@ if [ "$_mode" = "project-dir" ]; then
         INGEST_PATHS="."
     fi
     if [ -z "$INGEST_EXTENSIONS" ]; then
-        INGEST_EXTENSIONS=".pdf,.md,.txt,.docx,.pptx,.csv,.xlsx,.html,.rst"
+        INGEST_EXTENSIONS=".pdf,.md,.txt,.docx,.pptx,.csv,.xlsx,.html,.rst,.json,.jsonl"
     fi
     # Convert comma lists → JSON arrays for write-config.
     _to_json_array() {
@@ -1279,6 +1280,7 @@ else
         "scripts/projects.py"                # post-multi-project allowlist
         "scripts/activity_log.py"            # post-activity-log allowlist
         "scripts/planner.py"                 # post-recency-planner allowlist
+        "scripts/datasets.py"                # structured dataset operation
         "scripts/identifier_resolve.py"      # post-resolver-split allowlist
         "identifier_resolve.py review"       # post-allowlist-narrowing canary;
                                               # forces regen on workspaces that
@@ -1377,6 +1379,7 @@ EOF
       "Bash(uv run python3 $root/scripts/vault_search.py:*)",
       "Bash(uv run python3 $root/scripts/vault_index.py:*)",
       "Bash(uv run python3 $root/scripts/local_ingest.py:*)",
+      "Bash(uv run python3 $root/scripts/datasets.py:*)",
       "Bash(uv run python3 $root/scripts/scrub_check.py:*)",
       "Bash(uv run python3 $root/scripts/score_diff.py:*)",
       "Bash(uv run python3 $root/scripts/sweep.py:*)",

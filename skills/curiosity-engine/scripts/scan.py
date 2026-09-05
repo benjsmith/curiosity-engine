@@ -65,7 +65,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import code_repo  # noqa: E402
 
 DEFAULT_EXTENSIONS = (".pdf", ".md", ".txt", ".docx", ".pptx",
-                      ".csv", ".xlsx", ".html", ".rst")
+                      ".csv", ".xlsx", ".html", ".rst", ".json", ".jsonl")
 # Standard collateral that almost never wants to be ingested. Added on
 # top of any user-supplied `exclude` entries in the pointer file.
 ALWAYS_EXCLUDE = (".git/", ".svn/", ".hg/", ".venv/", "venv/",
@@ -202,7 +202,7 @@ def _read_extraction_index(workspace: Path) -> dict[str, dict]:
     vault = workspace / "vault"
     if not vault.is_dir():
         return index
-    for ext_file in vault.rglob("*.extracted.md"):
+    for ext_file in sorted(vault.rglob("*.extracted.md"), key=lambda p: (p.stat().st_mtime_ns, str(p))):
         # Skip the stale-quarantine subdir.
         if "_stale" in ext_file.parts or "_suspect" in ext_file.parts:
             continue
@@ -285,7 +285,17 @@ def _scan_one(workspace: Path, pointer: Path, dry_run: bool = False) -> dict:
             continue
         prev_sha = existing[cs].get("sha256", "")
         cur_sha = _sha256_file(c)
-        if not prev_sha or cur_sha != prev_sha:
+        structured_stale = False
+        if c.suffix.lower() in (".json", ".jsonl"):
+            from naming import read_frontmatter
+            from structured_data import VERSION, options
+            prev_fm, _ = read_frontmatter(Path(existing[cs]["extraction"]).read_text())
+            config_path = workspace / ".curator/config.json"
+            auto = json.loads(config_path.read_text()).get("auto_mode", {}) if config_path.exists() else {}
+            structured_stale = (prev_fm.get("structured_version") != VERSION
+                or json.loads(prev_fm.get("structured_options", "{}")) != options(auto)
+                or int(prev_fm.get("max_extract_bytes", 0)) != int(auto.get("max_extract_bytes", 200 * 1024)))
+        if not prev_sha or cur_sha != prev_sha or structured_stale:
             changed.append(cs)
             to_ingest.append(c)
         else:
@@ -329,7 +339,7 @@ def _scan_one(workspace: Path, pointer: Path, dry_run: bool = False) -> dict:
         # If this is a changed file (we have a stale extraction), move
         # the stale one to vault/_stale/ before re-ingesting so the new
         # extraction can take the canonical name.
-        if str(c) in {p for p in changed}:
+        if str(c) in {p for p in changed} and c.suffix.lower() not in (".json", ".jsonl"):
             stale = existing.get(str(c), {}).get("extraction")
             if stale:
                 _quarantine_stale(workspace, Path(stale))

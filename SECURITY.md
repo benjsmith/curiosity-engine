@@ -123,6 +123,7 @@ The skill makes outbound HTTP/HTTPS calls only at these well-defined sites. Audi
 Static analyzers will flag these patterns. Each call site is documented:
 
 - `scripts/viewer_server.py:_rebuild` — `subprocess.run([list, of, hardcoded, args])` invoking `wiki_render.py`. List-form argv, no `shell=True`, every argument hardcoded or derived from `Path(__file__).parent`. No injection vector. Inline comment in the source.
+- `scripts/datasets.py:apply_reviewed` — `subprocess.run([list, of, args])` invoking `score_diff.py` to run the citation ratchet over a reviewed dataset page (added v1.6.0). List-form argv, no `shell=True`. The script path comes from `Path(__file__).with_name("score_diff.py")`; the only path argument is the entity page, already constrained by `scoped()` to resolve inside `wiki/entities/` and rejected if it is a symlink. The untrusted reviewed-page text is passed on **stdin**, never in argv. Inline comment in the source.
 - `scripts/tables.py` — `re.compile(...)` (regex compilation only). Earlier `__import__("re").compile(...)` form — same effect, replaced for static-analyzer clarity in v0.1.2.
 - `scripts/sweep.py` — calls Python's `re.compile()` extensively for pattern matching. No `eval`, no `exec`, no dynamic code construction from external input.
 

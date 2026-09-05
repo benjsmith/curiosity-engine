@@ -148,6 +148,7 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 - [docs/okf-interop.md](skills/curiosity-engine/docs/okf-interop.md) — Open Knowledge Format export (cross-tool exchange)
 - [docs/multi-project.md](skills/curiosity-engine/docs/multi-project.md) — multi-project model in detail
 - [docs/code-knowledge.md](skills/curiosity-engine/docs/code-knowledge.md) — code-repo integration
+- [docs/datasets.md](skills/curiosity-engine/docs/datasets.md) — JSON/JSONL dataset extraction, model proposals, validated imports
 - [docs/skill-rationale.md](skills/curiosity-engine/docs/skill-rationale.md) — selected design decisions, compression rules, lineage
 - [docs/citation.md](skills/curiosity-engine/docs/citation.md) — acknowledgements & citation (BigMixSolDB)
 
