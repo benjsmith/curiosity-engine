@@ -2,6 +2,20 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-09-07 — v1.7.1 — Viewer docs: Atlas, search, how to run
+
+**Migration:** none. **Breaking:** none. Documentation only — no script,
+config, or contract change.
+
+The README Quick Start did not say how to open the built-in graph
+viewer, and Atlas + graph search were a Features one-liner. Quick Start
+now has `viewer.sh open` (npx-skills and git-clone paths), What-it-does
+lists the viewer, and the Features bullet covers canvas + sidebar search
+plus Atlas mode. `docs/viewers.md` and SKILL.md's VIEWER section match:
+chooser always offered, `?viewer=atlas` override, vendored D3/Fuse/Atlas
+in-tree (no CDN fetch at build), validated on a ~26k-source corpus that
+produced a ~40k-page wiki.
+
 ## 2026-09-06 — v1.7.0 — Recoverable structured-data pipelines
 
 **Migration:** no automatic schema or record-ID migration. Existing import
