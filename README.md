@@ -7,11 +7,11 @@ A self-improving knowledge wiki for coding-agent CLIs. Drop sources in, ask ques
 
 ## What it does
 
-Two content stores, two derived databases, one curator, three commands:
+Two content stores, derived databases, one curator, three commands:
 
 - **Vault** (`vault/`) — raw sources: PDFs, docs, spreadsheets, slides. Append-only.
 - **Wiki** (`wiki/`) — the knowledge itself: eleven markdown page types with `[[wikilinks]]` and `(vault:path)` citations, git-tracked. The markdown is the source of truth.
-- **Databases** (derived, rebuildable) — SQLite for search and class-entity rows (`vault.db` FTS5 + optional vectors, `tables.db`), plus an embedded kuzu property graph (`graph.kuzu`) for wikilink traversal and graph retrieval.
+- **Databases** (derived, rebuildable) — SQLite for source search (`vault.db` FTS5 + optional vectors), complete structured-record search (`records.db`) and class-entity rows (`tables.db`), plus an embedded kuzu property graph (`graph.kuzu`) for wikilink traversal and graph retrieval. Table recovery requires retained sources, import manifests and correction recipes; legacy manual rows need a backup.
 - **Curator** — the autonomous agent this skill implements. Reads the vault, writes the wiki, keeps the databases in sync.
 - **`ingest`** — *"add this paper to the vault"*. Extracts text + tables + figures, indexes for keyword (and optional semantic) search.
 - **`query`** — *"what do I know about X?"*. Answers with citations, ends with a probing follow-up question.
@@ -27,7 +27,8 @@ Everything the skill does, in one line each:
 - **Multimodal table & figure extraction** from PDFs. Per-table `tab-*.md` pages, with row data mirrored to a queryable SQLite store. Numeric literal-transcription mode for scientific work.
 - **Identifier resolution** for chemicals (PubChem) and gene symbols (MyGene.info). Cached locally; lazy lookup at synthesis time only.
 - **Class tables** — entity-instance data (deals, patients, contracts, matters) with schemas declared on entity pages, rows citing vault provenance. Queryable via `tables.py`; joinable with the kuzu graph.
-- **Three storage layers, one source-of-truth file per fact**: plain markdown for prose, SQLite for class-entity row data, embedded kuzu property graph for wikilink + relational-edge traversal. The two databases are derived state.
+- **Structured JSON/JSONL pipelines** — literal extraction, streamed JSONL with resource budgets, explicit nested selectors, stable record IDs, complete-record search and Git-backed correction recovery. [Commands and recovery requirements](skills/curiosity-engine/docs/dataset-pipeline-design.md).
+- **Three storage layers**: plain markdown for prose, SQLite for search and class-entity row data, embedded kuzu property graph for wikilink + relational-edge traversal. Retained sources and accepted Git artifacts support dataset recovery.
 - **Graph retrieval with query routing** — `graph.py retrieve` does semantic seed → multi-hop BFS over the knowledge graph → ranked pages with provenance, routing global/sensemaking queries graph-only and blending vault-vector recall into factoid/multi-hop queries. Policy validated by a controlled CE-vs-RAG benchmark (graph+curation reach parity with vector RAG on factoids and win multi-hop + sensemaking). An **entity-resolution abstention gate** (`entity_gate.py`) resolves named entities against the curated identity layer before answering — look-alike / non-existent names abstain instead of false-bridging to a similarly-named entity; known aliases still resolve.
 - **Two-tier graph** — alongside curated typed edges, `rebuild` derives cheap provisional edges (co-citation + embedding-neighbor, no LLM, kuzu-only) that warm retrieval on day one and queue as candidates for the LINK pass, which promotes them to real `[[wikilinks]]` or prunes them.
 - **Semantic search** (optional, opt-in) — a shared local embedder (fastembed/ONNX + bge-small preferred — no PyTorch; sentence-transformers/MiniLM fallback) + sqlite-vec, layered over FTS5 for fuzzy queries on large corpora. Keyword stays primary. Text never leaves the machine.

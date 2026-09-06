@@ -2,6 +2,68 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-09-06 — v1.7.0 — Recoverable structured-data pipelines
+
+**Migration:** no automatic schema or record-ID migration. Existing import
+manifests retain their original identity policy. **Breaking:** none intended;
+validation now rejects malformed schemas and lossy numeric mappings that could
+previously pass. Previously imported values are not silently repaired.
+
+### Added
+
+- **Git-backed correction recovery.** Numeric reviews and backup restores write
+  immutable correction recipes under `wiki/_data/corrections/`, referenced by
+  accepted table pages. Commit them together through the existing wiki Git
+  workflow. `tables.py recover --wiki wiki [--dry-run]` reconstructs extracted
+  rows, reviewed corrections and manifest-backed class imports in temporary
+  databases, validates them, then publishes. Git remains the history store;
+  data commands do not create commits.
+- **Stable source-record IDs.** New proposals identify records by dataset ID,
+  source-content hash, collection and locator. Moving identical input or
+  changing a preview no longer duplicates its class rows. Changed source bytes
+  represent a new version; legacy manifests keep their existing IDs.
+- **Streamed JSONL and aggregate budgets.** File ingest/replay uses temporary
+  SQLite staging for records, exact profiles and summaries, with limits on
+  rows, fields, cells, raw bytes and staging disk. Import consumes rows
+  incrementally. Ordinary JSON remains bounded in memory.
+- **Explicit nested selectors.** JSON ingest accepts `--record-pointer` and
+  repeatable `--metadata-pointer` flags. RFC 6901 paths are validated and pinned
+  in extraction options; selectors locate literal data without inference.
+- **Complete-record search.** A separate `.curator/records.db` FTS5 cache covers
+  records beyond the Markdown preview, with decoded Unicode, source locators
+  and citations. Use `datasets.py search-records` and `index-records --rebuild`.
+  Existing vault search, retrieval ranking and default CURATE mixes are unchanged.
+
+### Fixed
+
+Reviewed tables survive re-promotion; correction recipes cover rows beyond
+snapshots and remain consistent after backup restores. JSON literal rendering,
+YAML titles, null handling, large-number precision and extreme-exponent
+summaries preserve source evidence. Human schemas remain authoritative, schema
+validation rejects duplicate/malformed declarations, and new proposals pin
+extraction bytes as well as original sources. Interrupted artifact writes,
+duplicate drop-file consumption and indexing-failure reporting are hardened.
+
+### Upgrade and recovery notes
+
+- For **existing numeric reviews**, run `tables.py checkpoint-reviews --wiki
+  wiki` while the current database is available, then commit the pages and
+  recipes together. Retain original vault files and referenced import manifests.
+- Stop ingest/curation writers during recovery. Legacy manually inserted class
+  rows need a database backup or a reviewed import plan. Recovery refuses to
+  discard existing rows it cannot reproduce. Table and record-cache publication
+  are separate; a cache failure reports successful table recovery with a retry.
+- Existing PDF, CSV, XLSX, PPTX and text ingestion remain covered. No automatic
+  CURATE waves, destructive schema migrations or per-row wiki pages are added.
+
+**Validation:** 260 tests passed, zero skipped; `git diff --check` passed.
+Coverage includes real PDF extractor inputs, spreadsheet/slide goldens, FTS,
+streaming budgets, selectors, legacy IDs, correction replay and recovery failure
+paths. Live kuzu rebuild and a real v1.4.0 workspace migration were not exercised.
+
+Commands and design: [dataset pipeline guide](skills/curiosity-engine/docs/dataset-pipeline-design.md).
+Bug-fix audit: [structured-data review](skills/curiosity-engine/docs/structured-data-review.md).
+
 ## 2026-09-05 — v1.6.1 — Testing docs name the dataset suite
 
 **Migration:** none. **Breaking:** none. Documentation only — no script,
