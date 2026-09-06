@@ -288,11 +288,12 @@ def _scan_one(workspace: Path, pointer: Path, dry_run: bool = False) -> dict:
         structured_stale = False
         if c.suffix.lower() in (".json", ".jsonl"):
             from naming import read_frontmatter
-            from structured_data import VERSION, options
+            from structured_data import VERSION, PREVIEW_VERSION, options
             prev_fm, _ = read_frontmatter(Path(existing[cs]["extraction"]).read_text())
             config_path = workspace / ".curator/config.json"
             auto = json.loads(config_path.read_text()).get("auto_mode", {}) if config_path.exists() else {}
             structured_stale = (prev_fm.get("structured_version") != VERSION
+                or prev_fm.get("structured_preview_version") != PREVIEW_VERSION
                 or json.loads(prev_fm.get("structured_options", "{}")) != options(auto)
                 or int(prev_fm.get("max_extract_bytes", 0)) != int(auto.get("max_extract_bytes", 200 * 1024)))
         if not prev_sha or cur_sha != prev_sha or structured_stale:

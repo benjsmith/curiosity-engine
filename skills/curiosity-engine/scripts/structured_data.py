@@ -11,10 +11,29 @@ import json
 from pathlib import Path
 
 VERSION = "json-records-v1"
+PREVIEW_VERSION = "json-markdown-v2"
 DEFAULT_LIMITS = {"max_raw_bytes": 50 * 1024 * 1024, "max_depth": 64,
                   "max_fields": 512, "max_cell_bytes": 1024 * 1024,
-                  "max_records": 100000, "max_cells": 2000000}
+                  "max_records": 100000, "max_cells": 2000000,
+                  "max_stage_bytes": 512 * 1024 * 1024}
 MISSING = object()
+
+
+def write_once(path, raw):
+    """Publish complete bytes exclusively; failed writes leave no final file."""
+    import os
+    import tempfile
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(prefix=".structured-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Unlike replace(), link() refuses to overwrite an existing artifact.
+        os.link(tmp, path)
+    finally:
+        os.unlink(tmp)
 
 
 class Number(str):
@@ -62,7 +81,55 @@ def loads(text):
 
 def options(cfg=None):
     cfg = cfg or {}
-    return {k: int(cfg.get(k, v)) for k, v in DEFAULT_LIMITS.items()}
+    result = {k: int(cfg.get(k, v)) for k, v in DEFAULT_LIMITS.items()}
+    if "record_pointer" in cfg:
+        result["record_pointer"] = cfg["record_pointer"]
+        result["metadata_pointers"] = cfg.get("metadata_pointers", [])
+    return result
+
+
+def resolve_pointer(value, path):
+    import re
+    if not isinstance(path, str) or (path and not path.startswith("/")):
+        raise StructuredError("invalid JSON pointer")
+    for part in path.split("/")[1:] if path else []:
+        if re.search(r"~(?![01])", part):
+            raise StructuredError("invalid JSON pointer escape")
+        part = part.replace("~1", "/").replace("~0", "~")
+        try:
+            if isinstance(value, list) and re.fullmatch(r"0|[1-9][0-9]*", part):
+                value = value[int(part)]
+            elif isinstance(value, dict):
+                value = value[part]
+            else:
+                raise KeyError(part)
+        except (KeyError, IndexError, ValueError):
+            raise StructuredError(f"JSON pointer not found: {path}") from None
+    return value
+
+
+def selected_tables(value, limits):
+    path = limits["record_pointer"]
+    records = resolve_pointer(value, path)
+    if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+        raise StructuredError("record_pointer must select an array of objects")
+    metadata = limits.get("metadata_pointers", [])
+    if not isinstance(metadata, list) or any(not isinstance(p, str) for p in metadata):
+        raise StructuredError("metadata_pointers must be a list of JSON pointers")
+    paths = [path] + metadata
+    for i, a in enumerate(paths):
+        for b in paths[i + 1:]:
+            if a == b or a == "" or b == "" or a.startswith(b + "/") or b.startswith(a + "/"):
+                raise StructuredError("record and metadata pointers must not overlap")
+    tables = []
+    for p in metadata:
+        item = resolve_pointer(value, p)
+        flat = flatten(item, limits, p) if isinstance(item, dict) and item else {p: item}
+        tables.append({"path": p, "kind": "metadata", "description": "Metadata " + p,
+            "headers": ["field", "value"], "rows": [[k, literal(v)] for k, v in sorted(flat.items())],
+            "locators": sorted(flat), "values": []})
+    tables.append(_table(path, records, [pointer(path, i) for i in range(len(records))], limits))
+    return tables
 
 
 def fingerprint(cfg=None):
@@ -135,13 +202,15 @@ def scrub(value):
 
 def extract(raw, fmt, cfg=None):
     limits = options(cfg)
-    if any(n <= 0 for n in limits.values()):
+    if any(limits[k] <= 0 for k in DEFAULT_LIMITS):
         raise StructuredError("limits must be positive")
     if len(raw) > limits["max_raw_bytes"]:
         raise StructuredError("max_raw_bytes exceeded")
     try:
         tables, warnings = [], []
         if fmt == "jsonl":
+            if "record_pointer" in limits:
+                raise StructuredError("selectors are supported for JSON only")
             records, locators = [], []
             for line_no, line in enumerate(io.BytesIO(raw), 1):
                 if not line.strip():
@@ -163,7 +232,9 @@ def extract(raw, fmt, cfg=None):
             value = loads(raw.decode("utf-8-sig"))
             _check(value, limits)
             scrub(value)
-            if isinstance(value, list) and all(isinstance(r, dict) for r in value):
+            if "record_pointer" in limits:
+                tables = selected_tables(value, limits)
+            elif isinstance(value, list) and all(isinstance(r, dict) for r in value):
                 tables = [_table("", value, [f"/{i}" for i in range(len(value))], limits)]
             elif isinstance(value, dict):
                 # Only immediate object-record arrays are collections. No
@@ -199,12 +270,17 @@ def extract(raw, fmt, cfg=None):
         raise StructuredError(str(exc)) from exc
 
 
+def markdown_literal(s):
+    """Escape literal data without permitting Markdown or wrapper syntax."""
+    return (html.escape(str(s), quote=False).replace("|", "&#124;")
+            .replace("[", "&#91;").replace("]", "&#93;")
+            .replace("`", "&#96;").replace("\\", "&#92;")
+            .replace("*", "&#42;").replace("_", "&#95;").replace("~", "&#126;")
+            .replace("\n", "&#10;").replace("\r", "&#13;"))
+
+
 def gfm(headers, rows):
-    def cell(s):
-        # Escape source HTML, links, fetched markers, pipes, and line breaks.
-        return (html.escape(str(s), quote=False).replace("|", "&#124;")
-                .replace("[", "&#91;").replace("]", "&#93;")
-                .replace("`", "&#96;").replace("\n", "&#10;").replace("\r", "&#13;"))
+    cell = markdown_literal
     return "\n".join(["| " + " | ".join(map(cell, headers)) + " |",
                       "|" + "|".join("---" for _ in headers) + "|"] +
                      ["| " + " | ".join(map(cell, r)) + " |" for r in rows])
@@ -236,7 +312,9 @@ def preview(data, cap):
 
 
 def column_summary(headers, rows):
-    from decimal import Decimal
+    if hasattr(rows, "stage"):
+        return rows.stage.summary()
+    from decimal import Decimal, DecimalException
     out = []
     for i, name in enumerate(headers):
         col = [r[i] for r in rows]
@@ -251,12 +329,110 @@ def column_summary(headers, rows):
         info = {"name": name, "non_null": len(present), "total": len(col),
                 "dtype": "numeric" if numeric else "json-literal"}
         if numeric:
-            info.update(min=str(min(map(Decimal, nums))), max=str(max(map(Decimal, nums))))
+            try:
+                info.update(min=str(min(map(Decimal, nums))), max=str(max(map(Decimal, nums))))
+            except (DecimalException, ValueError, OverflowError):
+                info["summary_warning"] = "numeric range exceeds summary limits; consult literal cells"
         else:
             values = list(dict.fromkeys(present))
             info.update(distinct_count=len(values), sample=[v[:160] for v in values[:3]])
         out.append(info)
     return out
+
+
+def table_hash(headers, rows):
+    """Hash the legacy JSON representation without materializing every row."""
+    sha = hashlib.sha256()
+    sha.update(("[" + json.dumps(headers, ensure_ascii=True) + ", [").encode())
+    for i, row in enumerate(rows):
+        if i:
+            sha.update(b", ")
+        sha.update(json.dumps(row, ensure_ascii=True).encode())
+    sha.update(b"]]")
+    return sha.hexdigest()
+
+
+def file_hash(path):
+    result = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            result.update(chunk)
+    return result.hexdigest()
+
+
+def copy_once(source, target):
+    import os
+    import shutil
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=".structured-", dir=Path(target).parent)
+    try:
+        with os.fdopen(fd, "wb") as out, Path(source).open("rb") as stream:
+            shutil.copyfileobj(stream, out, 1024 * 1024)
+            out.flush()
+            os.fsync(out.fileno())
+        os.link(tmp, target)
+    finally:
+        os.unlink(tmp)
+
+
+def extract_path(path, fmt, cfg=None):
+    """JSON is bounded in memory; JSONL is validated and staged one line at a time."""
+    path = Path(path)
+    limits = options(cfg)
+    if any(limits[k] <= 0 for k in DEFAULT_LIMITS):
+        raise StructuredError("limits must be positive")
+    if path.stat().st_size > limits["max_raw_bytes"]:
+        raise StructuredError("max_raw_bytes exceeded")
+    if fmt != "jsonl":
+        raw = path.read_bytes()
+        data = extract(raw, fmt, cfg)
+        data.update(_raw_bytes=raw, sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw))
+        return data
+    if "record_pointer" in limits:
+        raise StructuredError("selectors are supported for JSON only")
+    from dataset_stage import Stage
+    from scrub_check import _scan_markers
+    stage = Stage(limits)
+    total, sha = 0, hashlib.sha256()
+    try:
+        with path.open("rb") as stream, (stage.path / "original.jsonl").open("wb") as original:
+            line_no = 0
+            while True:
+                line = stream.readline(limits["max_raw_bytes"] + 1)
+                if not line:
+                    break
+                line_no += 1
+                total += len(line)
+                if total > limits["max_raw_bytes"]:
+                    raise StructuredError("max_raw_bytes exceeded")
+                original.write(line)
+                sha.update(line)
+                if not line.strip():
+                    continue
+                try:
+                    text = line.decode("utf-8-sig")
+                    item = loads(text)
+                    if not isinstance(item, dict):
+                        raise StructuredError("JSONL record must be an object")
+                    _check(item, limits)
+                    scrub(item)
+                    if _scan_markers(text, "full"):
+                        raise StructuredError("scrub: injection markers")
+                    stage.add(flatten(item, limits), {"locator": f"line:{line_no}"})
+                except (ValueError, UnicodeError, RecursionError) as exc:
+                    raise StructuredError(f"JSONL line {line_no}: {exc}") from exc
+        stage.check_disk()
+        return {"tables": [stage.table()], "warnings": [], "supported": True,
+                "records": stage.count, "complete": True, "sha256": sha.hexdigest(), "bytes": total,
+                "_stage": stage, "_raw_path": stage.path / "original.jsonl"}
+    except BaseException:
+        stage.close()
+        raise
+
+
+def close_data(data):
+    if data.get("_stage") is not None:
+        data["_stage"].close()
 
 
 def load_extraction(path):
@@ -275,10 +451,11 @@ def load_extraction(path):
     cfg = json.loads(fm["structured_options"])
     if original.stat().st_size > options(cfg)["max_raw_bytes"]:
         raise StructuredError("max_raw_bytes exceeded")
-    raw = original.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != fm.get("sha256"):
+    data = extract_path(original, fm["structured_format"], cfg)
+    if data["sha256"] != fm.get("sha256"):
+        close_data(data)
         raise StructuredError("original hash changed; re-ingest as new evidence")
-    data = extract(raw, fm["structured_format"], cfg)
     if not data["supported"]:
+        close_data(data)
         raise StructuredError("original no longer matches structured contract")
     return fm, data

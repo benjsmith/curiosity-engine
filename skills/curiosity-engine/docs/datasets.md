@@ -13,6 +13,10 @@ stay strictly separate:
 Inferred meaning never masquerades as source data. Extraction is deterministic;
 anything semantic is a proposal until a human accepts it.
 
+The additive pipeline follow-up implements Git-backed correction recovery, stable
+source-record IDs, streamed JSONL, exact nested selectors, and full-record FTS.
+See [commands and design choices](dataset-pipeline-design.md).
+
 ## Scope
 
 This release handles **JSON and JSONL** batches, reusing the CSV/XLSX and
@@ -76,7 +80,8 @@ kind of inference this layer refuses to make.
 | Duplicate keys in one object | rejected (last-wins would destroy a record) |
 | Blank JSONL lines | skipped; they carry no record |
 | Non-finite numbers (`NaN`, `Infinity`) | rejected — not valid JSON |
-| Empty input / empty object | accepted, reported as zero records |
+| Empty JSON file | rejected as malformed JSON |
+| Empty JSONL file, empty array, empty object | accepted, reported as zero records |
 | A limit exceeded | rejected, naming the limit |
 
 A rejected drop-mode file is **retained**, not deleted. Success is never
@@ -94,6 +99,7 @@ Configurable under `auto_mode` in `.curator/config.json`:
 | `max_cell_bytes` | 1 MB |
 | `max_records` | 100 000 |
 | `max_cells` | 2 000 000 |
+| `max_stage_bytes` | 512 MiB |
 | `max_extract_bytes` | 200 KB (preview only) |
 
 ### Previews vs. complete records
@@ -128,6 +134,12 @@ Markdown escaping neutralises pipes, brackets, backticks, and line breaks in the
 rendered preview, but the rendered cell is never the only recoverable form: the
 literal is always recoverable from the original.
 
+Escaping also covers backslashes, emphasis, and strikethrough, including the
+unsupported-root fallback. Fallback data cannot close the fetched-content
+wrapper or introduce wiki links. `structured_preview_version` versions rendering
+separately from extraction: a rendering upgrade produces a new extraction on
+re-ingest, preserving existing citation targets and `json-records-v1` replay.
+
 ## 2. Promotion (`sweep.py promote-extracted-tables`)
 
 The existing public contract is unchanged: `tables_present` / `tables_extracted`
@@ -158,6 +170,12 @@ bytes under a newer extractor version produces a new extraction rather than
 silently reusing the old one, and an older UTF-8 JSON extraction is left in place
 with its citations intact. Pages carrying `numeric_review_done` are never
 overwritten by a replay.
+
+The rendering version also participates in unchanged detection for unreviewed
+tables. Reviewed pages remain protected across snapshot-threshold and content-hash
+changes. Accepted reviews now reference Git-trackable correction recipes. Existing
+reviewed pages need `tables.py checkpoint-reviews` while their database is still
+available; future recovery can then reconstruct those corrections.
 
 Computed profiles and column summaries are labelled derived. They never
 substitute for the literals.
@@ -198,6 +216,9 @@ Guard rails:
 - **Existing human schemas are authoritative.** If the entity page already
   declares a table, the proposal cannot replace it; the curator must supply an
   explicit column-to-pointer mapping instead. Inference is blocked, not merged.
+  Existing schemas default to their mapped primary key; `technical_key` must be
+  explicitly supplied when using an unmapped technical primary key. New inferred
+  schemas still default to `record_id`.
 - **`unresolved` blocks application.** Open modelling questions must be closed
   first.
 
@@ -227,6 +248,9 @@ before commit.
 - **Existing rows are never overwritten.** A primary key that already exists with
   different values is a conflict and aborts the whole import.
 - **Replay is idempotent.** Re-running a plan reports `unchanged`, not duplicates.
+  New proposals also pin the extraction file's hash, so edited extraction
+  settings or metadata invalidate the proposal. Older v1 manifests lacking that
+  additional hash remain readable and retain their original source-hash checks.
 - **Every row keeps its origin** in `_dataset_lineage` (`origin_json` with
   extraction, collection, locator and source hash; plus the mapping, the fields
   that were missing, and the plan hash).
@@ -234,15 +258,28 @@ before commit.
   alongside the accepted pages, and is itself a replayable plan. An interruption
   can leave an unused manifest; it can never leave committed rows without a
   replay recipe.
-- **A missing derived database is recoverable**: re-run `sync`, then replay the
-  manifest.
+- **A missing derived database is recoverable**: run `tables.py recover --dry-run`,
+  then `tables.py recover`; it reconstructs manifest-backed data and referenced corrections.
 - **Absent and null stay distinguishable.** SQL has one NULL, so a missing field
   and an explicit `null` both store as NULL in the class table; the fields that
   were *absent* for a row are recorded in `_dataset_lineage.missing_json`, so the
   distinction the extractor preserved is not lost at the import layer.
 
-This is enough to replay the feature's imports from vault originals. Do not
-assume the general rebuild command covers it — replay the manifests.
+Originals and manifests are published from complete, flushed temporary files;
+failed writes leave no partial final artifact that blocks a retry. Repeated
+drop-folder ingests consume the duplicate once its retained original is verified,
+and report indexing failures separately from successful extraction.
+
+The importer preserves `-0` and integers outside SQLite's exact integer range as
+text. Numeric summaries omit bounds with an explicit warning if a valid JSON
+exponent exceeds the summary library's range. Existing rows are not migrated:
+an older import that stored explicit JSON null as the text `null` will conflict
+with the corrected SQL NULL representation and needs a reviewed correction.
+
+The `tables.py recover` command combines promotion, correction replay, schema
+sync, manifest imports, and record-index rebuilding. See
+[dataset pipeline follow-up](dataset-pipeline-design.md) for the Git workflow,
+legacy review checkpoints, concurrency requirements, and recovery limits.
 
 ## 5. Curating knowledge
 
@@ -344,15 +381,18 @@ inference.
 ## Limitations
 
 - JSON/JSONL only. No parquet, no SQLite dumps, no database connectors.
-- Envelope detection is deliberately shallow; deeply wrapped payloads report as
-  unsupported rather than guessing.
+- Automatic envelope detection is deliberately shallow; exact `--record-pointer`
+  and `--metadata-pointer` selectors opt into nested collections. Without selectors,
+  a nested record envelope inside
+  a root object remains metadata, while unsupported root shapes use the text
+  fallback. No recursive collection discovery is performed.
 - Nested arrays stay JSON values. There is no automatic child-table extraction.
 - One primary key per imported table; composite natural keys are represented
   through a technical key plus documented mappings.
 - `float`-typed columns are rejected for exact numeric lexemes: use `int` or
   exact `text`/`json` so precision survives.
-- The whole file must fit the limits; there is no streaming import for inputs
-  larger than `max_raw_bytes`.
+- The whole file must fit `max_raw_bytes`. JSONL file operations stream through
+  temporary SQLite; ordinary JSON remains bounded in memory.
 - Replay depends on the retained original. If a `source_in_place` file changes on
   disk, replay refuses — by design — and the source must be re-ingested as new
   dated evidence.

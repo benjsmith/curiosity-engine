@@ -218,6 +218,8 @@ ALLOWED_FM_KEYS = frozenset({
     # `sweep.py promote-extracted-tables`.
     "has_tables", "tables_extracted", "tables_present", "tables_filtered",
     "structured_version", "structured_format", "structured_options", "structured_settings",
+    "structured_preview_version",
+    "correction_manifest",
     "data_complete", "preview_truncated", "records_accepted", "records_rejected",
     "collection_path", "collection_kind", "record_encoding", "table_content_sha",
     # `cid_glyphs` counts `(cid:NN)` artifacts — glyphs the PDF's font
@@ -404,6 +406,12 @@ def read_frontmatter(text: str) -> tuple:
         elif (v.startswith('"') and v.endswith('"')) or \
              (v.startswith("'") and v.endswith("'")):
             fm[key] = v[1:-1]
+            if key in ("title", "collection_path") and v.startswith('"'):
+                try:
+                    import json
+                    fm[key] = json.loads(v)
+                except ValueError:
+                    pass  # Legacy YAML scalars may use non-JSON escapes.
         else:
             fm[key] = v
         i += 1

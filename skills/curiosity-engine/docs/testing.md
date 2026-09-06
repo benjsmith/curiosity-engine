@@ -19,8 +19,14 @@ Some suites need third-party imports that are not in the ambient interpreter; ru
 
 ```
 uv run --with pyyaml --with openpyxl --with numpy \
+  --with sqlite-vec --with pypdf --with pdfplumber --with python-pptx \
   python3 -m unittest discover tests
 ```
+
+The follow-up `tests/test_dataset_pipeline.py` covers staged JSONL, aggregate
+limits, selector errors, stable/legacy identity, Unicode record FTS beyond
+previews, Git-trackable correction recipes, dry-run/full recovery, missing
+recipes, source drift, restore-backup, and refusal to discard unmanifested rows.
 
 Individual suites run by module name (`python3 -m unittest tests.test_structured_datasets`). Note `discover` needs the plain `discover tests` form — `-s tests -t .` fails, because there is no `tests/__init__.py`.
 

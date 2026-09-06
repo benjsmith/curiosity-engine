@@ -3615,6 +3615,13 @@ def cmd_apply_numeric_review(tab_page_path: Path,
                 "row_count": len(current_rows),
             }, indent=2))
             return 1
+        try:
+            from dataset_recovery import correction_manifest
+            new_fm["correction_manifest"] = correction_manifest(
+                page, fm, headers, new_rows, {**verdict_data, "reviewed_at": ts})
+        except (ValueError, OSError, KeyError) as exc:
+            print(json.dumps({"ok": False, "error": f"correction artifact: {exc}"}))
+            return 1
         backup_id = "bk-" + secrets.token_hex(4)
         n_backed_up = _backup_extracted_rows(wiki_dir, table_stem,
                                                 backup_id)
@@ -3623,7 +3630,7 @@ def cmd_apply_numeric_review(tab_page_path: Path,
                                   extraction_sha)
         new_body = _strip_review_block(new_body)
         new_body = _rewrite_body_gfm(new_body, headers, new_rows,
-                                       fm.get("is_snapshot"))
+                                       fm.get("is_snapshot"), fm.get("record_encoding") == "json-literal-v1")
         new_body = _append_review_block(new_body, "wrong", ts,
                                           flagged_cells, notes,
                                           backup_id=backup_id)
@@ -3663,6 +3670,15 @@ def cmd_apply_numeric_review(tab_page_path: Path,
         _append_log(wiki_dir, "numeric-review-rewinds", log_entry)
 
     # Reassemble the page text.
+    if verdict != "wrong":
+        try:
+            from dataset_recovery import correction_manifest
+            review_rows, review_headers = _read_extracted_rows(wiki_dir, table_stem)
+            new_fm["correction_manifest"] = correction_manifest(
+                page, fm, review_headers, review_rows, {**verdict_data, "reviewed_at": ts})
+        except (ValueError, OSError, KeyError) as exc:
+            print(json.dumps({"ok": False, "error": f"correction artifact: {exc}"}))
+            return 1
     page.write_text(_assemble_page(new_fm, new_body))
     out = {
         "ok": True,
@@ -3827,7 +3843,7 @@ def _apply_corrections(headers: list, rows: list,
 
 
 def _rewrite_body_gfm(body: str, headers: list, rows: list,
-                        is_snapshot) -> str:
+                        is_snapshot, json_literals=False) -> str:
     """Replace the first GFM table block in body with a fresh render
     of (headers, rows). Used by apply-numeric-review's `wrong` path.
     For snapshot pages, only the first 10 rows are rendered (matches
@@ -3836,14 +3852,27 @@ def _rewrite_body_gfm(body: str, headers: list, rows: list,
     is_snap = (str(is_snapshot).lower() == "true"
                 if is_snapshot is not None else False)
     show_rows = rows[:10] if is_snap else rows
-    new_block = _gfm_render(headers, show_rows)
+    from structured_data import gfm, column_summary
+    render = gfm if json_literals else _gfm_render
+    new_block = render(headers, show_rows)
     m = _GFM_TABLE_BLOCK_RE.search(body)
     if not m:
         # No existing block: append at end.
         if not body.endswith("\n"):
             body += "\n"
         return body + "\n" + new_block + "\n"
-    return body[: m.start()] + "\n" + new_block + "\n" + body[m.end():]
+    body = body[: m.start()] + "\n" + new_block + "\n" + body[m.end():]
+    if is_snap and "### Column summary" in body:
+        start = body.index("### Column summary")
+        summary = _GFM_TABLE_BLOCK_RE.search(body, start)
+        if summary:
+            cols = column_summary(headers, rows) if json_literals else _column_summary(headers, rows)
+            summary_rows = [[c["name"], c["dtype"], f"{c['non_null']}/{c['total']}",
+                             c.get("min", ""), c.get("max", ""), c.get("distinct_count", ""),
+                             ", ".join(c.get("sample", []))] for c in cols]
+            block = render(["column", "dtype", "non_null", "min", "max", "distinct", "sample"], summary_rows)
+            body = body[:summary.start()] + "\n" + block + "\n" + body[summary.end():]
+    return body
 
 
 def _assemble_page(fm: dict, body: str) -> str:
@@ -3857,7 +3886,9 @@ def _assemble_page(fm: dict, body: str) -> str:
     """
     lines = ["---"]
     for k, v in fm.items():
-        if isinstance(v, list):
+        if k in ("title", "collection_path") and isinstance(v, str):
+            lines.append(f"{k}: {json.dumps(v, ensure_ascii=False)}")
+        elif isinstance(v, list):
             if all(isinstance(x, (str, int, float, bool)) for x in v):
                 inline = ", ".join(
                     json.dumps(x) if isinstance(x, str) else str(x)
@@ -4265,8 +4296,8 @@ def _extracted_table_db(wiki_dir: Path, table_stem: str,
             conn.execute("DELETE FROM _structured_lineage WHERE table_stem = ?", (table_stem,))
             from structured_data import VERSION
             conn.executemany("INSERT INTO _structured_lineage VALUES (?, ?, ?, ?, ?, ?)",
-                             [(table_stem, i, structured["path"], locator, extraction_sha, VERSION)
-                              for i, locator in enumerate(structured["locators"], 1)])
+                             ((table_stem, i, structured["path"], locator, extraction_sha, VERSION)
+                              for i, locator in enumerate(structured["locators"], 1)))
         headers_json = json.dumps(headers)
         for ri, r in enumerate(rows, 1):
             cells = [(r[i] if i < len(headers) else "")
@@ -4284,8 +4315,14 @@ def _extracted_table_db(wiki_dir: Path, table_stem: str,
         conn.close()
 
 
-def cmd_promote_extracted_tables(wiki_dir: Path,
-                                  row_threshold: int = 100) -> None:
+def cmd_promote_extracted_tables(wiki_dir: Path, row_threshold: int = 100) -> None:
+    """Promote complete extracted tables; always release temporary stages."""
+    from contextlib import ExitStack
+    with ExitStack() as resources:
+        _promote_extracted_tables(wiki_dir, row_threshold, resources)
+
+
+def _promote_extracted_tables(wiki_dir: Path, row_threshold: int, resources) -> None:
     """Promote vault-extracted tables to `wiki/tables/tab-*.md` pages.
 
     For each `vault/*.extracted.md` whose frontmatter records
@@ -4323,8 +4360,10 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
     created, updated, skipped = [], [], 0
     no_stub = []
     ordering_warnings = []
+    review_warnings = []
 
     for extraction in sorted(vault_dir.glob("*.extracted.md")):
+        resources.close()  # Release the previous extraction before staging the next.
         try:
             text = extraction.read_text()
         except OSError:
@@ -4351,8 +4390,10 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
         is_json = bool(fm.get("structured_version"))
         if is_json:
             try:
-                from structured_data import load_extraction
+                from structured_data import load_extraction, PREVIEW_VERSION
                 _, structured_data = load_extraction(extraction)
+                from structured_data import close_data
+                resources.callback(close_data, structured_data)
                 tables = structured_data["tables"]
             except (ValueError, OSError, KeyError) as exc:
                 no_stub.append(f"{extraction.name}:structured-unavailable:{exc}")
@@ -4405,22 +4446,39 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
             row_count = len(rows)
             is_snapshot = row_count > row_threshold
             import hashlib
-            table_content_sha = hashlib.sha256(json.dumps([headers, rows], ensure_ascii=True).encode()).hexdigest()
+            from structured_data import table_hash
+            table_content_sha = table_hash(headers, rows)
 
             # Idempotency check: existing page with matching
             # extraction_sha + row_count AND is_snapshot setting → skip.
             if page_path.exists():
                 existing_fm, _ = read_frontmatter(page_path.read_text())
+                # A review changes the authoritative rows independently of
+                # extraction and display settings. Never erase it on replay.
+                if (existing_fm.get("correction_manifest") or
+                        str(existing_fm.get("numeric_review_done", "")).lower() not in ("", "false")):
+                    import sqlite3
+                    from contextlib import closing
+                    store = wiki_dir.parent / ".curator/tables.db"
+                    count = 0
+                    if store.exists():
+                        try:
+                            with closing(sqlite3.connect(f"file:{store.resolve()}?mode=ro", uri=True)) as db:
+                                count = db.execute("SELECT count(*) FROM _extracted_tables WHERE table_stem=?", (stem,)).fetchone()[0]
+                        except sqlite3.Error:
+                            pass
+                    if count != int(existing_fm.get("row_count", 0)):
+                        review_warnings.append({"table": stem, "warning": "reviewed rows unavailable; run tables.py recover (or restore a database backup for legacy reviews)"})
+                    skipped += 1
+                    continue
                 if (existing_fm.get("extraction_sha") == extraction_sha
                         and str(existing_fm.get("row_count", "")) == str(row_count)
                         and str(existing_fm.get("is_snapshot", "")).lower()
                             == str(is_snapshot).lower()
-                        and (not is_json or existing_fm.get("table_content_sha") == table_content_sha)):
+                        and (not is_json or (
+                            existing_fm.get("table_content_sha") == table_content_sha
+                            and existing_fm.get("structured_preview_version") == PREVIEW_VERSION))):
                     skipped += 1
-                    # Reviewed corrections are authoritative. Replaying raw
-                    # transcription here used to silently erase reviewed rows.
-                    if existing_fm.get("numeric_review_done"):
-                        continue
                     # Still re-populate DB to recover from a missing
                     # tables.db (cheap; idempotent via DELETE+INSERT).
                     _extracted_table_db(
@@ -4435,6 +4493,9 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                 f'"{TYPE_PREFIX["extracted-table"]} {display_topic} '
                 f'— {stub_stem}"'
             )
+            if is_json:
+                title = json.dumps(f'{TYPE_PREFIX["extracted-table"]} {display_topic} — {stub_stem}',
+                                   ensure_ascii=False)
 
             # Spot-check anchors. Source page numbers come from the
             # heading above each table block (`Table p.N`); the original
@@ -4468,6 +4529,7 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                     f"collection_path: {json.dumps(tbl['path'])}",
                     f"collection_kind: {tbl['kind']}", "record_encoding: json-literal-v1",
                     "data_complete: true", f"table_content_sha: {table_content_sha}",
+                    f"structured_preview_version: {PREVIEW_VERSION}",
                 ])
             if source_pages:
                 page_lines.append(
@@ -4498,11 +4560,9 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
             else:
                 normalise_flags = _detect_normalise_columns(headers)
             if normalise_flags:
-                page_lines.append(
-                    "normalise_columns: ["
-                    + ", ".join(normalise_flags)
-                    + "]"
-                )
+                flags_text = (json.dumps(normalise_flags, ensure_ascii=False) if is_json
+                              else "[" + ", ".join(normalise_flags) + "]")
+                page_lines.append("normalise_columns: " + flags_text)
             page_lines.extend(["---", ""])
 
             # Body header: source identifier + spot-check anchors. Page
@@ -4565,6 +4625,9 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
                             if c.get("sample") else "",
                     ])
                 page_lines.append(render(summary_headers, summary_rows))
+                for c in col_summary:
+                    if c.get("summary_warning"):
+                        page_lines.append("\n" + c["summary_warning"] + ".")
 
             if is_json:
                 page_lines.append("<!-- END FETCHED CONTENT -->")
@@ -4593,6 +4656,8 @@ def cmd_promote_extracted_tables(wiki_dir: Path,
         "created_paths": created,
         "updated_paths": updated,
     }
+    if review_warnings:
+        result["review_warnings"] = review_warnings
     if ordering_warnings:
         result["ordering_warnings"] = ordering_warnings
     print(json.dumps(result, indent=2))

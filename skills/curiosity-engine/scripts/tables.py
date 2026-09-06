@@ -1166,6 +1166,19 @@ def cmd_restore_backup(table_stem: str, backup_id: str) -> int:
     headers = json.loads(backup_rows[0][2])
     extraction_sha = backup_rows[0][5]
     rows = [json.loads(r[4]) for r in backup_rows]
+    page_path = Path.cwd() / "wiki/tables" / f"{table_stem}.md"
+    correction_ref = None
+    if page_path.exists():
+        try:
+            from naming import read_frontmatter
+            from dataset_recovery import correction_manifest
+            fm, _ = read_frontmatter(page_path.read_text())
+            correction_ref = correction_manifest(page_path, fm, headers, rows,
+                                                {"operation": "restore-backup", "backup_id": backup_id})
+        except (ValueError, OSError, KeyError) as exc:
+            conn.close()
+            print(json.dumps({"ok": False, "error": f"correction artifact: {exc}"}))
+            return 1
     # Rewrite _extracted_tables for this stem.
     conn.execute("DELETE FROM _extracted_tables WHERE table_stem = ?",
                  (table_stem,))
@@ -1192,7 +1205,7 @@ def cmd_restore_backup(table_stem: str, backup_id: str) -> int:
             break
     page_rewritten = False
     if page_path is not None:
-        page_rewritten = _restore_page_body(page_path, headers, rows)
+        page_rewritten = _restore_page_body(page_path, headers, rows, correction_ref)
     # Log the rewind.
     log_path = (DB_PATH.parent.parent / "wiki" / ".." /
                 ".curator" / "log.md").resolve()
@@ -1225,7 +1238,7 @@ def cmd_restore_backup(table_stem: str, backup_id: str) -> int:
 
 
 def _restore_page_body(page_path: Path, headers: list,
-                         rows: list) -> bool:
+                         rows: list, correction_ref=None) -> bool:
     """Rewrite the GFM table on a [tab] page from restored rows.
 
     Drops `## Numeric review` block and review-related fm fields so
@@ -1290,7 +1303,14 @@ def _restore_page_body(page_path: Path, headers: list,
         new_body = body[: m.start()] + "\n" + new_block + "\n" + body[m.end():]
     else:
         new_body = body + "\n" + new_block + "\n"
-    page_path.write_text(f"---\n{new_fm}\n---{new_body}")
+    if "record_encoding: json-literal-v1" in new_fm:
+        from sweep import _rewrite_body_gfm
+        new_body = _rewrite_body_gfm(body, headers, rows, is_snap, True)
+    new_text = f"---\n{new_fm}\n---{new_body}"
+    if correction_ref:
+        from naming import set_frontmatter_field
+        new_text = set_frontmatter_field(new_text, "correction_manifest", correction_ref)
+    page_path.write_text(new_text)
     return True
 
 
@@ -1509,12 +1529,19 @@ def cmd_extracted_list(source_stub: Optional[str]) -> int:
 
 def _dataset_columns(schema):
     """Strict, additive import contract; legacy row commands are unchanged."""
-    if not re.fullmatch(r"[a-z][a-z0-9_]*", schema.get("name", "")):
+    if (not isinstance(schema, dict) or not isinstance(schema.get("name"), str)
+            or not re.fullmatch(r"[a-z][a-z0-9_]*", schema["name"])):
         raise ValueError("invalid dataset table name")
     raw = schema.get("columns", [])
+    if not isinstance(raw, list) or any(
+            not isinstance(c, dict) or not isinstance(c.get("name"), str)
+            or not isinstance(c.get("type", "text"), str)
+            or any(k in c and type(c[k]) is not bool for k in ("pk", "nullable"))
+            for c in raw):
+        raise ValueError("invalid column declarations")
     cols = _normalize_columns(schema)
     names = [c["name"] for c in cols]
-    if not cols or len(cols) != len(raw) or len(set(names)) != len(names):
+    if not cols or len(cols) != len(raw) or len({n.lower() for n in names}) != len(names):
         raise ValueError("invalid or duplicate columns")
     for c in cols:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", c["name"]):
@@ -1558,7 +1585,7 @@ def _dataset_validate(payload, columns, provenance):
         raise ValueError("shape violation: " + "; ".join(violations))
 
 
-def cmd_import_dataset(plan_path: Path, dry_run: bool = False) -> int:
+def cmd_import_dataset(plan_path: Path, dry_run: bool = False, *, recovery=False) -> int:
     """Atomic insert/replay. Existing conflicting rows are never overwritten.
 
     Manifests live in wiki/_data/imports (git-track with accepted pages).
@@ -1571,7 +1598,8 @@ def cmd_import_dataset(plan_path: Path, dry_run: bool = False) -> int:
         columns = _dataset_columns(plan["table"])
         name = plan["table"]["name"]
         pk = _primary_key_col(columns)
-        records = list(datasets.rows_for_plan(plan))
+        entity_at_start = datasets.digest(plan["entity_page"])
+        records = datasets.rows_for_plan(plan, recovery=recovery)
         names = [c["name"] for c in columns]
         schema_hash = _schema_hash(plan["table"])
         conn = _connect()
@@ -1614,7 +1642,7 @@ def cmd_import_dataset(plan_path: Path, dry_run: bool = False) -> int:
                           json.dumps(plan["mapping"], sort_keys=True),
                           json.dumps([n for n in names if n not in payload]), plan_hash))
         # Recheck immediately before publication: never apply a stale plan.
-        if datasets.digest(plan["entity_page"]) != plan["entity_sha256"]:
+        if datasets.digest(plan["entity_page"]) != (entity_at_start if recovery else plan["entity_sha256"]):
             raise ValueError("entity changed during import")
         manifest = Path("wiki/_data/imports") / (plan_hash + ".json")
         if dry_run:
@@ -1627,8 +1655,8 @@ def cmd_import_dataset(plan_path: Path, dry_run: bool = False) -> int:
             else:
                 # An interruption can leave an unused manifest, never committed
                 # rows without a replay recipe. Exclusive write prevents clobber.
-                with manifest.open("x") as stream:
-                    stream.write(canonical + "\n")
+                from structured_data import write_once
+                write_once(manifest, (canonical + "\n").encode("utf-8"))
             conn.commit()
         print(json.dumps({"table": name, "inserted": inserted, "unchanged": unchanged,
                           "dry_run": dry_run, "manifest": str(manifest)}))
@@ -1639,12 +1667,19 @@ def cmd_import_dataset(plan_path: Path, dry_run: bool = False) -> int:
         print(json.dumps({"error": str(exc), "applied": False}))
         return 2
     finally:
+        if "records" in locals():
+            records.close()
         if conn is not None:
             conn.close()
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+    p_recover = sub.add_parser("recover", help="rebuild tables from Git-tracked pages, corrections and import manifests")
+    p_recover.add_argument("--wiki", type=Path, default=Path("wiki"))
+    p_recover.add_argument("--dry-run", action="store_true")
+    p_checkpoint = sub.add_parser("checkpoint-reviews", help="record existing reviewed rows as Git-trackable corrections")
+    p_checkpoint.add_argument("--wiki", type=Path, default=Path("wiki"))
 
     p_dataset = sub.add_parser("import-dataset", help="validate and atomically import/replay a dataset plan")
     p_dataset.add_argument("--plan", required=True, type=Path)
@@ -1741,6 +1776,16 @@ def main() -> int:
                        help="backup_id from list-backups (e.g. bk-7f3a2c)")
 
     args = ap.parse_args()
+    if args.cmd in ("recover", "checkpoint-reviews"):
+        import dataset_recovery
+        try:
+            result = (dataset_recovery.recover(args.wiki, args.dry_run) if args.cmd == "recover"
+                      else dataset_recovery.checkpoint_reviews(args.wiki))
+            print(json.dumps(result))
+            return 0
+        except (ValueError, OSError, KeyError, sqlite3.Error) as exc:
+            print(json.dumps({"error": str(exc), "applied": False}))
+            return 2
     if args.cmd == "import-dataset":
         return cmd_import_dataset(args.plan, args.dry_run)
     if args.cmd == "sync":

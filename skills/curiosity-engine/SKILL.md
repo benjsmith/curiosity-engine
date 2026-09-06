@@ -290,6 +290,13 @@ A preset block may also carry per-preset overrides for any top-level key (e.g. `
 
 INGEST stays lean. Evidence and fact pages emerge later, via CURATE reads.
 
+JSON/JSONL ingest remains deterministic and preserves full originals. Markdown
+rendering has its own version, so escaping fixes create new extractions without
+invalidating `json-records-v1` replay. Re-promotion refreshes unreviewed table
+renders; pages with a numeric review retain their reviewed content even when
+the snapshot threshold changes. See `docs/datasets.md` and
+`docs/structured-data-review.md` for import compatibility and follow-up work.
+
 1. Copy original to `vault/` preserving filename (add numeric suffix if duplicate).
 2. Read the file directly (multimodal).
 3. Write clean text extraction as `vault/<name>.extracted.md`.
@@ -496,7 +503,7 @@ The plan is mechanical and fast (sub-second). No reviewer call. Every bucket bel
 2. **Dispatch reviewers.** Dispatch one fresh-context opus Agent per page with the `numeric_transcription_review` template in `.curator/prompts.md`, passing `<TAB_PAGE_PATH>`, `<SOURCE_PATH>`, `<PAGE_PNG_PATHS>`, and `<TAB_PAGE_TABLE>` (the GFM block read from the page body). Each reviewer returns `{"page": "<tab-page>", "verdict": "ok"|"suspect"|"wrong", "flagged_cells": [{row_idx, header, claimed, suggested, confidence, reason}, ...], "notes": "..."}`.
 3. **Apply verdicts.** For each returned verdict, call `uv run python3 <skill_path>/scripts/sweep.py apply-numeric-review --tab-page <path> --verdict-json '<json>'`. The script handles per-verdict persistence: `ok` writes `numeric_review_done` + `verdict: ok`; `suspect` writes the cell summary and excludes the page from `extracted-query`; `wrong` triggers an auto-overwrite path (backup current rows under a fresh `backup_id` in `_extracted_table_backups`, apply `suggested` values, rewrite the body's GFM, log the rewind invocation to `.curator/log.md`).
 4. **Spot-check anchors.** Curators can sanity-check `wrong`-verdict overwrites by following the `[tab]` page body header (source-pages list + original-source path) and the `## Numeric review` block listing each cell change. `tables.py list-backups` enumerates rewinds available; `tables.py restore-backup <stem> <backup_id>` rewinds.
-5. **Commit.** `git -C wiki add -A && git -C wiki commit -m "numeric-review: K ok, S suspect, W wrong (auto-overwritten)"` and append a one-line summary to `.curator/log.md` if not already there. Skip the batch reviewer for this wave — the per-page Opus pass IS the review.
+5. **Commit.** Include the accepted table pages and their referenced `wiki/_data/corrections/` recipes in the same existing wiki Git commit. `git -C wiki add -A && git -C wiki commit -m "numeric-review: K ok, S suspect, W wrong (auto-overwritten)"` and append a one-line summary to `.curator/log.md` if not already there. Skip the batch reviewer for this wave — the per-page Opus pass IS the review.
 
 *Create- and repair-mode waves:*
 
@@ -788,8 +795,18 @@ The point of the operation is that **literal extraction, model proposal, and kno
 2. **Draft a spec.** The curator supplies what code cannot derive: `grain` (what one row represents) and `membership_evidence` (why these files are one dataset) are required. Do NOT merge collections because column names match, and do NOT infer units or meaning from a suggestive field name — cite the metadata that establishes them, or record the gap in `unresolved`. Keep observed properties and semantic hypotheses in separate fields (`semantic_notes`).
 3. **Propose (non-operative).** `datasets.py propose --spec <json> --output <json>` produces a draft and pins the entity page's content hash. It writes nothing to the wiki. If the entity page already declares a table, that human schema is authoritative: inference is blocked and the curator must supply an explicit column-to-pointer mapping instead.
 4. **Author the entity page and apply through the gate.** `datasets.py apply <proposal> --reviewed-page <md>` scrubs, verifies that newly added citations actually relate to their claims, runs the standard `score_diff` ratchet, rechecks the entity content hash immediately before writing, and replaces atomically. A page edited during review is never clobbered; `unresolved` issues block application.
-5. **Schema, then plan, then import.** `tables.py sync <entity>` → `datasets.py plan <proposal> --output plan.json` → `tables.py import-dataset --plan plan.json` (`--dry-run` first). Rows reach class tables **only** through `tables.py` — no direct class-table SQL, no destructive migrations. The import is atomic and per-row validated; existing rows are never overwritten (a conflicting primary key aborts the whole import); replay is idempotent. Every row keeps its origin in `_dataset_lineage`, and a replayable manifest lands in `wiki/_data/imports/<plan_hash>.json` — git-track it with the accepted pages. To rebuild after losing `.curator/tables.db`, re-run `sync` and replay the manifests; do not assume the general rebuild command covers these imports.
+5. **Schema, then plan, then import.** `tables.py sync <entity>` → `datasets.py plan <proposal> --output plan.json` → `tables.py import-dataset --plan plan.json` (`--dry-run` first). Rows reach class tables **only** through `tables.py` — no direct class-table SQL, no destructive migrations. The import is atomic and per-row validated; existing rows are never overwritten (a conflicting primary key aborts the whole import); replay is idempotent. Every row keeps its origin in `_dataset_lineage`, and a replayable manifest lands in `wiki/_data/imports/<plan_hash>.json` — git-track it with the accepted pages. For recovery, use `tables.py recover --wiki wiki --dry-run`, then `tables.py recover --wiki wiki`: it rebuilds extracted tables, Git-tracked corrections, manifest-backed class imports, and record FTS. Existing reviewed tables without recipes need `tables.py checkpoint-reviews --wiki wiki` while their database is available. Commit accepted pages and `wiki/_data/` together in the existing wiki Git repository.
 6. **Curate through normal page types.** Populate what the evidence warrants via the existing gates — `sources/` (origin, version, collection method, scope, coverage, limitations), `entities/` (the dataset, producer, instruments, domain classes, accepted schema), `concepts/` (field definitions, measures, methods), plus `evidence/`, `facts/`, `analyses/`, and summary tables/figures with query provenance. Never one page per row, per metadata field, or per page type. Reuse existing pages and identity conventions; create reciprocal links.
+
+**Dataset pipeline options.** New proposals use `source-record-v2` IDs based on
+`dataset_id` (defaults to the declared table name), source hash, collection and
+locator; old manifests retain their existing IDs. JSONL file operations stage
+records in temporary SQLite with aggregate limits; proposal `limits` are pinned
+into plans. Nested JSON uses `local_ingest.py --record-pointer /path/to/records`
+plus repeatable `--metadata-pointer` flags. Full records are indexed separately
+from previews: use `datasets.py search-records "query"` to discover values beyond
+the preview, then existing structured queries for numerical questions. Complete
+commands, Git workflow, and recovery limits: `docs/dataset-pipeline-design.md`.
 
 **Citations.** Extracted records are cited by linking the `[[tab-...]]` page plus the `(vault:<extraction>)` citation. There is no citation syntax for `_extracted_tables` rows and none may be invented. Accepted class data uses the supported `(table:<name>#id=<id>)` / `(table:<name>?query=<q>)` forms.
 

@@ -69,6 +69,16 @@ def promote(result):
 
 
 class Extraction(unittest.TestCase):
+    def test_markdown_formatting_is_literal(self):
+        rendered = sd.gfm(["/a"], [['"**bold**_text_~x~\\|"']])
+        for token in ("**", "_text_", "~x~", "\\"):
+            self.assertNotIn(token, rendered)
+
+    def test_extreme_numeric_summary_does_not_abort_promotion(self):
+        summary = sd.column_summary(["n"], [["1e99999999999999999999999"], ["2"]])
+        self.assertEqual(summary[0]["non_null"], 2)
+        self.assertIn("summary_warning", summary[0])
+
     def test_exact_types_paths_and_precision(self):
         raw = b'[{"n":900719925474099312345,"d":1.2300e-12,"s":"001","x":null,"b":false,"z":0,"empty":"","nested":{"a":1},"nested/a":2,"a.b":3,"arr":[1,{"q":2}]},{}]'
         t = sd.extract(raw, "json")["tables"][0]
@@ -145,6 +155,60 @@ class Extraction(unittest.TestCase):
 
 
 class IngestPromotion(unittest.TestCase):
+    def test_old_render_is_refreshed_without_invalidating_original_replay(self):
+        with workspace():
+            r = ingest([{"a": "**literal**"}])
+            promote(r)
+            page = next(Path("wiki/tables").glob("tab-*.md"))
+            page.write_text(page.read_text().replace(
+                f"structured_preview_version: {sd.PREVIEW_VERSION}\n", ""))
+            _, report = call(sweep.cmd_promote_extracted_tables, Path("wiki"))
+            self.assertEqual(report["updated"], 1)
+            self.assertIn(f"structured_preview_version: {sd.PREVIEW_VERSION}", page.read_text())
+            self.assertEqual(sd.load_extraction(r["extracted"])[1]["tables"][0]["rows"], [['"**literal**"']])
+
+    def test_original_publication_failure_retains_drop_and_allows_retry(self):
+        with workspace():
+            with patch("os.fsync", side_effect=OSError("disk failure")):
+                r = ingest([{"a": 1}], drop=True)
+            self.assertFalse(r["ok"], r)
+            self.assertTrue(Path("vault/raw/data.json").exists())
+            self.assertEqual(list(Path("vault").glob("structured-*")), [])
+            r = ingest([{"a": 1}], drop=True)
+            self.assertTrue(r["ok"], r)
+            self.assertEqual(sd.load_extraction(r["extracted"])[1]["records"], 1)
+
+    def test_repeat_drop_is_consumed_and_index_failure_is_reported(self):
+        with workspace():
+            first = ingest([{"a": 1}], drop=True)
+            with patch.object(local_ingest, "_vault_index_add", side_effect=RuntimeError("index unavailable")):
+                repeated = ingest([{"a": 1}], drop=True)
+            self.assertTrue(repeated["ok"], repeated)
+            self.assertEqual(repeated["status"], "unchanged")
+            self.assertEqual(repeated["indexed"]["status"], "error")
+            self.assertFalse(Path("vault/raw/data.json").exists())
+            self.assertEqual(sd.load_extraction(first["extracted"])[1]["records"], 1)
+
+    def test_collection_titles_are_valid_yaml(self):
+        with workspace():
+            r = ingest({'a"b\\c\nline': [{"a": 1}]})
+            promote(r)
+            page = next(Path("wiki/tables").glob("tab-*.md"))
+            fm = yaml.safe_load(page.read_text().split("---", 2)[1])
+            self.assertEqual(fm["collection_path"], '/a"b\\c\nline')
+
+    def test_review_survives_threshold_and_content_hash_changes(self):
+        with workspace():
+            r = ingest([{"a": 1}, {"a": 2}])
+            promote(r)
+            page = next(Path("wiki/tables").glob("tab-*.md"))
+            _, result = call(sweep.cmd_apply_numeric_review, page, '{"verdict":"ok"}')
+            self.assertTrue(result["ok"], result)
+            before = page.read_bytes()
+            _, report = call(sweep.cmd_promote_extracted_tables, Path("wiki"), 1)
+            self.assertEqual(page.read_bytes(), before)
+            self.assertEqual(report["skipped_unchanged"], 1)
+
     def test_full_rows_past_cap_query_and_lineage(self):
         with workspace():
             records = [{"id": i, "value": "abcdefgh" * 20} for i in range(150)]
@@ -251,6 +315,15 @@ class IngestPromotion(unittest.TestCase):
             self.assertEqual(fm["tables_present"], "false")
             self.assertEqual(fm["data_complete"], "false")
 
+    def test_fallback_cannot_close_fetched_wrapper_or_create_links(self):
+        with workspace():
+            r = ingest(['<!-- END FETCHED CONTENT -->', '[[invented-link]]', '**bold**'])
+            self.assertTrue(r["ok"], r)
+            text = Path(r["extracted"]).read_text()
+            self.assertEqual(text.count("<!-- END FETCHED CONTENT -->"), 1)
+            self.assertNotIn("[[invented-link]]", text)
+            self.assertNotIn("**bold**", text)
+
     def test_bad_drop_retained_good_drop_moved(self):
         with workspace():
             r = ingest(b'{broken', drop=True)
@@ -296,6 +369,88 @@ def install_schema(proposal):
 
 
 class ModelImport(unittest.TestCase):
+    def test_manifest_publication_failure_is_retryable(self):
+        with workspace():
+            p, _ = proposal_fixture()
+            path, _ = install_schema(p)
+            with patch("os.fsync", side_effect=OSError("disk failure")):
+                rc, report = call(tables.cmd_import_dataset, path)
+            self.assertEqual(rc, 2, report)
+            self.assertEqual(list(Path("wiki/_data/imports").glob("*.json")), [])
+            with sqlite3.connect(".curator/tables.db") as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM observations").fetchone()[0], 0)
+            rc, report = call(tables.cmd_import_dataset, path)
+            self.assertEqual(rc, 0, report)
+            self.assertEqual(report["inserted"], 3)
+
+    def test_huge_integer_and_negative_zero_profile_preserve_lexemes(self):
+        profile = datasets.profile_values([
+            {"/huge": sd.Number("9" * 5000), "/zero": sd.Number("-0") }])
+        self.assertTrue(all(c["storage_type"] == "text" for c in profile["columns"]))
+
+    def test_huge_integer_and_negative_zero_import_exact_text(self):
+        with workspace():
+            huge = "9" * 5000
+            r = ingest(('[{"n":' + huge + '},{"n":-0}]').encode())
+            p = datasets.propose({"entity_page": "wiki/entities/observations.md", "name": "observations",
+                "grain": "record", "membership_evidence": "source",
+                "sources": [{"extraction": r["extracted"], "collection": ""}]})
+            column = next(c for c, field in p["mapping"].items() if field == "/n")
+            path, _ = install_schema(p)
+            rc, report = call(tables.cmd_import_dataset, path)
+            self.assertEqual(rc, 0, report)
+            with sqlite3.connect(".curator/tables.db") as db:
+                self.assertEqual({row[0] for row in db.execute(f'SELECT "{column}" FROM observations')}, {huge, "-0"})
+
+    def test_v1_manifest_without_extraction_digest_remains_replayable(self):
+        with workspace():
+            p, _ = proposal_fixture()
+            for source in p["sources"]:
+                source.pop("extraction_sha256")
+            path, _ = install_schema(p)
+            rc, report = call(tables.cmd_import_dataset, path)
+            self.assertEqual(rc, 0, report)
+            self.assertEqual(report["inserted"], 3)
+            rc, report = call(tables.cmd_import_dataset, Path(report["manifest"]))
+            self.assertEqual(rc, 0, report)
+            self.assertEqual(report["unchanged"], 3)
+
+    def test_malformed_schema_is_rejected_before_sync(self):
+        for schema in ([], {"name": "t", "columns": {"id": "text"}},
+                       {"name": "t", "columns": [{"name": 1, "pk": True}]},
+                       {"name": "t", "columns": [{"name": "id", "pk": "false"}]}):
+            with self.subTest(schema=schema), self.assertRaises(ValueError):
+                tables._dataset_columns(schema)
+
+    def test_json_null_stores_sql_null_and_missing_lineage(self):
+        with workspace():
+            r = ingest([{"value": {"a": 1}}, {"value": None}, {}])
+            p = datasets.propose({"entity_page": "wiki/entities/observations.md", "name": "observations",
+                "grain": "record", "membership_evidence": "source",
+                "sources": [{"extraction": r["extracted"], "collection": ""}]})
+            column = next(c for c, f in p["mapping"].items() if f == "/value")
+            next(c for c in p["table"]["columns"] if c["name"] == column)["type"] = "json"
+            path, _ = install_schema(p)
+            rc, report = call(tables.cmd_import_dataset, path)
+            self.assertEqual(rc, 0, report)
+            with sqlite3.connect(".curator/tables.db") as db:
+                self.assertEqual(db.execute(f'SELECT count(*) FROM observations WHERE "{column}" IS NULL').fetchone()[0], 3)
+                missing = [json.loads(r[0]) for r in db.execute("SELECT missing_json FROM _dataset_lineage")]
+                self.assertEqual(sum(column in row for row in missing), 2)
+
+    def test_changed_extraction_contract_invalidates_proposal(self):
+        with workspace():
+            p, rs = proposal_fixture()
+            source = Path(rs[0]["extracted"])
+            source.write_text(source.read_text().replace('"max_depth": 64', '"max_depth": 63'))
+            with self.assertRaisesRegex(ValueError, "extraction changed"):
+                datasets.check(p)
+
+    def test_case_insensitive_duplicate_schema_columns_rejected(self):
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            tables._dataset_columns({"name": "sample", "columns": [
+                {"name": "id", "pk": True}, {"name": "ID"}]})
+
     def test_profile_over_full_cross_file_data_and_no_automatic_schema_write(self):
         with workspace():
             p, rs = proposal_fixture()
@@ -355,7 +510,7 @@ class ModelImport(unittest.TestCase):
             before = entity.read_bytes()
             p = datasets.propose({"entity_page": str(entity), "name": "observations", "grain": "record",
                 "membership_evidence": "source", "mapping": {"id": "/id", "value": "/value"},
-                "technical_key": None, "sources": [{"extraction": r["extracted"], "collection": ""}]})
+                "sources": [{"extraction": r["extracted"], "collection": ""}]})
             self.assertEqual(p["table"], existing)
             self.assertEqual(entity.read_bytes(), before)
             call(tables.cmd_sync, entity)
@@ -586,6 +741,61 @@ class EndToEnd(unittest.TestCase):
 
 
 class LegacyGolden(unittest.TestCase):
+    def test_pptx_golden(self):
+        from pptx import Presentation
+        from pptx.util import Inches
+        presentation = Presentation()
+        slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+        table = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2)).table
+        for i, row in enumerate([["name", "value"], ["Alpha", "1"]]):
+            for j, value in enumerate(row):
+                table.cell(i, j).text = value
+        buf = io.BytesIO()
+        presentation.save(buf)
+        text, note = local_ingest._extract_pptx(buf.getvalue())
+        self.assertEqual(text, "\n## Slide 1\n\n| name | value |\n|---|---|\n| Alpha | 1 |")
+        self.assertEqual(note, "")
+
+    def test_pdf_prose_tables_and_multimodal_fallback(self):
+        from pypdf import PdfWriter
+        from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
+
+        def pdf_bytes(content):
+            writer = PdfWriter()
+            page = writer.add_blank_page(width=612, height=792)
+            font = DictionaryObject({NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")})
+            page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"):
+                DictionaryObject({NameObject("/F1"): font})})
+            stream = DecodedStreamObject()
+            stream.set_data(content.encode())
+            page[NameObject("/Contents")] = writer._add_object(stream)
+            buf = io.BytesIO()
+            writer.write(buf)
+            return buf.getvalue()
+
+        grid = "\n".join(f"50 {y} m 250 {y} l S" for y in (650, 625, 600, 575))
+        grid += "\n" + "\n".join(f"{x} 575 m {x} 650 l S" for x in (50, 150, 250))
+        for y, row in zip((635, 610, 585), (("name", "value"), ("Alpha", "1"), ("Beta", "2"))):
+            for x, value in zip((60, 160), row):
+                grid += f"\nBT /F1 12 Tf {x} {y} Td ({value}) Tj ET"
+        prose = "BT /F1 12 Tf 50 750 Td (" + "Observation recorded with instrument. " * 20 + ") Tj ET\n"
+        for name, content, method, count, pending in (
+                ("prose.pdf", prose, "pypdf", 0, False),
+                ("table.pdf", grid, "pdfplumber-only", 1, False),
+                ("both.pdf", prose + grid, "pypdf+pdfplumber", 1, False),
+                ("blank.pdf", "", "pypdf_failed", 0, True)):
+            with self.subTest(name=name), workspace():
+                r = ingest(pdf_bytes(content), name)
+                self.assertTrue(r["ok"], r)
+                self.assertEqual(r["extraction_method"], method)
+                self.assertEqual(r["tables_extracted"], count)
+                self.assertEqual(r["multimodal_recommended"], pending)
+                if count:
+                    self.assertIn("| Alpha | 1 |", Path(r["extracted"]).read_text())
+                    _, report = promote(r)
+                    self.assertEqual(report["created"], 1, report)
+
     def test_csv_golden(self):
         text, note = local_ingest._extract_csv(b'name,value\nAlpha,1\nBeta,2\n')
         self.assertEqual(text, "| name | value |\n|---|---|\n| Alpha | 1 |\n| Beta | 2 |")
