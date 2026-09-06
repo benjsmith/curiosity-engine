@@ -3,11 +3,11 @@
 ![An example knowledge graph displayed by the skill's built-in viewer.](skills/curiosity-engine/docs/viewer-graph.png)
 *An example knowledge graph displayed by the skill's built-in viewer.*
 
-A self-improving knowledge wiki for coding-agent CLIs. Drop sources in, ask questions, and let autonomous "curate" loops draft improvements in parallel — each gated by a citation-preserving ratchet, judged by a fresh-context reviewer, and committed if it earns its place. The wiki is plain markdown, git-tracked, and yours to edit.
+A self-improving knowledge wiki for coding-agent CLIs. Drop sources in, ask questions, and let autonomous "curate" loops draft improvements in parallel — each gated by a citation-preserving ratchet, judged by a fresh-context reviewer, and committed if it earns its place. The wiki is plain markdown, git-tracked, and yours to edit. A built-in graph viewer lets you browse and search it in the browser, including Atlas mode for very large corpora.
 
 ## What it does
 
-Two content stores, derived databases, one curator, three commands:
+Two content stores, derived databases, one curator, three commands, and a graph viewer:
 
 - **Vault** (`vault/`) — raw sources: PDFs, docs, spreadsheets, slides. Append-only.
 - **Wiki** (`wiki/`) — the knowledge itself: eleven markdown page types with `[[wikilinks]]` and `(vault:path)` citations, git-tracked. The markdown is the source of truth.
@@ -16,6 +16,7 @@ Two content stores, derived databases, one curator, three commands:
 - **`ingest`** — *"add this paper to the vault"*. Extracts text + tables + figures, indexes for keyword (and optional semantic) search.
 - **`query`** — *"what do I know about X?"*. Answers with citations, ends with a probing follow-up question.
 - **`curate`** — *"curate this wiki for an hour"*. Plan → execute → evaluate loop. Worker subagents draft improvements in parallel; a fresh-context reviewer grades each wave; hash-guarded scoring scripts the agent can't tamper with.
+- **Viewer** — `viewer.sh open` → `http://localhost:8090`. Graph-first browser with search; Atlas mode for large wikis.
 
 ## Features
 
@@ -23,7 +24,7 @@ Everything the skill does, in one line each:
 
 - **Eleven wiki page types** with per-type floors enforced mechanically: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures`, `notes`, `todos`, `projects`.
 - **Citation-preserving ratchet**: `score_diff.py` rejects any edit that drops a citation or adds one whose source doesn't FTS5-match the claim. The wiki never regresses.
-- **Built-in graph viewer** at `localhost:8090` — D3 force graph, type-grouped browser, fuzzy search, click-to-open modal with a hop-by-hop subgraph navigator. Wikis above 360 pages can switch to the Knowledge Atlas (full individual-node field + log rim). Or open `wiki/` as an Obsidian vault. Or use VS Code + Foam.
+- **Built-in graph viewer** (`viewer.sh open` → `localhost:8090`) — D3 force graph, type-grouped page list, graph + sidebar search (hits halo on the canvas), click-to-open modal with a hop-by-hop subgraph navigator. Switch `view:` to **atlas** for large corpora: the whole wiki as individual nodes plus a log-compressed rim. Validated on a ~26k-source corpus that produced a ~40k-page wiki. Or open `wiki/` as an Obsidian vault. Or use VS Code + Foam.
 - **Multimodal table & figure extraction** from PDFs. Per-table `tab-*.md` pages, with row data mirrored to a queryable SQLite store. Numeric literal-transcription mode for scientific work.
 - **Identifier resolution** for chemicals (PubChem) and gene symbols (MyGene.info). Cached locally; lazy lookup at synthesis time only.
 - **Class tables** — entity-instance data (deals, patients, contracts, matters) with schemas declared on entity pages, rows citing vault provenance. Queryable via `tables.py`; joinable with the kuzu graph.
@@ -65,6 +66,16 @@ claude
 ```
 
 The first command runs `setup.sh`, which creates the folder layout, initialises the wiki git repo, drops in a Claude Code settings file that auto-allows safe operations, and (optionally) installs companion tooling.
+
+**Open the viewer** from the workspace root (after setup, so `wiki/` exists):
+
+```bash
+bash ~/.claude/skills/curiosity-engine/scripts/viewer.sh open
+# git-clone install:
+#   bash ~/curiosity-engine/skills/curiosity-engine/scripts/viewer.sh open
+```
+
+Serves `http://localhost:8090` until Ctrl+C. **Search wiki…** (over the canvas) and **Search pages…** (sidebar) find pages by title, path, type, and properties; matching nodes get a dashed halo. For large corpora, switch `view:` to **atlas** (or open `?viewer=atlas`) — Atlas paints the whole wiki as individual nodes plus a log-compressed rim, and has been run against a ~26,000-source corpus that produced a ~40,000-page wiki. `serve` builds and serves without opening a browser; `build` only re-emits the bundle. More in [docs/viewers.md](skills/curiosity-engine/docs/viewers.md).
 
 For non-Claude-Code CLIs (Codex, Gemini, Copilot Chat, Cursor, Ollama, air-gapped, enterprise), see [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md).
 
@@ -145,7 +156,7 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 
 - [docs/architecture.md](skills/curiosity-engine/docs/architecture.md) — full design rationale
 - [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md) — non-Claude-Code CLIs, model presets, Ollama, deployment notes, orphan-source wiring
-- [docs/viewers.md](skills/curiosity-engine/docs/viewers.md) — graph viewer, Obsidian, VS Code + Foam, semantic search
+- [docs/viewers.md](skills/curiosity-engine/docs/viewers.md) — graph viewer (classic + Atlas), search, Obsidian, VS Code + Foam, semantic search
 - [docs/okf-interop.md](skills/curiosity-engine/docs/okf-interop.md) — Open Knowledge Format export (cross-tool exchange)
 - [docs/multi-project.md](skills/curiosity-engine/docs/multi-project.md) — multi-project model in detail
 - [docs/code-knowledge.md](skills/curiosity-engine/docs/code-knowledge.md) — code-repo integration

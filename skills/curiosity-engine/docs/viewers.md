@@ -5,25 +5,48 @@ search layer.
 
 ## Built-in graph viewer (default)
 
-Run `bash <skill_path>/scripts/viewer.sh open` to build and serve a
-graph-first static site on `http://localhost:8090`. Force-directed
-D3 graph at the centre, type-grouped content browser on the left
-with fuzzy search, click-to-open doc viewer modal with a 1-hop
-subgraph navigator at the bottom for hop-by-hop exploration. Figure
-pages render their PNG inline. Live physics knobs in a top-right
-settings panel. Notes and todos pages are inline-editable from the
-modal (padlock toggle), and a `+` button next to the search bar
-uploads files straight into `vault/raw/` for the next ingest run.
-No Node.js dependency — pure Python build + vanilla JS frontend
-with vendored D3 + Fuse + Knowledge Atlas shipped inside the skill
+From the workspace root (after `wiki/` exists):
+
+```bash
+bash <skill_path>/scripts/viewer.sh open
+# npx-skills / Claude Code typical path:
+#   bash ~/.claude/skills/curiosity-engine/scripts/viewer.sh open
+# git-clone install:
+#   bash ~/curiosity-engine/skills/curiosity-engine/scripts/viewer.sh open
+```
+
+Builds and serves a graph-first static site on `http://localhost:8090`
+(`serve` skips opening a browser; `build` only re-emits the bundle).
+Force-directed D3 graph at the centre, type-grouped content browser
+on the left. Two search surfaces, kept in sync: **Search pages…** in
+the sidebar is Fuse.js fuzzy search over the page list; **Search
+wiki…** over the canvas substring-matches title, path, type, and
+page properties and paints a dashed halo on every hit. Click-to-open
+doc viewer modal with a 1-hop subgraph navigator at the bottom for
+hop-by-hop exploration. Figure pages render their PNG inline. Live
+physics knobs in a top-right settings panel. Notes and todos pages
+are inline-editable from the modal (padlock toggle), and a `+`
+button next to the search bar uploads files straight into
+`vault/raw/` for the next ingest run. No Node.js dependency — pure
+Python build + vanilla JS frontend with vendored D3 + Fuse +
+Knowledge Atlas shipped inside the skill
 (`template/wiki-view/static/vendor/`) and copied into the bundle
-at build time; no network fetch. Wikis above 360 pages get a
-Classic / Atlas chooser in the graph controls (`?viewer=atlas` forces
-it). Atlas first paint is the whole wiki as individual nodes plus a
-log rim, not type-cluster bubbles. Each workspace's
-bundle goes into `~/.cache/curiosity-engine/wiki-view/<workspace>/`;
-the server rebuilds it after every inline edit, so refresh and the
-change is visible.
+at build time; no network fetch.
+
+**Atlas mode** is the layout for large corpora. Switch `view:` in
+the graph controls, or force it with `?viewer=atlas`. Classic
+remains the default; the chooser is always offered (the old 360-page
+gate was a rule of thumb about when Atlas starts paying off, not a
+capability boundary). Atlas first paint is the whole wiki as
+individual nodes plus a log-compressed rim, not type-cluster
+bubbles. Default visible-node ceiling is 10k (experimental 100k).
+Validated on a ~26,000-source corpus that produced a ~40,000-page
+wiki.
+
+Each workspace's bundle goes into
+`~/.cache/curiosity-engine/wiki-view/<workspace>/`; the server
+rebuilds it after every inline edit, so refresh and the change is
+visible.
 
 ## Obsidian (alternative — same underlying markdown)
 

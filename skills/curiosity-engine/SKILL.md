@@ -623,13 +623,13 @@ Do not ask about every field or have long back-and-forth per row; batch updates 
 
 ### VIEWER — "view the wiki", "open the graph", "browse the wiki"
 
-Graph-first static viewer purpose-built for the curiosity-engine schema. Walks `wiki/`, queries `.curator/graph.kuzu`, and emits a single static-site bundle into `~/.cache/curiosity-engine/wiki-view/<workspace>/`. D3 force-directed graph at the centre, narrow type-grouped content browser on the left with Fuse.js fuzzy search, click-to-open doc viewer modal (figure pages render the asset PNG inline, every page carries a 1-hop subgraph navigator at the bottom for hop-by-hop exploration). Live physics knobs in a top-right settings panel. Light/dark theming, palette-B type colours, auto/on/off label modes. Wikis above 360 pages get a Classic / Atlas chooser; Atlas is the hybrid knowledge atlas (full individual-node field + log rim, first paint already the whole graph). No Node.js dependency — pure Python build + vanilla JS frontend with vendored D3 + Fuse + Knowledge Atlas.
+Graph-first static viewer purpose-built for the curiosity-engine schema. Walks `wiki/`, queries `.curator/graph.kuzu`, and emits a single static-site bundle into `~/.cache/curiosity-engine/wiki-view/<workspace>/`. D3 force-directed graph at the centre, narrow type-grouped content browser on the left with Fuse.js fuzzy search, plus a canvas **Search wiki…** overlay that halos matching nodes (title, path, type, properties). Click-to-open doc viewer modal (figure pages render the asset PNG inline, every page carries a 1-hop subgraph navigator at the bottom for hop-by-hop exploration). Live physics knobs in a top-right settings panel. Light/dark theming, palette-B type colours, auto/on/off label modes. Classic / Atlas chooser is always offered (`?viewer=atlas` forces it); Atlas is the hybrid knowledge atlas for large corpora (full individual-node field + log rim, first paint already the whole graph). Validated on a ~26k-source corpus that produced a ~40k-page wiki. No Node.js dependency — pure Python build + vanilla JS frontend with vendored D3 + Fuse + Knowledge Atlas.
 
 1. **Build + serve.** `bash <skill_path>/scripts/viewer.sh serve` from the workspace root. Default port 8090; stays running until `^C`.
 2. **Open browser.** `bash <skill_path>/scripts/viewer.sh open` — same as serve but opens the URL automatically.
 3. **Rebuild only.** `bash <skill_path>/scripts/viewer.sh build` — re-emits the bundle without serving. Run after wiki edits; the page must be reloaded to pick them up.
 
-Vendor libraries (D3 + Fuse) download once into `~/.cache/curiosity-engine/wiki-view-vendor/` and copy into each workspace bundle so the rendered site is self-contained. The viewer picks up curator writes only on the next build; for live-updating previews use Obsidian.
+Vendor libraries (D3 + Fuse + Knowledge Atlas) ship in-tree at `template/wiki-view/static/vendor/` and copy into each workspace bundle — no network fetch at build time. The viewer picks up curator writes only on the next build; for live-updating previews use Obsidian.
 
 ### BOOTSTRAP — "bootstrap the wiki", "bulk densify", "fast caption/fact harvest"
 
