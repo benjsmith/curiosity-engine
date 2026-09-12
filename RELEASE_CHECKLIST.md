@@ -12,16 +12,19 @@ Run through this before tagging a new release. Items marked **(security)** must 
       |------|---------|--------|--------|
       | `d3.min.js` | 7.9.0 | `f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539` | `https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js` |
       | `fuse.min.js` | 7.0.0 | `e3621b53cb77b4ec306dec41ed95511e6dd80d17fae5a04f3e346d214b9f8f92` | `https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js` |
-      | `knowledge-atlas.js` | 0.2.0 (in-repo) | `631f0930e852ae52f1d2a837c871daa357b2e8d6f65143e01a78567de36c6dd0` | built in-repo: `cd packages/knowledge-atlas && pnpm run build`, then copy `dist/knowledge-atlas.iife.js` here (no CDN — first-party code; refresh the hash on every rebuild) |
+      | `jszip.min.js` | 3.10.1 | `acc7e41455a80765b5fd9c7ee1b8078a6d160bbbca455aeae854de65c947d59e` | `https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js` |
+| `knowledge-atlas.js` | 0.2.0 (in-repo) | `5c34019cc2c1666718e039637ad458c0451b91667081f3e0acd96537061461a4` | built in-repo: `cd packages/knowledge-atlas && pnpm run build`, then copy `dist/knowledge-atlas.iife.js` here (no CDN — first-party code; refresh the hash on every rebuild) |
 
       To refresh:
 
       ```
-      curl -fsSL -o /tmp/d3.min.js   https://cdn.jsdelivr.net/npm/d3@<v>/dist/d3.min.js
-      curl -fsSL -o /tmp/fuse.min.js https://cdn.jsdelivr.net/npm/fuse.js@<v>/dist/fuse.min.js
-      shasum -a 256 /tmp/d3.min.js /tmp/fuse.min.js
-      mv /tmp/d3.min.js   skills/curiosity-engine/template/wiki-view/static/vendor/d3.min.js
-      mv /tmp/fuse.min.js skills/curiosity-engine/template/wiki-view/static/vendor/fuse.min.js
+      curl -fsSL -o /tmp/d3.min.js     https://cdn.jsdelivr.net/npm/d3@<v>/dist/d3.min.js
+      curl -fsSL -o /tmp/fuse.min.js   https://cdn.jsdelivr.net/npm/fuse.js@<v>/dist/fuse.min.js
+      curl -fsSL -o /tmp/jszip.min.js  https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js
+      shasum -a 256 /tmp/d3.min.js /tmp/fuse.min.js /tmp/jszip.min.js
+      mv /tmp/d3.min.js    skills/curiosity-engine/template/wiki-view/static/vendor/d3.min.js
+      mv /tmp/fuse.min.js  skills/curiosity-engine/template/wiki-view/static/vendor/fuse.min.js
+      mv /tmp/jszip.min.js skills/curiosity-engine/template/wiki-view/static/vendor/jszip.min.js
       # Update the table above with the new versions + hashes.
       # Run viewer.sh build in a test workspace; click around to confirm
       # the graph renders and search works (Fuse.js is the search lib).

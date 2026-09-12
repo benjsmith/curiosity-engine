@@ -38,7 +38,7 @@ import {
   type LayoutAdapter,
   type LayoutContext,
 } from "./types.ts";
-import { DEFAULT_PHYSICS, type DiscoveryClass, type LayoutPoint, type LayoutResult, type SceneData } from "../types.ts";
+import { DEFAULT_PHYSICS, LARGE_WIKI_PHYSICS, type DiscoveryClass, type LayoutPoint, type LayoutResult, type SceneData } from "../types.ts";
 
 export { coreRadius, rimRadiusAt } from "../geometry.ts";
 
@@ -196,7 +196,7 @@ function haloSizes(
 // ── whole-wiki mode (≤ core capacity) ─────────────────────────────────
 
 function fullGraphLayout(scene: SceneData, ctx: LayoutContext): LayoutResult {
-  const physics = ctx.physics ?? DEFAULT_PHYSICS;
+  let physics = ctx.physics ?? DEFAULT_PHYSICS;
   const positions = new Map<string, LayoutPoint>();
   const nodes: SimNode[] = scene.nodes.map((n) => ({ id: n.id, r: nodeRadius(n.item.meta.degree) }));
 
@@ -209,6 +209,12 @@ function fullGraphLayout(scene: SceneData, ctx: LayoutContext): LayoutResult {
       positions.set(sn.id, { x: prev.x, y: prev.y, r: sn.r });
     }
     return { positions, displacement: 0 };
+  }
+
+  // Large full-graph corpora need roomier spacing when the host did not
+  // pass explicit physics (atlas.js mounts LARGE_WIKI_PHYSICS).
+  if (nodes.length >= 2000 && physics === DEFAULT_PHYSICS) {
+    physics = LARGE_WIKI_PHYSICS;
   }
 
   const links = scene.edges
@@ -226,7 +232,7 @@ function fullGraphLayout(scene: SceneData, ctx: LayoutContext): LayoutResult {
         .distance(physics.link)
         .strength(0.55),
     )
-    .force("charge", forceManyBody().strength(physics.charge).distanceMax(500))
+    .force("charge", forceManyBody().strength(physics.charge).distanceMax(2500))
     .force("center", forceCenter(0, 0).strength(0.04))
     .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
     .alpha(1)

@@ -10,6 +10,7 @@ Endpoints
 ─────────
     GET  /                              static file (anything in the bundle)
     GET  /api/page?path=<path>          raw markdown of a wiki page
+    GET  /api/vault/<name>              vault/*.extracted.md basenames only
     POST /api/page                      JSON {path, content} → overwrite file
     POST /api/upload-vault              multipart form → save to vault/raw/
 
@@ -53,6 +54,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 BUNDLE_DIR: Path | None = None
 WORKSPACE_DIR: Path | None = None
 WIKI_DIR: Path | None = None
+VAULT_DIR: Path | None = None
 VAULT_RAW_DIR: Path | None = None
 
 
@@ -87,6 +89,17 @@ def _safe_vault_filename(name: str) -> str:
     return name
 
 
+_EXTRACTED_RE = re.compile(r"^[A-Za-z0-9._-]+\.extracted\.md$")
+
+
+def _safe_extracted_basename(name: str) -> str:
+    """Only allow vault/*.extracted.md basenames (no path components)."""
+    name = Path(name).name
+    if not _EXTRACTED_RE.match(name):
+        raise ValueError("only *.extracted.md basenames are served")
+    return name
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     # Quiet down — default httpd logging is noisy.
     def log_message(self, fmt, *args):
@@ -100,6 +113,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         if url.path == "/api/page":
             return self._handle_get_page(urllib.parse.parse_qs(url.query))
+        if url.path.startswith("/api/vault/"):
+            return self._handle_get_vault(url.path[len("/api/vault/"):])
         return super().do_GET()
 
     def do_POST(self):
@@ -165,6 +180,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(404, {"error": "page missing"})
         return self._json(200, {"path": rel, "content": p.read_text()})
 
+    def _handle_get_vault(self, raw_name: str) -> None:
+        """Serve a single vault/*.extracted.md by basename.
+
+        Used by vault.js when the local viewer_server is up. Static Pages
+        bundles fall back to shard zips instead.
+        """
+        try:
+            name = _safe_extracted_basename(urllib.parse.unquote(raw_name))
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        path = (VAULT_DIR / name).resolve()
+        try:
+            path.relative_to(VAULT_DIR.resolve())
+        except ValueError:
+            return self._json(404, {"error": "not found"})
+        if not path.is_file():
+            return self._json(404, {"error": "not found"})
+        data = path.read_bytes()
+        # Prefer markdown content-type; text/plain is also fine for <pre>.
+        ctype = "text/markdown; charset=utf-8"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _handle_post_page(self) -> None:
         try:
             body = self._read_json_body()
@@ -225,7 +266,7 @@ class ReusableThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServe
 
 
 def main() -> None:
-    global BUNDLE_DIR, WORKSPACE_DIR, WIKI_DIR, VAULT_RAW_DIR
+    global BUNDLE_DIR, WORKSPACE_DIR, WIKI_DIR, VAULT_DIR, VAULT_RAW_DIR
     if len(sys.argv) < 4:
         print("usage: viewer_server.py <bundle_dir> <workspace_dir> <port>",
               file=sys.stderr)
@@ -233,7 +274,8 @@ def main() -> None:
     BUNDLE_DIR = Path(sys.argv[1]).resolve()
     WORKSPACE_DIR = Path(sys.argv[2]).resolve()
     WIKI_DIR = WORKSPACE_DIR / "wiki"
-    VAULT_RAW_DIR = WORKSPACE_DIR / "vault" / "raw"
+    VAULT_DIR = WORKSPACE_DIR / "vault"
+    VAULT_RAW_DIR = VAULT_DIR / "raw"
     try:
         port = int(sys.argv[3])
     except ValueError:

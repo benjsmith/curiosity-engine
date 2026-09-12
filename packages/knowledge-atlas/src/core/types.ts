@@ -306,6 +306,8 @@ export type AtlasEvent =
 
 export interface AtlasController {
   focus(id: string, origin?: "user" | "system"): void;
+  /** Clear focus id + demote focus roles (retained full-graph safe). */
+  clearFocus(): void;
   back(): void;
   forward(): void;
   zoomTo(level: number): void;
@@ -390,6 +392,13 @@ export const DEFAULT_PHYSICS: AtlasPhysics = {
   charge: -420,
   link: 110,
   collide: 10,
+};
+
+/** Roomier defaults for large full-graph corpora (host atlas.js mounts these). */
+export const LARGE_WIKI_PHYSICS: AtlasPhysics = {
+  charge: -1000,
+  link: 220,
+  collide: 28,
 };
 
 export type AtlasThemeToken =

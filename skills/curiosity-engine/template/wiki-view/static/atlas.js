@@ -21,7 +21,7 @@
   var MIN_ATLAS_PAGES = 360;
   var LABEL_TYPES_KEY = 'curiosity-engine.label-types';
   var LABEL_DEFAULTS = ['concept', 'entity', 'note', 'todo'];
-  var PHYSICS_DEFAULTS = { charge: -420, link: 110, collide: 10 };
+  var PHYSICS_DEFAULTS = { charge: -1000, link: 220, collide: 28 };
 
   function readLabelTypes() {
     try {
@@ -41,6 +41,16 @@
     var typePanel = document.getElementById('label-types-panel');
     var settingsButton = document.getElementById('settings-trigger');
     var settingsPanel = document.getElementById('settings-panel');
+    // At large N the force solve is expensive; physics is fixed via
+    // mount defaults and the gear UI is hidden so sliders cannot thrash it.
+    try {
+      var nAttr = document.getElementById('graph') && document.getElementById('graph').dataset.corpusSize;
+      var n = nAttr ? parseInt(nAttr, 10) : 0;
+      if (n >= 2000 && settingsButton) {
+        settingsButton.classList.add('hidden');
+        if (settingsPanel) settingsPanel.classList.add('hidden');
+      }
+    } catch (e) {}
 
     function paintLabels() {
       if (modeState) modeState.textContent = mode;
@@ -257,6 +267,10 @@
     container.innerHTML = '';
 
     var corpusSize = pageCount(data);
+    container.dataset.corpusSize = String(corpusSize);
+    /* Edge strokes: previous sqrt(N/1000) was ABOVE camera max on large
+     * corpora, so edges never painted. Keep a mild zoom-out hide only. */
+    window.__ceAtlasEdgeMinScale = 0.85;
     var handle = window.KnowledgeAtlas.mount(container, {
       data: data,
       // Hybrid: Classic field in the core, log-compressed individual
@@ -270,6 +284,11 @@
         corpusSize: corpusSize,
         coreCapacity: Math.max(1, corpusSize),
         maxVisibleNodes: Math.max(1, corpusSize),
+        physics: {
+          charge: PHYSICS_DEFAULTS.charge,
+          link: PHYSICS_DEFAULTS.link,
+          collide: PHYSICS_DEFAULTS.collide,
+        },
         budget: {
           maxNodes: Math.max(1, corpusSize),
           maxAggregates: 0,
@@ -291,12 +310,24 @@
     var controls = initAtlasControls(handle);
     // Covers a scene that landed before onEvent was wired.
     if (stripFocusMark(handle.engine)) controls.repaint();
+    // When a static host shards edges to edges.json.gz, assign
+    // data.edges after preload and call Sidebar.updateCounts(data)
+    // so the footer does not stay at "N pages · 0 links".
+    if (window.Sidebar && typeof Sidebar.updateCounts === 'function') {
+      Sidebar.updateCounts(data);
+    }
 
     return {
       focus: function (pageId) {
         handle.engine.focus(pageId, 'system');
+        if (handle.engine.select) handle.engine.select([pageId], 'replace');
       },
-      clearFocus: function () {},
+      clearFocus: function () {
+        if (handle.engine.select) handle.engine.select([], 'replace');
+        if (handle.engine.clearFocus) handle.engine.clearFocus();
+        stripFocusMark(handle.engine);
+        if (controls && controls.repaint) controls.repaint();
+      },
       highlightSearch: function (ids) {
         highlightSearch(handle, controls.repaint, ids);
       },
