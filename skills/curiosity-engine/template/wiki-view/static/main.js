@@ -59,6 +59,8 @@
     }
     if (Modal.refresh)    Modal.refresh(data);
     if (Subgraph.init)    Subgraph.init(data);   // re-binds neighbour map
+    // Keep the sidebar footer honest if page/edge counts moved.
+    if (Sidebar.updateCounts) Sidebar.updateCounts(data);
     if (currentPageId && Modal.open) {
       Modal.open(currentPageId);
       if (Sidebar.setActive) Sidebar.setActive(currentPageId);

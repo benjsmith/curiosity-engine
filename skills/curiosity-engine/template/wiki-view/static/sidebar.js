@@ -109,10 +109,17 @@ window.Sidebar = (function () {
     });
     document.querySelector('#graph-pane').appendChild(restore);
 
+    updateCounts(data);
+  }
+
+  /* Atlas may load edges async from edges.json.gz after init; refresh
+   * the footer when the full edge set is attached to `data`. */
+  function updateCounts(data) {
     const counts = document.querySelector('#meta-counts');
-    if (counts) {
-      counts.textContent = `${data.nodes.length} pages · ${(data.edges || []).length} links`;
-    }
+    if (!counts || !data) return;
+    const nNodes = (data.nodes || []).length;
+    const nEdges = (data.edges || []).length;
+    counts.textContent = `${nNodes} pages · ${nEdges} links`;
   }
 
   /* Grouped (idle) view. Pages clustered by type with a header per group. */
@@ -248,5 +255,5 @@ window.Sidebar = (function () {
     window.location.hash = '#page=' + encodeURIComponent(row.dataset.id);
   });
 
-  return { init, setActive, setSearchHits };
+  return { init, setActive, setSearchHits, updateCounts };
 })();

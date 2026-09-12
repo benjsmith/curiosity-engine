@@ -39,6 +39,10 @@ window.Modal = (function () {
         window.location.hash = '#page=' + encodeURIComponent(target);
       }
     });
+    if (window.VaultSources) {
+      VaultSources.bind(bodyEl);
+      VaultSources.bind(propsEl);
+    }
   }
 
   function open(pageId) {
@@ -50,6 +54,7 @@ window.Modal = (function () {
     titleEl.textContent = page.title || pageId;
     renderProperties(page);
     bodyEl.innerHTML = page.body_html || '';
+    finishBody(page);
     modal.classList.remove('hidden');
     backdrop.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
@@ -125,10 +130,43 @@ window.Modal = (function () {
     return `<span class="prop-icon"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><line x1="3" y1="5" x2="13" y2="5"/><line x1="3" y1="8" x2="13" y2="8"/><line x1="3" y1="11" x2="13" y2="11"/></svg></span>`;
   }
 
+  function finishBody(page) {
+    if (window.VaultSources) VaultSources.enhance(bodyEl);
+    // Source stubs: offer an explicit full-doc control above the preview.
+    if (page && page.type === 'source') {
+      const existing = bodyEl.querySelector('.vault-open-banner');
+      if (!existing) {
+        let name = null;
+        const cite = bodyEl.querySelector('.cite-vault, .cite');
+        if (cite) name = (cite.dataset && cite.dataset.vault) || cite.textContent;
+        const srcs = page.properties && page.properties.sources;
+        if (!name && Array.isArray(srcs) && srcs[0]) name = srcs[0];
+        if (window.VaultSources) name = VaultSources.normalizeName(name);
+        if (name) {
+          const bar = document.createElement('p');
+          bar.className = 'vault-open-banner';
+          bar.innerHTML =
+            '<button type="button" class="vault-open-btn cite-vault" data-vault="' +
+            escapeHtml(name) +
+            '">Open full vault source</button>' +
+            '<span class="vault-open-hint">CE source pages are stubs — full extracted text opens in a new tab.</span>';
+          bodyEl.insertBefore(bar, bodyEl.firstChild);
+        }
+      }
+    }
+  }
+
   function formatValue(v) {
     if (v == null) return '<span style="color:var(--text-faint)">—</span>';
     if (Array.isArray(v)) {
-      return v.map(item => `<div>${escapeHtml(String(item))}</div>`).join('');
+      return v.map(item => {
+        const s = String(item);
+        const vaultName = window.VaultSources && VaultSources.normalizeName(s);
+        if (vaultName) {
+          return `<div><button type="button" class="cite cite-vault prop-vault" data-vault="${escapeHtml(vaultName)}">${escapeHtml(vaultName)}</button></div>`;
+        }
+        return `<div>${escapeHtml(s)}</div>`;
+      }).join('');
     }
     return escapeHtml(String(v));
   }

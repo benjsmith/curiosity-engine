@@ -18,6 +18,10 @@
 #   viewer.sh build           # Build the bundle
 #   viewer.sh serve [port]    # Build + serve on http://localhost:<port> (default 8090)
 #   viewer.sh open  [port]    # serve + open in default browser
+#
+# Optional (large / static hosts): after build, pack vault shards so cite-open
+# works without GET /api/vault:
+#   uv run python3 "$SCRIPT_DIR/pack_vault_shards.py"
 
 set -e
 

@@ -2,6 +2,37 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
+## 2026-09-13 — v1.7.2 — Large-wiki Atlas UX + vault-open port
+
+**Migration:** none required for local `viewer.sh serve`. **Optional for
+static / Pages hosts with large vaults:** after `viewer.sh build`, run
+`uv run python3 <skill>/scripts/pack_vault_shards.py` so cite-open can
+fall back to zip shards. **Breaking:** none.
+
+Large-corpus Atlas polish and on-demand vault source open, ported from
+the CorporateBench biocure static host:
+
+- **Knowledge Atlas:** retained full-graph `focus()` updates node roles
+  in place (no scene rebuild); single-click select + focus, empty-click
+  clears selection/focus/hover; `labelCap` (off=0 / auto=48 / on=120);
+  roomier large-wiki physics (charge −1000, link 220, collide 28) via
+  host mount + scale-aware hybrid defaults when N≥2000, with
+  `distanceMax` 2500 on the full-graph force path; edge stroke min-scale
+  gate is camera-reachable (`~0.85`, overridable via
+  `window.__ceAtlasEdgeMinScale`) instead of `sqrt(N/1000)`.
+- **Viewer chrome:** `vault.js` + vendored JSZip; modal cite / source
+  banner; `GET /api/vault/<basename>` on `viewer_server.py`; optional
+  `pack_vault_shards.py`; Atlas passes physics defaults and hides the
+  gear UI at N ≥ 2000.
+- **Sidebar "0 links" fix:** `Sidebar.updateCounts(data)` exported and
+  called from `init` / Atlas mount / `refetchData`, so sharded
+  `edges.json.gz` hosts (and any post-init edge attach) refresh the
+  footer instead of leaving `N pages · 0 links`.
+
+Rebuild the Atlas vendor after pulling: `cd packages/knowledge-atlas &&
+pnpm/npm run build`, then copy `dist/knowledge-atlas.iife.js` →
+`skills/.../template/wiki-view/static/vendor/knowledge-atlas.js`.
+
 ## 2026-09-07 — v1.7.1 — Viewer docs: Atlas, search, how to run
 
 **Migration:** none. **Breaking:** none. Documentation only — no script,

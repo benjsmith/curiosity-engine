@@ -51,7 +51,7 @@ export const forceLayout: LayoutAdapter = {
           .distance(physics.link)
           .strength(0.55),
       )
-      .force("charge", forceManyBody().strength(physics.charge).distanceMax(500))
+      .force("charge", forceManyBody().strength(physics.charge).distanceMax(2500))
       .force("center", forceCenter(0, 0).strength(0.04))
       .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
       .alpha(1)

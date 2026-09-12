@@ -220,23 +220,32 @@ export class CanvasRenderer implements SceneRenderer {
     ctx.globalAlpha = 1;
 
     // ── edges ───────────────────────────────────────────────────────
-    for (const e of frame.scene.edges) {
-      const s = positions.get(e.source);
-      const t = positions.get(e.target);
-      if (!s || !t) continue;
-      const isFocusEdge = e.priority === 1;
-      const hovered = frame.hoverId === e.source || frame.hoverId === e.target;
-      ctx.strokeStyle = isFocusEdge || hovered ? T.accent : T.line;
-      ctx.globalAlpha = (isFocusEdge ? 0.9 : hovered ? 0.8 : 0.35) * (e.confidence ?? 1);
-      ctx.lineWidth = isFocusEdge ? 1.4 : 1;
-      ctx.setLineDash(e.type === "depicts" ? [3, 3] : e.type === "co-cited" ? [1.5, 3] : []);
-      ctx.beginPath();
-      ctx.moveTo(s.x, s.y);
-      ctx.lineTo(t.x, t.y);
-      ctx.stroke();
+    // Edge strokes are gated by camera scale so zoomed-out overviews stay
+    // readable. Hosts may override via window.__ceAtlasEdgeMinScale; the
+    // default (~0.85) is camera-reachable (unlike the old sqrt(N/1000)
+    // gate that sat above max zoom on large corpora).
+    const edgeMinOverride = (globalThis as unknown as { __ceAtlasEdgeMinScale?: number })
+      .__ceAtlasEdgeMinScale;
+    const edgeMinScale = typeof edgeMinOverride === "number" ? edgeMinOverride : 0.85;
+    if ((frame.camera.scale || 1) >= edgeMinScale) {
+      for (const e of frame.scene.edges) {
+        const s = positions.get(e.source);
+        const t = positions.get(e.target);
+        if (!s || !t) continue;
+        const isFocusEdge = e.priority === 1;
+        const hovered = frame.hoverId === e.source || frame.hoverId === e.target;
+        ctx.strokeStyle = isFocusEdge || hovered ? T.accent : T.line;
+        ctx.globalAlpha = (isFocusEdge ? 0.9 : hovered ? 0.8 : 0.35) * (e.confidence ?? 1);
+        ctx.lineWidth = isFocusEdge ? 1.4 : 1;
+        ctx.setLineDash(e.type === "depicts" ? [3, 3] : e.type === "co-cited" ? [1.5, 3] : []);
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(t.x, t.y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
     }
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
 
     // ── aggregates ──────────────────────────────────────────────────
     // Far shells smear: high-shell groups stretch tangentially into
@@ -352,10 +361,13 @@ export class CanvasRenderer implements SceneRenderer {
     for (const n of byScore) {
       const p = positions.get(n.id);
       if (!p) continue;
-      const forced = n.role === "focus" || n.id === frame.hoverId;
+      const forced =
+        n.role === "focus" || n.id === frame.hoverId || frame.selection.has(n.id);
+      // Off mode: only the hovered node keeps a label (focus/selection
+      // rings still show; labelCap is 0 so nothing else is admitted).
+      if (labelMode === "off" && n.id !== frame.hoverId) continue;
       if (!forced && labelCount >= frame.maxLabels) continue;
       if (!forced) {
-        if (labelMode === "off") continue;
         if (frame.labelTypes && !frame.labelTypes.has(n.item.type)) continue;
         if (labelMode === "auto") {
           if (n.shell || frame.layout.boundaryIds?.has(n.id)) continue;

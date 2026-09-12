@@ -300,11 +300,30 @@ export class AtlasEngine implements AtlasController {
     this.emit({ kind: "trail-changed", trail: this.trails.state() });
     // A retained full-graph scene is the whole wiki — highlighting
     // another node must not rebuild (that snapped first paint back to
-    // type-cluster shells at viewScale=1).
+    // type-cluster shells at viewScale=1). Update roles in place so the
+    // accent ring / label priority track the new focus.
     if (this.scene && isFullGraphScene(this.scene) && this.retainedFullGraphSize > 0) {
+      for (const n of this.scene.nodes) {
+        if (n.id === id) n.role = "focus";
+        else if (n.role === "focus") n.role = "context";
+      }
+      const focused = this.scene.nodes.find((n) => n.id === id);
+      this.scene.focus = focused?.item;
       return;
     }
     this.requestScene();
+  }
+
+  /** Drop the active focus mark without rebuilding a retained scene. */
+  clearFocus(): void {
+    if (this.destroyed) return;
+    this.focusId = undefined;
+    if (this.scene) {
+      for (const n of this.scene.nodes) {
+        if (n.role === "focus") n.role = "context";
+      }
+      this.scene.focus = undefined;
+    }
   }
 
   back(): void {

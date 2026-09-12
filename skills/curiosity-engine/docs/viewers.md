@@ -43,6 +43,14 @@ bubbles. Default visible-node ceiling is 10k (experimental 100k).
 Validated on a ~26,000-source corpus that produced a ~40,000-page
 wiki.
 
+**Vault cites.** Source-page stubs open full `vault/*.extracted.md`
+via `vault.js`: local serve uses `GET /api/vault/<basename>`; static
+hosts use optional `pack_vault_shards.py` output (`vault/shard-*.zip`
++ `manifest.json.gz`). Embedded hosts can set `data-sy-host=1` /
+`window.__syOpenVault` instead of `window.open`. Sidebar footer counts
+(`N pages · M links`) refresh through `Sidebar.updateCounts` when
+edges arrive after init (sharded `edges.json.gz` hosts).
+
 Each workspace's bundle goes into
 `~/.cache/curiosity-engine/wiki-view/<workspace>/`; the server
 rebuilds it after every inline edit, so refresh and the change is

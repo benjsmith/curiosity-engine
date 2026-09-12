@@ -140,10 +140,17 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     draw(1);
   });
 
+  const labelCapFor = (mode: "auto" | "on" | "off") =>
+    mode === "off" ? 0 : mode === "on" ? 120 : 48;
   const labelState = {
     mode: opts.labelMode ?? "auto",
     types: opts.labelTypes ? new Set(opts.labelTypes) : null,
-  } as { mode: "auto" | "on" | "off"; types: ReadonlySet<string> | null };
+    labelCap: labelCapFor(opts.labelMode ?? "auto"),
+  } as {
+    mode: "auto" | "on" | "off";
+    types: ReadonlySet<string> | null;
+    labelCap: number;
+  };
 
   const draw = (progress: number) => {
     const snap = engine.snapshot();
@@ -202,7 +209,11 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       hoverId,
       selection: new Set(snap.state.selection),
       pinned: new Set(snap.state.pinned),
-      maxLabels: snap.stats?.labelCount ?? opts.config?.budget?.maxLabels ?? 60,
+      maxLabels:
+        labelState.labelCap ??
+        snap.stats?.labelCount ??
+        opts.config?.budget?.maxLabels ??
+        60,
       showHorizonRing: (opts.config?.layout ?? "focus") !== "force" && !full,
       coreRadius: isHybrid ? coreRadius(viewport, bands) : undefined,
       shellBands: bands,
@@ -495,17 +506,30 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
         return;
       }
     }
-    if (!hit) return;
+    if (!hit) {
+      // Empty canvas click: clear selection + focus decoration + hover.
+      engine.select([], "replace");
+      engine.clearFocus();
+      hoverId = null;
+      draw(1);
+      return;
+    }
     if (hit.kind === "node") {
       lastClickFocus = { id: hit.id, t: performance.now() };
+      engine.select([hit.id], "replace");
       engine.focus(hit.id, "user");
+      hoverId = hit.id;
+      draw(1);
     } else {
       // Aggregates are selectable: click focuses the top member so the
       // region unfolds into the graph zone.
       const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === hit.id);
       const member = agg?.memberIds[0];
       if (member) {
+        engine.select([member], "replace");
         engine.focus(member, "user");
+        hoverId = member;
+        draw(1);
       } else {
         engine.zoomTo(engine.getState().semanticScale + 1);
       }
@@ -591,6 +615,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     setLabels: (mode, types) => {
       labelState.mode = mode;
       if (types !== undefined) labelState.types = types ? new Set(types) : null;
+      labelState.labelCap = labelCapFor(mode);
       draw(1);
     },
     setPhysics: (physics) => {
