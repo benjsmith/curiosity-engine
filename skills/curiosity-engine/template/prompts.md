@@ -85,9 +85,17 @@ this file; don't duplicate prompts there.
 >   become explicit citation targets for future wikilinks.
 > - **analyses/<stem>.md**: multi-source synthesis answering a question
 >   or exploring a connection. Written at `lite` level, not `ultra`.
->   Analyses are the primary channel once the editorial/frontier pool
->   saturates — they should be prolific, multi-directional, and
->   explicitly forward-looking. Two shapes are both welcome:
+>   **Anti-crowding (v1.8):** before drafting a full new analysis, check
+>   existing `analyses/` (and closely related content pages). Prefer
+>   **updating** a near-twin when most of the answer already lives there;
+>   else prefer a **minor linking analysis** (short; wikilinks existing
+>   pages; states the conjunction/delta) over a full near-twin restatement.
+>   Only mint a full new analysis when the content is genuinely new.
+>   QUERY write-back uses `naming.py recommend-analysis` for the same
+>   decision. Analyses are the primary channel once the editorial/frontier
+>   pool saturates — they should be prolific, multi-directional, and
+>   explicitly forward-looking, without crowding near-duplicates. Two
+>   shapes are both welcome:
 >   - **Empirical synthesis**: findings drawn from multiple data-
 >     producing sources. Examples: *Chinchilla scaling law*, *Kaplan
 >     exponents*, comparison of benchmark results across papers.
@@ -124,6 +132,14 @@ this file; don't duplicate prompts there.
 >   multiple sources that has no dedicated page, add a
 >   `spawn_concept` entry even if it isn't already in (d) — same
 >   mechanism.
+> - **sources/<stem>.md**: succinct factual summary of one vault
+>   extraction — who/when/subject + key claims with `(vault:...)`
+>   citations. Title prefix `[src]`. **Not a hollow stub** (v1.8): the
+>   page must carry recoverable facts so wiki-only retrieve is useful;
+>   full extract still lives in `vault/*.extracted.md` (viewer open +
+>   retrieve thin-source expand). Deterministic create/refresh via
+>   `sweep.py fix-source-stubs` / `naming.build_source_summary`. No raw
+>   URLs in the body.
 > - **entities/<stem>.md**: a named thing — a specific model family
 >   (Mixtral, PaLM, Gemma), organization (OpenAI, Anthropic,
 >   DeepMind), framework (PyTorch, HuggingFace), benchmark

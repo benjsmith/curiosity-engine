@@ -43,7 +43,7 @@ bubbles. Default visible-node ceiling is 10k (experimental 100k).
 Validated on a ~26,000-source corpus that produced a ~40,000-page
 wiki.
 
-**Vault cites.** Source-page stubs open full `vault/*.extracted.md`
+**Vault cites.** Source-page summaries (`[src]`) still open full `vault/*.extracted.md`
 via `vault.js`: local serve uses `GET /api/vault/<basename>`; static
 hosts use optional `pack_vault_shards.py` output (`vault/shard-*.zip`
 + `manifest.json.gz`). Embedded hosts can set `data-sy-host=1` /

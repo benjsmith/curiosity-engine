@@ -5,7 +5,7 @@ Distinct from CURATE's semantic ratchet: SWEEP operates across the whole
 wiki at once, deterministically, in seconds. It catches the kinds of issues
 that CURATE's compression-progress ratchet cannot see (or would burn huge
 numbers of slow cycles on): dead wikilinks, duplicate slugs, orphan pages,
-missing wiki/sources stubs, index.md drift, frontmatter invalid.
+missing/thin wiki/sources summaries, index.md drift, frontmatter invalid.
 
 Subcommands
 -----------
@@ -13,13 +13,17 @@ Subcommands
         Read-only report. Emits one JSON object covering every hygiene
         dimension. Main session reads the report and decides what to fix.
 
-    sweep.py fix-source-stubs [wiki_dir] [--cited-only]
-        Deterministic backfill: for every file in `vault/` without a
-        corresponding stub in `wiki/sources/`, create one from the vault
-        file's extracted-text frontmatter and a short auto-summary.
-        Idempotent. Prints JSON summary of what was created.
+    sweep.py fix-source-stubs [wiki_dir] [--cited-only] [--refresh]
+        Deterministic backfill / refresh of `wiki/sources/` summary pages
+        (command name kept for compatibility; pages are substantive
+        summaries, not hollow stubs). For every vault extraction without
+        a matching sources page, create one with who/when/subject/key
+        claims + `(vault:...)` via naming.build_source_summary. Thin or
+        hollow existing sources pages are rewritten from their extraction;
+        `--refresh` forces rewrite of all matched pages. Idempotent for
+        already-substantive pages. Prints JSON summary.
 
-        `--cited-only` is the tiered-vault mode: only create stubs for
+        `--cited-only` is the tiered-vault mode: only create pages for
         vault files already cited by non-source wiki pages via
         `(vault:<path>)`. Uncited vault material stays searchable (FTS5,
         semantic) without cluttering the wiki. Useful once the vault
@@ -430,31 +434,97 @@ def _cited_vault_paths(wiki_dir: Path) -> set:
     return cited
 
 
-def cmd_fix_source_stubs(wiki_dir: Path, cited_only: bool = False):
-    """Create wiki/sources/<topic>.md for every vault extraction without a stub.
+def _source_page_is_thin(body: str, *, token_ceiling: int = 80) -> bool:
+    """True when a sources/ page body is a hollow stub needing refresh.
+
+    Hollow = few body tokens, or the old auto-stub shape (single truncated
+    prose blob without a Key claims section). Finished substantive
+    summaries from build_source_summary carry Who/when + Key claims and
+    sit well above the ceiling.
+    """
+    words = re.findall(r"[A-Za-z0-9]+", body or "")
+    if len(words) < token_ceiling:
+        return True
+    if "key claims" not in (body or "").casefold():
+        # Legacy first-N-chars stubs can be long-ish but still hollow.
+        return len(words) < 140
+    return False
+
+
+def _write_source_summary_page(path: Path, *, title: str, created: str,
+                               updated: str, extraction_name: str,
+                               sha: str, summary: str) -> None:
+    # Title starts with a bracketed prefix like [src]. YAML reads
+    # unquoted `title: [src] Foo` as a flow sequence, which PyYAML
+    # (and therefore Obsidian's frontmatter renderer) rejects. Quote
+    # the value so it parses as a string. Escape any embedded
+    # double quotes by downgrading to single quotes — acceptable
+    # fidelity loss for a wiki title.
+    title_quoted = '"' + title.replace('"', "'") + '"'
+    page = (
+        f"---\n"
+        f"title: {title_quoted}\n"
+        f"type: source\n"
+        f"created: {created}\n"
+        f"updated: {updated}\n"
+        f"sources: [{extraction_name}]\n"
+        f"vault_sha256: {sha}\n"
+        f"---\n\n"
+        f"{summary if summary.endswith(chr(10)) else summary + chr(10)}"
+    )
+    path.write_text(page)
+
+
+def cmd_fix_source_stubs(wiki_dir: Path, cited_only: bool = False,
+                           refresh: bool = False):
+    """Create or refresh wiki/sources/<stem>.md summary pages from vault extracts.
 
     Uses naming.parse_source_meta + naming.citation_stem to build the
     filename and naming.source_display_title for the frontmatter title.
-    Idempotent.
+    Bodies are succinct factual summaries (who/when/subject/key claims +
+    `(vault:...)` citation) via naming.build_source_summary — not hollow
+    stubs. Keeps the `[src]` title prefix.
+
+    Idempotent for already-substantive pages. Thin/hollow existing source
+    pages are rewritten from their vault extraction (or all of them when
+    `refresh=True`). Command name retained for compatibility.
 
     `cited_only=True` restricts creation to vault files already cited by
     non-source wiki pages — the tiered-vault mode. Uncited sources stay
     in the vault (FTS5 + semantic searchable) but don't get a wiki page.
     """
     import hashlib
-    from naming import citation_stem, parse_source_meta, source_display_title, TYPE_PREFIX
+    from datetime import date as _date
+    from naming import (
+        build_source_summary, citation_stem, parse_source_meta,
+        source_display_title, TYPE_PREFIX,
+    )
 
     vault_dir = wiki_dir.parent / "vault"
     sources_dir = wiki_dir / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     covered_hashes, covered_paths = _vault_files_covered_by_stubs(wiki_dir)
+    # Map extraction basename / sha -> existing source page path.
+    existing_by_path = {}
+    existing_by_sha = {}
+    for stub in sources_dir.glob("*.md"):
+        fm, _ = read_frontmatter(stub.read_text(encoding="utf-8",
+                                                errors="replace"))
+        for s in (fm.get("sources") or []):
+            existing_by_path[str(s).lower()] = stub
+        sha_existing = str(fm.get("vault_sha256") or "").lower()
+        if sha_existing:
+            existing_by_sha[sha_existing] = stub
+
     used_stems = {p.stem.lower() for p in sources_dir.glob("*.md")}
     created = []
+    updated = []
     skipped = 0
     skipped_unnamed = []
     skipped_uncited = 0
     cited_filter = _cited_vault_paths(wiki_dir) if cited_only else None
-    # Guard against producing garbage stubs when naming fails. Topics
+    today = _date.today().isoformat()
+    # Guard against producing garbage pages when naming fails. Topics
     # matching a generic section heading (abstract, overview, ...) indicate
     # parse_source_meta couldn't find a real title and fell through to
     # `## Abstract` etc. — better to skip than manufacture `abstract-2.md`.
@@ -466,17 +536,46 @@ def cmd_fix_source_stubs(wiki_dir: Path, cited_only: bool = False):
         if cited_filter is not None and extracted.name not in cited_filter:
             skipped_uncited += 1
             continue
-        sha = hashlib.sha256(extracted.read_bytes()).hexdigest()
-        if extracted.name.lower() in covered_paths or sha.lower() in covered_hashes:
-            skipped += 1
-            continue
+        raw_bytes = extracted.read_bytes()
+        sha = hashlib.sha256(raw_bytes).hexdigest()
+        existing = (
+            existing_by_path.get(extracted.name.lower())
+            or existing_by_sha.get(sha.lower())
+        )
 
         meta = parse_source_meta(extracted)
         if meta["topic"].lower() in _GENERIC_TOPICS:
             skipped_unnamed.append(extracted.name)
             continue
-        clean_stem = citation_stem(meta).lower() or extracted.stem.replace(".extracted", "")
 
+        extract_text = extracted.read_text(encoding="utf-8", errors="replace")
+        fm, body = read_frontmatter(extract_text)
+        display = source_display_title(meta)
+        title = f"{TYPE_PREFIX['source']} {display}"
+        summary = build_source_summary(meta, body, extracted.name)
+
+        if existing is not None:
+            cur_fm, cur_body = read_frontmatter(
+                existing.read_text(encoding="utf-8", errors="replace"))
+            needs = refresh or _source_page_is_thin(cur_body)
+            if not needs:
+                skipped += 1
+                continue
+            _write_source_summary_page(
+                existing,
+                title=title,
+                created=str(cur_fm.get("created") or fm.get("date") or today),
+                updated=today,
+                extraction_name=extracted.name,
+                sha=sha,
+                summary=summary,
+            )
+            updated.append(str(existing))
+            continue
+
+        # Not covered — mint a new summary page.
+        clean_stem = citation_stem(meta).lower() or extracted.stem.replace(
+            ".extracted", "")
         if clean_stem in used_stems:
             n = 2
             while f"{clean_stem}-{n}" in used_stems:
@@ -485,45 +584,25 @@ def cmd_fix_source_stubs(wiki_dir: Path, cited_only: bool = False):
         used_stems.add(clean_stem)
 
         stub_path = sources_dir / f"{clean_stem}.md"
-        fm, body = read_frontmatter(extracted.read_text())
-        display = source_display_title(meta)
-        title = f"{TYPE_PREFIX['source']} {display}"
-
-        summary_lines = []
-        for line in body.split("\n"):
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("<!--"):
-                continue
-            summary_lines.append(line)
-            if sum(len(l) for l in summary_lines) > 400:
-                break
-        summary = " ".join(summary_lines)[:500]
-        if not summary:
-            summary = f"Source extraction for {display}. (vault:{extracted.name})"
-
-        # Title starts with a bracketed prefix like [src]. YAML reads
-        # unquoted `title: [src] Foo` as a flow sequence, which PyYAML
-        # (and therefore Obsidian's frontmatter renderer) rejects. Quote
-        # the value so it parses as a string. Escape any embedded
-        # double quotes by downgrading to single quotes — acceptable
-        # fidelity loss for a wiki title.
-        title_quoted = '"' + title.replace('"', "'") + '"'
-        stub = (
-            f"---\n"
-            f"title: {title_quoted}\n"
-            f"type: source\n"
-            f"created: {fm.get('date', '2026-04-12')}\n"
-            f"updated: 2026-04-12\n"
-            f"sources: [{extracted.name}]\n"
-            f"vault_sha256: {sha}\n"
-            f"---\n\n"
-            f"{summary} (vault:{extracted.name})\n"
+        _write_source_summary_page(
+            stub_path,
+            title=title,
+            created=str(fm.get("date") or today),
+            updated=today,
+            extraction_name=extracted.name,
+            sha=sha,
+            summary=summary,
         )
-        stub_path.write_text(stub)
         created.append(str(stub_path))
-    out = {"created": len(created), "skipped": skipped,
-           "skipped_unnamed": skipped_unnamed,
-           "created_paths": created}
+
+    out = {
+        "created": len(created),
+        "updated": len(updated),
+        "skipped": skipped,
+        "skipped_unnamed": skipped_unnamed,
+        "created_paths": created,
+        "updated_paths": updated,
+    }
     if cited_only:
         out["skipped_uncited"] = skipped_uncited
     print(json.dumps(out, indent=2))
