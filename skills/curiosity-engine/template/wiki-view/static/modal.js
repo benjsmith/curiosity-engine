@@ -149,7 +149,7 @@ window.Modal = (function () {
             '<button type="button" class="vault-open-btn cite-vault" data-vault="' +
             escapeHtml(name) +
             '">Open full vault source</button>' +
-            '<span class="vault-open-hint">CE source pages are stubs — full extracted text opens in a new tab.</span>';
+            '<span class="vault-open-hint">Source page is a summary — full extracted text opens in a new tab.</span>';
           bodyEl.insertBefore(bar, bodyEl.firstChild);
         }
       }

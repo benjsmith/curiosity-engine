@@ -2,8 +2,9 @@
 """naming.py — shared naming + display-title utilities for the curiosity engine.
 
 Used by:
-  - sweep.py fix-source-stubs                    (citation-style stub creation)
-  - local_ingest.py                              (source stubs on ingest)
+  - sweep.py fix-source-stubs                    (citation-style source summaries)
+  - local_ingest.py                              (source pages on ingest)
+  - naming.py recommend-analysis                 (QUERY crystallise anti-crowding)
   - CURATE workers / reviewers                   (new page creation)
 
 Hash-guarded by evolve_guard.sh. Deterministic, stdlib only.
@@ -792,3 +793,272 @@ def source_display_title(meta: dict) -> str:
     if suffix_parts:
         return f"{title} \u2014 {', '.join(suffix_parts)}"
     return title
+
+
+# ---------------------------------------------------------------------------
+# QUERY crystallise anti-crowding (v1.8)
+# ---------------------------------------------------------------------------
+# Lexical title/head similarity over analyses/*.md so QUERY write-back can
+# prefer update / minor linking analysis / new rather than minting near-twins.
+# Stdlib only; no embeddings required (optional embedder path not wired —
+# Jaccard is enough for deterministic recommendation).
+
+_ANALYSIS_STOP = frozenset({
+    "a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with",
+    "vs", "versus", "across", "between", "from", "into", "via", "as", "by",
+    "is", "are", "was", "were", "be", "been", "being", "this", "that",
+    "these", "those", "how", "what", "why", "when", "where", "which",
+    "analysis", "synthesis", "comparison", "overview", "review", "notes",
+})
+_WORD_RE = re.compile(r"[a-z0-9]+", re.I)
+
+
+def lexical_tokens(text: str) -> set:
+    """Lowercased alphanumeric tokens with a small English/analysis stop-set."""
+    if not text:
+        return set()
+    return {t for t in _WORD_RE.findall(text.casefold())
+            if len(t) > 1 and t not in _ANALYSIS_STOP}
+
+
+def jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def page_title_and_head(path: Path, head_chars: int = 480) -> tuple:
+    """Return (display_title, first_prose_paragraph) for a wiki page."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return path.stem.replace("-", " "), ""
+    fm, body = read_frontmatter(text)
+    title = str(fm.get("title") or path.stem.replace("-", " "))
+    # Strip [xx] type prefix for similarity (keep human words).
+    title_plain = re.sub(r"^\[[^\]]+\]\s*", "", title).strip()
+    head = ""
+    for para in re.split(r"\n\s*\n", body or ""):
+        line = para.strip()
+        if not line or line.startswith("#") or line.startswith("<!--"):
+            continue
+        # Drop leading list markers for tokenisation cleanliness.
+        head = re.sub(r"^[-*]\s+", "", line, flags=re.M)
+        break
+    if len(head) > head_chars:
+        head = head[:head_chars]
+    return title_plain, head
+
+
+def score_analysis_similarity(proposed_title: str, proposed_head: str,
+                              candidate_title: str, candidate_head: str) -> dict:
+    """Title-weighted Jaccard of proposed vs one existing analysis."""
+    pt, ph = lexical_tokens(proposed_title), lexical_tokens(proposed_head)
+    ct, ch = lexical_tokens(candidate_title), lexical_tokens(candidate_head)
+    title_j = jaccard(pt, ct)
+    head_j = jaccard(ph | pt, ch | ct)  # title tokens reinforce head
+    # Title agreement dominates near-twin detection; head catches paraphrase.
+    score = 0.65 * title_j + 0.35 * head_j
+    return {
+        "score": round(score, 4),
+        "title_jaccard": round(title_j, 4),
+        "head_jaccard": round(head_j, 4),
+    }
+
+
+def recommend_analysis_write(
+    wiki_dir: Path,
+    proposed_title: str,
+    proposed_head: str = "",
+    *,
+    update_threshold: float = 0.55,
+    link_threshold: float = 0.35,
+) -> dict:
+    """Recommend update | link | new for a proposed QUERY crystallise write.
+
+    Scans `wiki/analyses/*.md` with lexical title/head Jaccard only.
+    - **update**: most of the answer already lives on a near-twin page
+      (score >= update_threshold) — edit that page instead of minting another.
+    - **link**: related but not the same synthesis (link_threshold <= score
+      < update_threshold) — prefer a short linking analysis that wikilinks
+      existing pages and states the conjunction/delta.
+    - **new**: genuinely new content (best score < link_threshold).
+    """
+    analyses = sorted((wiki_dir / "analyses").glob("*.md")) \
+        if (wiki_dir / "analyses").is_dir() else []
+    ranked = []
+    for path in analyses:
+        title, head = page_title_and_head(path)
+        sim = score_analysis_similarity(
+            proposed_title, proposed_head or "", title, head)
+        ranked.append({
+            "page": f"analyses/{path.name}",
+            "title": title,
+            **sim,
+        })
+    ranked.sort(key=lambda r: (-r["score"], r["page"]))
+    best = ranked[0] if ranked else None
+    best_score = best["score"] if best else 0.0
+    if best and best_score >= update_threshold:
+        action = "update"
+        rationale = (
+            f"near-twin of {best['page']} (score={best_score}); "
+            "prefer updating that analysis or its linked content pages"
+        )
+    elif best and best_score >= link_threshold:
+        action = "link"
+        rationale = (
+            f"related to {best['page']} (score={best_score}); "
+            "prefer a short linking analysis (wikilinks + conjunction/delta) "
+            "over a full near-twin"
+        )
+    else:
+        action = "new"
+        rationale = (
+            "no close existing analysis; full new analysis is appropriate"
+            if analyses else
+            "no analyses/ pages yet; full new analysis is appropriate"
+        )
+    return {
+        "action": action,
+        "proposed_title": proposed_title,
+        "best": best,
+        "candidates": ranked[:8],
+        "thresholds": {
+            "update": update_threshold,
+            "link": link_threshold,
+        },
+        "rationale": rationale,
+    }
+
+
+def build_source_summary(meta: dict, body: str, extraction_name: str,
+                         *, max_claim_chars: int = 900) -> str:
+    """Succinct factual summary for a wiki/sources page from a vault extract.
+
+    Carries who/when/subject + key claim lines and a single `(vault:...)`
+    citation. Never embeds raw URLs (those stay in vault frontmatter).
+    Strips untrusted-marker wrappers so wiki bodies stay agent-authored.
+    """
+    # Prefer content inside FETCHED markers when present; else whole body.
+    fetched = ""
+    m = re.search(
+        r"<!--\s*BEGIN FETCHED CONTENT\s*-->(.*?)<!--\s*END FETCHED CONTENT\s*-->",
+        body or "",
+        flags=re.I | re.S,
+    )
+    fetched = (m.group(1) if m else body) or ""
+    # Drop HTML comments leftover and heading-only noise.
+    lines = []
+    for raw in fetched.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("<!--"):
+            continue
+        if line.startswith("#"):
+            # Keep ##-level section titles as soft claim anchors only when
+            # short; skip giant ALL-CAPS banners.
+            heading = line.lstrip("#").strip()
+            if heading and len(heading) < 120:
+                lines.append(heading)
+            continue
+        if line.startswith("|") or line.startswith("---"):
+            continue
+        lines.append(line)
+
+    author = (meta.get("author") or "").strip()
+    year = (meta.get("year") or "").strip()
+    origin = (meta.get("origin") or "").strip()
+    full_title = (meta.get("full_title") or meta.get("topic") or "").strip()
+    subject = full_title or (meta.get("topic") or "untitled").replace("-", " ")
+
+    who_bits = []
+    if author:
+        who_bits.append(author)
+    elif origin:
+        who_bits.append(origin)
+    when = year or ""
+
+    lead_parts = [subject]
+    attr = ", ".join(p for p in (who_bits[0] if who_bits else None, when) if p)
+    if attr:
+        lead_parts.append(f"({attr})")
+    lead = " ".join(lead_parts).strip() + "."
+
+    # Key claims: first few substantive prose lines, capped.
+    claims = []
+    budget = max_claim_chars
+    for line in lines:
+        # Skip lines that are just the title repeated.
+        if full_title and line.casefold() == full_title.casefold():
+            continue
+        if len(line) < 40:
+            continue
+        # Avoid dumping bibliographic noise.
+        if re.match(r"^(doi|arxiv|https?:)", line, flags=re.I):
+            continue
+        snippet = line
+        if len(snippet) > 280:
+            snippet = snippet[:277].rstrip() + "..."
+        claims.append(snippet)
+        budget -= len(snippet)
+        if len(claims) >= 4 or budget <= 0:
+            break
+
+    parts = [lead]
+    if who_bits or when:
+        meta_line = "Who/when: " + ", ".join(
+            p for p in [(" / ".join(who_bits) if who_bits else ""), when] if p
+        ) + "."
+        parts.append(meta_line)
+    parts.append(f"Subject: {subject}.")
+    if claims:
+        parts.append("Key claims:")
+        for c in claims:
+            parts.append(f"- {c}")
+    else:
+        parts.append(
+            "Key claims: extraction has little recoverable prose; "
+            "open the vault source for detail."
+        )
+    parts.append(f"(vault:{extraction_name})")
+    return "\n".join(parts) + "\n"
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+    import sys
+
+    ap = argparse.ArgumentParser(
+        description="naming.py utilities (citation stems + QUERY anti-crowding)")
+    sub = ap.add_subparsers(dest="command")
+
+    ra = sub.add_parser(
+        "recommend-analysis",
+        help="score a proposed analysis title/head against analyses/*.md "
+             "and recommend update | link | new")
+    ra.add_argument("wiki", nargs="?", default="wiki")
+    ra.add_argument("--title", required=True,
+                    help="proposed analysis title (with or without [anl] prefix)")
+    ra.add_argument("--head", default="",
+                    help="optional first-paragraph / answer head for similarity")
+    ra.add_argument("--update-threshold", type=float, default=0.55)
+    ra.add_argument("--link-threshold", type=float, default=0.35)
+
+    args = ap.parse_args()
+    if args.command != "recommend-analysis":
+        ap.print_help()
+        sys.exit(1)
+    wiki_dir = Path(args.wiki).resolve()
+    if not wiki_dir.is_dir():
+        print(json.dumps({"error": f"wiki dir not found: {wiki_dir}"}))
+        sys.exit(1)
+    out = recommend_analysis_write(
+        wiki_dir, args.title, args.head,
+        update_threshold=args.update_threshold,
+        link_threshold=args.link_threshold,
+    )
+    print(json.dumps(out, indent=2))
+

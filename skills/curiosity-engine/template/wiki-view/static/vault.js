@@ -1,6 +1,6 @@
 /* On-demand vault source open.
  *
- * CE source pages are stubs; full extracted text lives in vault/*.extracted.md.
+ * CE source pages are succinct summaries; full extracted text lives in vault/*.extracted.md.
  * Prefer GET /api/vault/<basename> when the local viewer_server is serving;
  * otherwise pack those files into vault/shard-NN.zip (see vault/manifest.json.gz)
  * and extract with JSZip. Clicking a .cite / .cite-vault control opens the

@@ -2,15 +2,52 @@
 
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
-## 2026-09-13 — v1.7.2 — Large-wiki Atlas UX + vault-open port
+## 2026-09-13 — v1.8.0 — QUERY anti-crowding + substantive sources (+ Atlas large-wiki UX)
 
-**Migration:** none required for local `viewer.sh serve`. **Optional for
-static / Pages hosts with large vaults:** after `viewer.sh build`, run
+**Migration:** re-run `sweep.py fix-source-stubs wiki` (optionally
+`--refresh`) so thin legacy `sources/` stubs become who/when/subject/key
+claims summaries; for a Biocure-style repair arm, re-curate from ~k2 after
+the source-summary pass. Historical Biocure arms stay on v1.4.0 — this
+release is for new repair arms. **Optional for static / Pages hosts with
+large vaults:** after `viewer.sh build`, run
 `uv run python3 <skill>/scripts/pack_vault_shards.py` so cite-open can
-fall back to zip shards. **Breaking:** none.
+fall back to zip shards. **Breaking:** none — `fix-source-stubs` command
+name and `[src]` titles retained; retrieve thin-source expand is default-on
+and disableable with `--no-expand-thin-sources`.
 
-Large-corpus Atlas polish and on-demand vault source open, ported from
-the CorporateBench biocure static host:
+### QUERY crystallise anti-crowding
+
+Near-twin analysis crowding on QUERY write-back: prefer **update** of an
+existing relevant analysis (or content page) when most of the answer
+already lives there; else prefer a **minor linking analysis** (short,
+wikilinks existing pages, states conjunction/delta); only mint a full new
+analysis when content is genuinely new. Documented in SKILL.md QUERY §,
+`template/prompts.md`, and `template/schema.md`. Deterministic helper:
+`naming.py recommend-analysis wiki --title "..." [--head "..."]`
+(token Jaccard on title/head vs `analyses/*.md` → `update` | `link` |
+`new`).
+
+### Substantive sources + extract re-parse
+
+`sources/` pages must carry succinct facts, not hollow stubs.
+`sweep.py fix-source-stubs` now writes/updates summary bodies from the
+vault extraction via `naming.build_source_summary` (who/when/subject/key
+claims + `(vault:...)`); thin/hollow pages refresh by default;
+`--refresh` rewrites all matched pages. Viewer/SKILL language no longer
+calls CE source pages "stubs" — summaries still open full vault extracts
+on demand (Atlas path unchanged).
+
+`graph.py retrieve` thin-source expand (default on): when a hit is a thin
+`sources/` page or the question looks answerable from a cited vault
+extract not fully in the wiki body, attach `vault_extracts` (full extract
+text, `untrusted: true`, optional `reparse_candidate`) into the same
+retrieve/blend/`vault_k` path. Respects FETCHED markers / scrub_check / no
+raw URLs in wiki bodies. `--no-expand-thin-sources` disables.
+
+### Large-wiki Atlas UX + vault-open (already on main via #7)
+
+Ported from the CorporateBench biocure static host (previously drafted as
+unreleased v1.7.2 notes):
 
 - **Knowledge Atlas:** retained full-graph `focus()` updates node roles
   in place (no scene rebuild); single-click select + focus, empty-click
@@ -32,6 +69,12 @@ the CorporateBench biocure static host:
 Rebuild the Atlas vendor after pulling: `cd packages/knowledge-atlas &&
 pnpm/npm run build`, then copy `dist/knowledge-atlas.iife.js` →
 `skills/.../template/wiki-view/static/vendor/knowledge-atlas.js`.
+
+### Tests
+
+`tests/test_v18_anti_crowding_sources.py` covers recommend-analysis,
+`build_source_summary` / fix-source-stubs refresh, and retrieve
+`vault_extracts` (+ `--no-expand-thin-sources`).
 
 ## 2026-09-07 — v1.7.1 — Viewer docs: Atlas, search, how to run
 
