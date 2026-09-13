@@ -3,3 +3,9 @@
 export { KnowledgeAtlas } from "./react/KnowledgeAtlas.tsx";
 export { useAtlas } from "./react/useAtlas.ts";
 export type { KnowledgeAtlasProps } from "./react/props.ts";
+
+export {
+  cycleEdgeMode,
+  defaultEdgeMode,
+  type EdgeMode,
+} from "./renderer/edges.ts";

@@ -32,6 +32,11 @@ export type MountOptions = {
   labelMode?: "auto" | "on" | "off";
   /** Types whose labels are eligible; null/undefined = all types. */
   labelTypes?: readonly string[] | null;
+  /**
+   * Edge stroke policy (mirrors labels): auto (default, sparse on large)
+   * / on (full draw) / off (highlights only). Drawing-only.
+   */
+  edgeMode?: "auto" | "on" | "off";
   onOpenItem?: (id: string) => void;
   onEvent?: (event: AtlasEvent) => void;
 };
@@ -40,6 +45,8 @@ export type MountHandle = {
   engine: AtlasEngine;
   /** Update the label policy live (wired to the host's label picker). */
   setLabels: (mode: "auto" | "on" | "off", types?: readonly string[] | null) => void;
+  /** Update edge stroke policy live (wired to the host's edges control). */
+  setEdges: (mode: "auto" | "on" | "off") => void;
   /** Update the classic force controls and re-solve the central graph. */
   setPhysics: (physics: Partial<AtlasPhysics>) => void;
   destroy: () => void;
@@ -151,6 +158,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     types: ReadonlySet<string> | null;
     labelCap: number;
   };
+  let edgeMode: "auto" | "on" | "off" = opts.edgeMode ?? "auto";
 
   const draw = (progress: number) => {
     const snap = engine.snapshot();
@@ -220,6 +228,7 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       boundaryShape,
       labelMode: labelState.mode,
       labelTypes: labelState.types,
+      edgeMode,
       motion,
     });
     canvas.dataset.hoverId = hoverId ?? "";
@@ -616,6 +625,10 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       labelState.mode = mode;
       if (types !== undefined) labelState.types = types ? new Set(types) : null;
       labelState.labelCap = labelCapFor(mode);
+      draw(1);
+    },
+    setEdges: (mode) => {
+      edgeMode = mode;
       draw(1);
     },
     setPhysics: (physics) => {

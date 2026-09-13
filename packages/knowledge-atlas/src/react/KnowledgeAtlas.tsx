@@ -44,10 +44,12 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
       mode: props.labelMode ?? "auto",
       types: props.labelTypes ? new Set(props.labelTypes) : null,
     };
+    const edgeModeRef = useRef<"auto" | "on" | "off">(props.edgeMode ?? "auto");
+    edgeModeRef.current = props.edgeMode ?? "auto";
     const redrawRef = useRef<(() => void) | null>(null);
     useEffect(() => {
       redrawRef.current?.();
-    }, [props.labelMode, props.labelTypes]);
+    }, [props.labelMode, props.labelTypes, props.edgeMode]);
 
     // Recreate the engine when the data source changes (workspace swap).
     useEffect(() => {
@@ -235,6 +237,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           boundaryShape,
           labelMode: labelRef.current.mode,
           labelTypes: labelRef.current.types,
+          edgeMode: edgeModeRef.current,
           motion,
         });
         canvas.dataset.hoverId = hoverId ?? "";

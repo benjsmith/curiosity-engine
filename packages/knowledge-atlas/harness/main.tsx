@@ -53,6 +53,7 @@ function App() {
   const [fixtureIdx, setFixtureIdx] = useState(0);
   const [layout, setLayout] = useState<LayoutKind>("hybrid");
   const [labelMode, setLabelMode] = useState<"auto" | "on" | "off">("auto");
+  const [edgeMode, setEdgeMode] = useState<"auto" | "on" | "off">("auto");
   const [labelTypes, setLabelTypes] = useState<string[]>(LABEL_TYPE_DEFAULTS);
   const [showLabelPicker, setShowLabelPicker] = useState(false);
   // Engine parameter (iteration-12): 0 = circle … 1 = near-rectangle.
@@ -146,6 +147,16 @@ function App() {
           <option value="on">labels: on</option>
           <option value="off">labels: off</option>
         </select>
+        <select
+          data-testid="edge-mode"
+          value={edgeMode}
+          onChange={(e) => setEdgeMode(e.target.value as "auto" | "on" | "off")}
+          title="Edge stroke mode (drawing only)"
+        >
+          <option value="auto">edges: auto</option>
+          <option value="on">edges: on</option>
+          <option value="off">edges: off</option>
+        </select>
         <button data-testid="btn-label-types" onClick={() => setShowLabelPicker((v) => !v)}>
           types…
         </button>
@@ -175,6 +186,7 @@ function App() {
           config={config}
           labelMode={labelMode}
           labelTypes={labelTypes}
+          edgeMode={edgeMode}
           onEvent={onEvent}
           onOpenItem={(id) => setOpened(id)}
         />

@@ -11,6 +11,7 @@ import { typeColour } from "./theme.ts";
 import { coreRadiusAt, rimRadiusAt } from "../core/geometry.ts";
 import type { DiscoveryClass, LayoutPoint } from "../core/types.ts";
 import type { Frame, SceneRenderer } from "./types.ts";
+import { autoEdgeBudget, classifyEdgeDraw, type EdgeMode } from "./edges.ts";
 
 const CLASS_ORDER: DiscoveryClass[] = ["direct", "adjacent", "bridge", "contrast", "surprise", "unexplored"];
 const CLASS_LABEL: Record<DiscoveryClass, string> = {
@@ -220,23 +221,32 @@ export class CanvasRenderer implements SceneRenderer {
     ctx.globalAlpha = 1;
 
     // ── edges ───────────────────────────────────────────────────────
-    // Edge strokes are gated by camera scale so zoomed-out overviews stay
-    // readable. Hosts may override via window.__ceAtlasEdgeMinScale; the
-    // default (~0.85) is camera-reachable (unlike the old sqrt(N/1000)
-    // gate that sat above max zoom on large corpora).
+    // Drawing policy only (edgeMode auto/on/off). Edges stay in the
+    // scene for force + link counts. Hover/selection/focus highlights
+    // always paint. Optional legacy host gate: __ceAtlasEdgeMinScale
+    // (default 0 — mode replaces zoom hide / hairline hacks).
+    const edgeMode: EdgeMode = frame.edgeMode ?? "auto";
     const edgeMinOverride = (globalThis as unknown as { __ceAtlasEdgeMinScale?: number })
       .__ceAtlasEdgeMinScale;
-    const edgeMinScale = typeof edgeMinOverride === "number" ? edgeMinOverride : 0.85;
+    const edgeMinScale = typeof edgeMinOverride === "number" ? edgeMinOverride : 0;
+    const edgeCount = frame.scene.edges.length;
+    const edgeBudget = autoEdgeBudget(edgeCount);
     if ((frame.camera.scale || 1) >= edgeMinScale) {
       for (const e of frame.scene.edges) {
+        const kind = classifyEdgeDraw(e, edgeMode, {
+          hoverId: frame.hoverId,
+          selection: frame.selection,
+          edgeCount,
+          budget: edgeBudget,
+        });
+        if (kind === "skip") continue;
         const s = positions.get(e.source);
         const t = positions.get(e.target);
         if (!s || !t) continue;
-        const isFocusEdge = e.priority === 1;
-        const hovered = frame.hoverId === e.source || frame.hoverId === e.target;
-        ctx.strokeStyle = isFocusEdge || hovered ? T.accent : T.line;
-        ctx.globalAlpha = (isFocusEdge ? 0.9 : hovered ? 0.8 : 0.35) * (e.confidence ?? 1);
-        ctx.lineWidth = isFocusEdge ? 1.4 : 1;
+        const highlighted = kind === "highlight";
+        ctx.strokeStyle = highlighted ? T.accent : T.line;
+        ctx.globalAlpha = (highlighted ? 0.9 : 0.35) * (e.confidence ?? 1);
+        ctx.lineWidth = highlighted ? 1.4 : 1;
         ctx.setLineDash(e.type === "depicts" ? [3, 3] : e.type === "co-cited" ? [1.5, 3] : []);
         ctx.beginPath();
         ctx.moveTo(s.x, s.y);
