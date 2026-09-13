@@ -36,6 +36,16 @@ export { boundaryHoverDelay, projectedBoundaryDepth } from "./interaction/hover.
 export { resolveTheme, typeColour } from "./renderer/theme.ts";
 export type { Frame, SceneRenderer, Camera } from "./renderer/types.ts";
 export {
+  autoEdgeBudget,
+  classifyEdgeDraw,
+  cycleEdgeMode,
+  defaultEdgeMode,
+  edgeIsHighlighted,
+  edgeSampleKey,
+  type EdgeMode,
+  type EdgeDrawKind,
+} from "./renderer/edges.ts";
+export {
   CuriosityDataSource,
   canonicalType,
   normalizeId,

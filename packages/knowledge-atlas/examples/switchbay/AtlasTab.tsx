@@ -9,8 +9,12 @@
  * `window.Graph.focus/clearFocus` shim sites in App.tsx.
  */
 
-import { useMemo, useRef } from "react";
-import { KnowledgeAtlas } from "@curiosity/knowledge-atlas/react";
+import { useMemo, useRef, useState } from "react";
+import {
+  KnowledgeAtlas,
+  cycleEdgeMode,
+  type EdgeMode,
+} from "@curiosity/knowledge-atlas/react";
 import {
   CuriosityDataSource,
   type AtlasController,
@@ -39,6 +43,8 @@ function paletteFromCss(): Record<string, string> {
 
 export default function AtlasTab({ data, error, suppressDocModal }: Props) {
   const controllerRef = useRef<AtlasController>(null);
+  // Host-owned pill state (wiki-view edges: auto/on/off parity).
+  const [edgeMode, setEdgeMode] = useState<EdgeMode>("auto");
   const dataSource = useMemo(
     () => (data ? new CuriosityDataSource(data) : null),
     [data],
@@ -50,10 +56,20 @@ export default function AtlasTab({ data, error, suppressDocModal }: Props) {
 
   return (
     <div className="sy-graph-host" style={{ position: "relative", width: "100%", height: "100%" }}>
+      {/* Example chrome — Switchbay rail owns the real pill placement. */}
+      <button
+        type="button"
+        className="sy-edges-pill"
+        onClick={() => setEdgeMode(cycleEdgeMode(edgeMode))}
+        style={{ position: "absolute", zIndex: 2, top: 8, right: 8 }}
+      >
+        edges: {edgeMode}
+      </button>
       <KnowledgeAtlas
         ref={controllerRef}
         dataSource={dataSource}
         theme={theme}
+        edgeMode={edgeMode}
         onOpenItem={(id) => {
           if (!suppressDocModal) {
             window.location.hash = `#page=${encodeURIComponent(id)}`;

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-13 — Atlas edges auto/on/off (drawing-only)
+
+**Migration:** rebuild/vendor Knowledge Atlas into wiki-view after pull
+(`cd packages/knowledge-atlas && pnpm run build`, copy
+`dist/knowledge-atlas.iife.js` →
+`skills/.../template/wiki-view/static/vendor/knowledge-atlas.js`).
+**Breaking:** none — edges remain in the force graph and link counts;
+only stroke visibility changes.
+
+Atlas edge strokes gain a Labels-style **auto / on / off** control
+(`edgeMode` React prop, IIFE `setEdges(mode)`, wiki-view `edges:` pill
+next to `labels:`). **auto** paints a sparse deterministic hash-modulo
+subset once the scene exceeds ~1200 edges (full draw below that);
+**on** is the previous full draw; **off** hides ordinary strokes.
+Hover, selection, and focus-priority highlight edges always paint in
+every mode. No zoom hairline / min-scale hacks — the old
+`__ceAtlasEdgeMinScale = 0.85` host override is no longer set by
+wiki-view (optional override still defaults to 0). Label mode still
+does not persist to localStorage; edges mode matches (dataset only).
+
+Switchbay / other React hosts: pass controlled `edgeMode` and cycle with
+`cycleEdgeMode` from `@curiosity/knowledge-atlas` (or `/react`); do not
+expect a Switchbay release from this CE change.
+
 Human-curated record of what shipped, grouped thematically. For the authoritative log see `git log`; this file exists to surface reversals, upgrades, and multi-commit rollouts that aren't legible from individual commit messages.
 
 ## 2026-09-13 — v1.8.0 — QUERY anti-crowding + substantive sources (+ Atlas large-wiki UX)

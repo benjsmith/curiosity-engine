@@ -39,6 +39,7 @@ test("IIFE + wiki-view glue mount against a CE payload", async ({ page }) => {
     <style>.hidden { display:none }</style>
     <div id="graph" style="width:900px;height:600px"></div>
     <button id="label-mode"><span id="label-mode-state">auto</span></button>
+    <button id="edge-mode" class="hidden"><span id="edge-mode-state">auto</span></button>
     <button id="label-types"><span id="label-types-state">4/12</span></button>
     <div id="label-types-panel" class="hidden"></div>
     <button id="settings-trigger">physics</button>
@@ -106,6 +107,8 @@ test("IIFE + wiki-view glue mount against a CE payload", async ({ page }) => {
   // Atlas keeps the host's label and physics controls live.
   await page.locator("#label-mode").click();
   await expect(page.locator("#label-mode-state")).toHaveText("on");
+  await page.locator("#edge-mode").click();
+  await expect(page.locator("#edge-mode-state")).toHaveText("on");
   await page.locator("#settings-trigger").click();
   await expect(page.locator("#settings-panel")).toBeVisible();
   await page.locator("#phys-charge").evaluate((el) => {
@@ -136,6 +139,7 @@ test("Classic exposes the same density-adaptive navigation minimap", async ({ pa
     <style>#graph { position:relative;width:900px;height:600px } #graph svg { width:100%;height:100%;display:block }</style>
     <div id="graph"></div>
     <button id="label-mode"><span id="label-mode-state">auto</span></button>
+    <button id="edge-mode" class="hidden"><span id="edge-mode-state">auto</span></button>
     <button id="label-types"><span id="label-types-state">4/12</span></button>
     <div id="label-types-panel" class="hidden"></div>
     <button id="settings-trigger">physics</button>

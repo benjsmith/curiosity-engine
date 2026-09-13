@@ -25,3 +25,27 @@ Wiring (in the Switchbay repo, not this one):
 Split mode stays host-side: the engine's `select()` +
 `selection-changed` events carry multi-select; the rubber-band UI and
 `POST /api/workspaces/split` remain Switchbay chrome (PLAN §2.2).
+
+## Edges mode (auto / on / off)
+
+Mirror the wiki-view `edges:` pill with a controlled prop — same
+contract as `labelMode`:
+
+```tsx
+import { KnowledgeAtlas, cycleEdgeMode, type EdgeMode } from "@curiosity/knowledge-atlas/react";
+import { useState } from "react";
+
+const [edgeMode, setEdgeMode] = useState<EdgeMode>("auto");
+
+<button type="button" onClick={() => setEdgeMode(cycleEdgeMode(edgeMode))}>
+  edges: {edgeMode}
+</button>
+<KnowledgeAtlas edgeMode={edgeMode} /* … */ />
+```
+
+IIFE / graph-viewer hosts use `mount({ edgeMode: "auto" })` and
+`handle.setEdges(mode)` (see wiki-view `static/atlas.js`). Drawing
+only: do not drop edges from `/api/graph/data` or scene budgets when
+toggling. Default `auto` is full draw below ~1200 edges and a sparse
+hash-modulo sample above that. Ship the Switchbay pill + rail layout
+on the Switchbay track after CE+Pages land — not in this package PR.

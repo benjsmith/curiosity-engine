@@ -18,6 +18,13 @@ export type KnowledgeAtlasProps = {
   labelMode?: "auto" | "on" | "off";
   /** Types whose labels are eligible; null/undefined = all types. */
   labelTypes?: readonly string[] | null;
+  /**
+   * Edge stroke policy (mirrors labelMode): "auto" (default) sparse
+   * subset on large graphs; "on" full draw; "off" highlights only.
+   * Drawing-only — force links and counts are unchanged. Controlled
+   * prop; host owns cycling (e.g. Switchbay `edges: auto` pill).
+   */
+  edgeMode?: "auto" | "on" | "off";
   onEvent?: (event: AtlasEvent) => void;
   onOpenItem?: (id: string) => void;
 };

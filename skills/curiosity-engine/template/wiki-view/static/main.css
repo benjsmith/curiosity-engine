@@ -611,7 +611,8 @@ body[data-sidebar="collapsed"] .sidebar-restore { display: inline-flex; }
 }
 .ctrl-btn:hover { color: var(--text); }
 .ctrl-label { color: var(--text-faint); }
-#label-mode-state { color: var(--text); font-weight: 500; }
+#label-mode-state,
+#edge-mode-state { color: var(--text); font-weight: 500; }
 
 /* ── Modal: doc viewer ──────────────────────────────────────────── */
 

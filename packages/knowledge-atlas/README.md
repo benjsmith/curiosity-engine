@@ -64,8 +64,9 @@ experiments up to 100k), with automatic label and edge suppression at
 overview density. Boundary-node labels appear after a short,
 distance-aware hover dwell; deep nodes and minimap marks shrink with
 represented distance/density. Light/dark changes repaint a mounted
-Atlas immediately. `controller.setPhysics(...)` and the live label
-props/control surface remain available in Atlas mode.
+Atlas immediately. `controller.setPhysics(...)`, live label props, and
+`edgeMode` / IIFE `setEdges` (auto/on/off drawing-only strokes) remain
+available in Atlas mode.
 - **Any page**: `dist/knowledge-atlas.iife.js` exposes
   `window.KnowledgeAtlas.mount(container, { data, onOpenItem })`.
 

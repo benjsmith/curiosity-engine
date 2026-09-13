@@ -70,6 +70,15 @@ export type Frame = {
   labelMode?: "auto" | "on" | "off";
   /** Types whose labels are eligible (null/undefined = all types). */
   labelTypes?: ReadonlySet<string> | null;
+  /**
+   * Edge stroke policy (mirrors labelMode):
+   * "auto" (default) paints a sparse deterministic subset on large
+   * graphs (full draw when small); "on" paints every scene edge;
+   * "off" paints only hover/selection/focus highlight edges.
+   * Mode affects drawing only — edges stay in the force graph and
+   * link counts regardless.
+   */
+  edgeMode?: "auto" | "on" | "off";
 };
 
 export interface SceneRenderer {

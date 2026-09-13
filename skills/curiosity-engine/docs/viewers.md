@@ -41,7 +41,10 @@ capability boundary). Atlas first paint is the whole wiki as
 individual nodes plus a log-compressed rim, not type-cluster
 bubbles. Default visible-node ceiling is 10k (experimental 100k).
 Validated on a ~26,000-source corpus that produced a ~40,000-page
-wiki.
+wiki. Atlas `edges:` auto/on/off (next to `labels:`) only affects
+stroke drawing — force layout and footer link counts keep every edge;
+auto samples a sparse deterministic subset on large graphs; highlights
+on hover/select always paint.
 
 **Vault cites.** Source-page summaries (`[src]`) still open full `vault/*.extracted.md`
 via `vault.js`: local serve uses `GET /api/vault/<basename>`; static

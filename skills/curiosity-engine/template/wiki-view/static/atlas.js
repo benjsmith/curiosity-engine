@@ -33,14 +33,18 @@
 
   function initAtlasControls(handle) {
     var mode = 'auto';
+    var edgeMode = 'auto';
     var types = readLabelTypes();
     var modeButton = document.getElementById('label-mode');
     var modeState = document.getElementById('label-mode-state');
+    var edgeButton = document.getElementById('edge-mode');
+    var edgeState = document.getElementById('edge-mode-state');
     var typeButton = document.getElementById('label-types');
     var typeState = document.getElementById('label-types-state');
     var typePanel = document.getElementById('label-types-panel');
     var settingsButton = document.getElementById('settings-trigger');
     var settingsPanel = document.getElementById('settings-panel');
+    if (edgeButton) edgeButton.classList.remove('hidden');
     // At large N the force solve is expensive; physics is fixed via
     // mount defaults and the gear UI is hidden so sliders cannot thrash it.
     try {
@@ -57,9 +61,16 @@
       if (typeState) typeState.textContent = types.size + '/12';
       handle.setLabels(mode, Array.from(types));
     }
-    // setLabels re-renders the resident scene (no rebuild, no layout
-    // churn) — the cheapest repaint the engine API exposes.
-    var repaint = paintLabels;
+    function paintEdges() {
+      if (edgeState) edgeState.textContent = edgeMode;
+      if (handle.setEdges) handle.setEdges(edgeMode);
+    }
+    // setLabels / setEdges re-render the resident scene (no rebuild, no
+    // layout churn) — the cheapest repaint the engine API exposes.
+    function repaint() {
+      paintLabels();
+      paintEdges();
+    }
     function setMode(next) {
       mode = next;
       document.documentElement.dataset.labels = mode;
@@ -69,7 +80,17 @@
       var order = ['auto', 'on', 'off'];
       setMode(order[(order.indexOf(mode) + 1) % order.length]);
     }
+    function setEdgeMode(next) {
+      edgeMode = next;
+      document.documentElement.dataset.edges = edgeMode;
+      paintEdges();
+    }
+    function cycleEdgeMode() {
+      var order = ['auto', 'on', 'off'];
+      setEdgeMode(order[(order.indexOf(edgeMode) + 1) % order.length]);
+    }
     if (modeButton) modeButton.addEventListener('click', cycleMode);
+    if (edgeButton) edgeButton.addEventListener('click', cycleEdgeMode);
 
     if (typePanel && typeButton) {
       typePanel.querySelectorAll('.label-types-row').forEach(function (row) {
@@ -142,7 +163,14 @@
       }
     });
     paintLabels();
-    return { setMode: setMode, cycleMode: cycleMode, repaint: repaint };
+    paintEdges();
+    return {
+      setMode: setMode,
+      cycleMode: cycleMode,
+      setEdgeMode: setEdgeMode,
+      cycleEdgeMode: cycleEdgeMode,
+      repaint: repaint,
+    };
   }
 
   /* Drop the scene's "current focus" decoration.
@@ -268,11 +296,12 @@
 
     var corpusSize = pageCount(data);
     container.dataset.corpusSize = String(corpusSize);
-    /* Edge strokes: previous sqrt(N/1000) was ABOVE camera max on large
-     * corpora, so edges never painted. Keep a mild zoom-out hide only. */
-    window.__ceAtlasEdgeMinScale = 0.85;
+    /* Edge strokes: controlled by edgeMode (auto/on/off) — drawing only;
+     * edges stay in the force graph and link counts. Default auto is a
+     * sparse subset on large corpora (full draw when small). */
     var handle = window.KnowledgeAtlas.mount(container, {
       data: data,
+      edgeMode: 'auto',
       // Hybrid: Classic field in the core, log-compressed individual
       // nodes on the rim. corpusSize makes the first frame that view
       // (not type-cluster bubbles). Pin capacity to this corpus so
@@ -333,6 +362,8 @@
       },
       setLabelMode: controls.setMode,
       cycleLabelMode: controls.cycleMode,
+      setEdgeMode: controls.setEdgeMode,
+      cycleEdgeMode: controls.cycleEdgeMode,
       destroy: function () {
         handle.destroy();
       },
