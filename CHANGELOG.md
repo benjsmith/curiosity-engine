@@ -5,11 +5,10 @@ Human-curated record of what shipped, grouped thematically. For the authoritativ
 ## 2026-09-13 — v1.8.0 — QUERY anti-crowding + substantive sources (+ Atlas large-wiki UX)
 
 **Migration:** re-run `sweep.py fix-source-stubs wiki` (optionally
-`--refresh`) so thin legacy `sources/` stubs become who/when/subject/key
-claims summaries; for a Biocure-style repair arm, re-curate from ~k2 after
-the source-summary pass. Historical Biocure arms stay on v1.4.0 — this
-release is for new repair arms. **Optional for static / Pages hosts with
-large vaults:** after `viewer.sh build`, run
+`--refresh`) so thin legacy `sources/` pages become who/when/subject/key
+claims summaries. On large existing wikis, follow that with a normal CURATE
+pass so content pages pick up the richer source bodies. **Optional for
+static / Pages hosts with large vaults:** after `viewer.sh build`, run
 `uv run python3 <skill>/scripts/pack_vault_shards.py` so cite-open can
 fall back to zip shards. **Breaking:** none — `fix-source-stubs` command
 name and `[src]` titles retained; retrieve thin-source expand is default-on
@@ -45,9 +44,6 @@ retrieve/blend/`vault_k` path. Respects FETCHED markers / scrub_check / no
 raw URLs in wiki bodies. `--no-expand-thin-sources` disables.
 
 ### Large-wiki Atlas UX + vault-open (already on main via #7)
-
-Ported from the CorporateBench biocure static host (previously drafted as
-unreleased v1.7.2 notes):
 
 - **Knowledge Atlas:** retained full-graph `focus()` updates node roles
   in place (no scene rebuild); single-click select + focus, empty-click
