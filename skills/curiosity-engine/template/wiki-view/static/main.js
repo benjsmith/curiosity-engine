@@ -20,25 +20,47 @@
   Sidebar.init(data);
   Subgraph.init(data);
   Modal.init(data);
-  /* Knowledge Atlas is an opt-in for large wikis. When selected it
-   * takes over the #graph pane and returns a Graph-compatible facade;
-   * every other module is untouched. static/atlas.js owns eligibility,
-   * persistence and the host-level viewer chooser. */
+  /* Resolve viewer + paint view: chooser BEFORE any Graph/Atlas mount.
+   * Policy (AtlasViewer): >1000 nodes → Atlas only (no Classic, no
+   * chooser). ≤1000 → Classic available / opt-in Atlas. Never call
+   * Graph.init on a large corpus — it hangs the main thread. */
   let graphApi = Graph;
-  let viewerMode = 'classic';
-  if (window.AtlasViewer && AtlasViewer.enabled(data) && window.KnowledgeAtlas) {
-    const atlas = AtlasViewer.init(data);
-    if (atlas) {
-      graphApi = atlas;
-      viewerMode = 'atlas';
-    }
-    else Graph.init(data);
-  } else {
-    Graph.init(data);
+  const wantAtlas = !!(window.AtlasViewer && AtlasViewer.enabled(data) && window.KnowledgeAtlas);
+  const classicOk = !(window.AtlasViewer && typeof AtlasViewer.classicSafe === 'function')
+    || AtlasViewer.classicSafe(data);
+  let viewerMode = wantAtlas ? 'atlas' : 'classic';
+  if (!classicOk && window.KnowledgeAtlas && window.AtlasViewer) {
+    viewerMode = 'atlas';
   }
   document.body.dataset.viewer = viewerMode;
   if (window.AtlasViewer && AtlasViewer.initChoice) {
     AtlasViewer.initChoice(data, viewerMode);
+  }
+  if (viewerMode === 'atlas' && window.AtlasViewer && window.KnowledgeAtlas) {
+    const atlas = AtlasViewer.init(data);
+    if (atlas) {
+      graphApi = atlas;
+    } else if (classicOk) {
+      Graph.init(data);
+      viewerMode = 'classic';
+      document.body.dataset.viewer = viewerMode;
+    } else {
+      const el = document.getElementById('graph');
+      if (el) {
+        el.innerHTML =
+          '<div style="padding:28px;color:#ccc;font:14px system-ui">' +
+          'Atlas failed to start. Classic is disabled for wikis over 1000 pages.</div>';
+      }
+    }
+  } else if (classicOk) {
+    Graph.init(data);
+  } else {
+    const el = document.getElementById('graph');
+    if (el) {
+      el.innerHTML =
+        '<div style="padding:28px;color:#ccc;font:14px system-ui">' +
+        'Classic is disabled for wikis over 1000 pages. Reload with Atlas.</div>';
+    }
   }
   /* Graph search marks the canvas and the page list together. Wired
    * after the viewer so it talks to whichever one took the pane. */
