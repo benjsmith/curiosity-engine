@@ -34,6 +34,20 @@ import type {
   SceneStats,
 } from "./types.ts";
 
+
+/**
+ * Retained full-graph focus changes skip scene rebuild. Keep edge
+ * `priority` in sync with the current focus id so highlight strokes
+ * (priority === 1) replace rather than accumulate, and clear when
+ * focus is dropped.
+ */
+function syncFocusEdgePriorities(scene: SceneData, focusId: string | null): void {
+  for (const e of scene.edges) {
+    if (focusId && (e.source === focusId || e.target === focusId)) e.priority = 1;
+    else if (e.priority === 1) e.priority = 5;
+  }
+}
+
 const ADAPTERS: Record<LayoutKind, LayoutAdapter> = {
   force: forceLayout,
   focus: focusLayout,
@@ -309,6 +323,10 @@ export class AtlasEngine implements AtlasController {
       }
       const focused = this.scene.nodes.find((n) => n.id === id);
       this.scene.focus = focused?.item;
+      // Edge highlight uses priority===1 (see renderer/edges). Without
+      // an in-place priority rewrite, every prior focus's incident edges
+      // stay lit forever — selection looks sticky/accumulating.
+      syncFocusEdgePriorities(this.scene, id);
       return;
     }
     this.requestScene();
@@ -323,6 +341,7 @@ export class AtlasEngine implements AtlasController {
         if (n.role === "focus") n.role = "context";
       }
       this.scene.focus = undefined;
+      syncFocusEdgePriorities(this.scene, null);
     }
   }
 

@@ -505,10 +505,20 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
             return;
           }
         }
-        if (!hit) return;
+        if (!hit) {
+          // Empty canvas click: clear selection + focus decoration + hover.
+          engine.select([], "replace");
+          engine.clearFocus();
+          hoverId = null;
+          draw(1);
+          return;
+        }
         if (hit.kind === "node") {
           lastClickFocus = { id: hit.id, t: performance.now() };
+          engine.select([hit.id], "replace");
           engine.focus(hit.id, "user");
+          hoverId = hit.id;
+          draw(1);
         } else {
           // Aggregates are selectable (iteration-2 feedback): clicking
           // pulls the region into the graph zone by focusing its
@@ -517,7 +527,10 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           const agg = engine.snapshot().scene?.aggregates.find((a) => a.id === hit.id);
           const member = agg?.memberIds[0];
           if (member) {
+            engine.select([member], "replace");
             engine.focus(member, "user");
+            hoverId = member;
+            draw(1);
           } else {
             engine.zoomTo(engine.getState().semanticScale + 1);
           }
