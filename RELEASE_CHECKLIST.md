@@ -13,7 +13,7 @@ Run through this before tagging a new release. Items marked **(security)** must 
       | `d3.min.js` | 7.9.0 | `f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539` | `https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js` |
       | `fuse.min.js` | 7.0.0 | `e3621b53cb77b4ec306dec41ed95511e6dd80d17fae5a04f3e346d214b9f8f92` | `https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js` |
       | `jszip.min.js` | 3.10.1 | `acc7e41455a80765b5fd9c7ee1b8078a6d160bbbca455aeae854de65c947d59e` | `https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js` |
-| `knowledge-atlas.js` | 0.2.0 (in-repo) | `5c34019cc2c1666718e039637ad458c0451b91667081f3e0acd96537061461a4` | built in-repo: `cd packages/knowledge-atlas && pnpm run build`, then copy `dist/knowledge-atlas.iife.js` here (no CDN — first-party code; refresh the hash on every rebuild) |
+| `knowledge-atlas.js` | 0.2.0 (in-repo) | `26ffe14abe0c3476702486c2796bb166c8c8e1275e2adb98ae3066b8609df7cd` | built in-repo: `cd packages/knowledge-atlas && pnpm run build`, then copy `dist/knowledge-atlas.iife.js` here (no CDN — first-party code; refresh the hash on every rebuild) |
 
       To refresh:
 

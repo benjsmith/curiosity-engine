@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-13 — Atlas sticky selection fix (retained full-graph edge priorities)
+
+**Migration:** rebuild/vendor Knowledge Atlas into wiki-view after pull
+(`cd packages/knowledge-atlas && pnpm/npm run build`, copy
+`dist/knowledge-atlas.iife.js` →
+`skills/.../template/wiki-view/static/vendor/knowledge-atlas.js`).
+**Breaking:** none.
+
+Retained full-graph `focus()` updated node roles in place but left edge
+`priority === 1` from every prior focus. Highlight strokes
+(`edgeIsHighlighted`) therefore accumulated across clicks, and
+`clearFocus()` demoted node rings without extinguishing those edges —
+empty-canvas click looked broken. Engine now rewrites focus-edge
+priorities on in-place focus and clears them on `clearFocus`. React
+adapter matches IIFE: single-click `select([id], "replace")` + focus;
+blank click `select([], "replace")` + `clearFocus`.
+
 ## 2026-09-13 — Atlas edges auto/on/off (drawing-only)
 
 **Migration:** rebuild/vendor Knowledge Atlas into wiki-view after pull

@@ -409,6 +409,47 @@ describe("engine", () => {
     engine.destroy();
   });
 
+  it("retained full-graph focus replaces edge priorities; clearFocus drops them", async () => {
+    const small = new GraphIndex();
+    for (let i = 0; i < 40; i++) {
+      small.addItem({ id: `n${i}`, type: "concept", title: `n${i}`, meta: {} });
+      if (i > 0) small.addEdge(`n${i - 1}`, `n${i}`, "wikilink");
+    }
+    const local = new LocalSceneSource(small, { seed: 7 });
+    const engine = new AtlasEngine(local, { seed: 7, layout: "hybrid" });
+    engine.resize(1200, 800);
+    engine.start("n0");
+    await new Promise((r) => setTimeout(r, 30));
+    const scene = engine.snapshot().scene!;
+    expect(scene.aggregates.length).toBe(0);
+
+    const prio1 = () => scene.edges.filter((e) => e.priority === 1);
+    const endpoints = (edges: typeof scene.edges) =>
+      new Set(edges.flatMap((e) => [e.source, e.target]));
+
+    engine.select(["n0"], "replace");
+    engine.focus("n5", "user");
+    expect(engine.getState().focusId).toBe("n5");
+    expect(scene.nodes.find((n) => n.role === "focus")?.id).toBe("n5");
+    expect(endpoints(prio1()).has("n5")).toBe(true);
+    expect(endpoints(prio1()).has("n0")).toBe(false);
+
+    engine.select(["n10"], "replace");
+    engine.focus("n10", "user");
+    expect(engine.getState().selection).toEqual(["n10"]);
+    expect(endpoints(prio1()).has("n10")).toBe(true);
+    expect(endpoints(prio1()).has("n5")).toBe(false);
+    expect(scene.nodes.filter((n) => n.role === "focus")).toHaveLength(1);
+
+    engine.select([], "replace");
+    engine.clearFocus();
+    expect(engine.getState().focusId).toBeUndefined();
+    expect(engine.getState().selection).toEqual([]);
+    expect(prio1()).toHaveLength(0);
+    expect(scene.nodes.some((n) => n.role === "focus")).toBe(false);
+    engine.destroy();
+  });
+
   it("focus/back/forward drive scenes; stale requests dropped", async () => {
     const f = workspaceSmall();
     const engine = new AtlasEngine(f.source, { seed: 42 });
