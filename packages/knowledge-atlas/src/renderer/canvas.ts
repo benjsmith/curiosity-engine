@@ -205,29 +205,42 @@ export class CanvasRenderer implements SceneRenderer {
 
     // ── bundles ─────────────────────────────────────────────────────
     ctx.lineCap = "round";
-    for (const b of frame.scene.bundles) {
-      const s = positions.get(b.source);
-      const t = positions.get(b.target);
-      if (!s || !t) continue;
-      ctx.strokeStyle = T.line;
-      ctx.globalAlpha = 0.5;
-      ctx.lineWidth = Math.min(6, 1 + Math.log2(1 + b.count));
-      ctx.beginPath();
-      ctx.moveTo(s.x, s.y);
-      ctx.lineTo(t.x, t.y);
-      ctx.stroke();
+    {
+      const scale = Math.max(1e-3, frame.camera.scale || 1);
+      const zoomT = Math.min(1, Math.max(0, (scale - 0.2) / 1.6));
+      const bundleAlpha = 0.08 + zoomT * 0.42;
+      for (const b of frame.scene.bundles) {
+        const s = positions.get(b.source);
+        const t = positions.get(b.target);
+        if (!s || !t) continue;
+        ctx.strokeStyle = T.line;
+        ctx.globalAlpha = bundleAlpha;
+        // Screen-space thickness; keep log count but cap softer when zoomed out.
+        const screenPx = Math.min(4.5, (0.35 + zoomT * 0.9) * (1 + Math.log2(1 + b.count) * 0.35));
+        ctx.lineWidth = screenPx / scale;
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(t.x, t.y);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
 
     // ── edges ───────────────────────────────────────────────────────
-    // Edge strokes are gated by camera scale so zoomed-out overviews stay
-    // readable. Hosts may override via window.__ceAtlasEdgeMinScale; the
-    // default (~0.85) is camera-reachable (unlike the old sqrt(N/1000)
-    // gate that sat above max zoom on large corpora).
+    // Zoom-aware hairlines: stroke width + alpha track camera scale so a
+    // dense overview is a whisper (not a grey mass) while zoom-in still
+    // resolves structure. ctx is already camera-scaled, so divide desired
+    // *screen* pixels by scale to get world lineWidth. Optional hard gate:
+    // window.__ceAtlasEdgeMinScale (default 0 = always draw, hairline far).
+    const scale = Math.max(1e-3, frame.camera.scale || 1);
     const edgeMinOverride = (globalThis as unknown as { __ceAtlasEdgeMinScale?: number })
       .__ceAtlasEdgeMinScale;
-    const edgeMinScale = typeof edgeMinOverride === "number" ? edgeMinOverride : 0.85;
-    if ((frame.camera.scale || 1) >= edgeMinScale) {
+    const edgeMinScale = typeof edgeMinOverride === "number" ? edgeMinOverride : 0;
+    if (scale >= edgeMinScale) {
+      // Map scale → screen stroke: ~0.12px @ far overview → ~1.2px @ focus.
+      const zoomT = Math.min(1, Math.max(0, (scale - 0.2) / 1.6));
+      const screenPx = 0.12 + zoomT * 1.08;
+      const baseAlpha = 0.045 + zoomT * 0.30;
       for (const e of frame.scene.edges) {
         const s = positions.get(e.source);
         const t = positions.get(e.target);
@@ -235,8 +248,13 @@ export class CanvasRenderer implements SceneRenderer {
         const isFocusEdge = e.priority === 1;
         const hovered = frame.hoverId === e.source || frame.hoverId === e.target;
         ctx.strokeStyle = isFocusEdge || hovered ? T.accent : T.line;
-        ctx.globalAlpha = (isFocusEdge ? 0.9 : hovered ? 0.8 : 0.35) * (e.confidence ?? 1);
-        ctx.lineWidth = isFocusEdge ? 1.4 : 1;
+        const alpha = isFocusEdge
+          ? Math.min(0.95, baseAlpha + 0.5)
+          : hovered
+            ? Math.min(0.9, baseAlpha + 0.4)
+            : baseAlpha;
+        ctx.globalAlpha = alpha * (e.confidence ?? 1);
+        ctx.lineWidth = ((isFocusEdge ? screenPx * 1.4 : screenPx) / scale);
         ctx.setLineDash(e.type === "depicts" ? [3, 3] : e.type === "co-cited" ? [1.5, 3] : []);
         ctx.beginPath();
         ctx.moveTo(s.x, s.y);
