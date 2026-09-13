@@ -5337,6 +5337,9 @@ def main():
                     help="fix-source-stubs: only create stubs for vault "
                          "files already cited by non-source wiki pages "
                          "(tiered-vault mode)")
+    ap.add_argument("--refresh", action="store_true",
+                    help="fix-source-stubs: rewrite all matched source "
+                         "summary pages even if they already look substantive")
     ap.add_argument("--dry-run", action="store_true",
                     help="classify-projects: report what would change "
                          "without writing")
@@ -5356,7 +5359,7 @@ def main():
     if args.command == "scan":
         cmd_scan(wiki_dir)
     elif args.command == "fix-source-stubs":
-        cmd_fix_source_stubs(wiki_dir, cited_only=args.cited_only)
+        cmd_fix_source_stubs(wiki_dir, cited_only=args.cited_only, refresh=args.refresh)
     elif args.command == "fix-index":
         cmd_fix_index(wiki_dir)
     elif args.command == "fix-percent-escapes":
