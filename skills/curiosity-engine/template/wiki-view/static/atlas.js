@@ -6,9 +6,10 @@
  * sidebar, modal, subgraph navigator, editing — keeps working: the
  * atlas routes item-open through the same `#page=<id>` hash contract.
  *
- * Wikis above 360 pages get a Classic / Atlas chooser in the graph
- * controls. Classic remains the default until the user opts in. The
- * preference is stored in localStorage, but is ignored for small wikis.
+ * Wikis with ≤1000 pages may switch Classic ↔ Atlas via the view:
+ * control (preference in localStorage). Wikis with >1000 pages are
+ * Atlas-only: Classic is never mounted (it hangs), and the chooser is
+ * hidden. A leftover classic preference is cleared on large wikis.
  *
  * Explicit per-load override (also useful for development and tests):
  *   http://localhost:8090/?viewer=atlas
@@ -226,6 +227,15 @@
     return data && Array.isArray(data.nodes) ? data.nodes.length : 0;
   }
 
+  /* Hard policy: Classic D3 force hangs above ~1k nodes (sync SVG +
+   * pre-warm ticks). Wikis with MORE than 1000 pages are Atlas-only —
+   * never Graph.init, never offer the view: chooser. */
+  var CLASSIC_MAX_PAGES = 1000;
+
+  function classicSafe(data) {
+    return pageCount(data) <= CLASSIC_MAX_PAGES;
+  }
+
   function eligible(data) {
     return pageCount(data) > MIN_ATLAS_PAGES;
   }
@@ -239,10 +249,20 @@
     }
   }
 
-  /* A stored preference is honoured at any wiki size. `eligible()` says
-   * when Atlas starts *paying off*, which is a good default — it is not
-   * a reason to overrule someone who has already chosen. */
+  function clearClassicPreference() {
+    try {
+      if (localStorage.getItem(STORAGE_KEY) === 'classic') {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch (e) {}
+  }
+
   function atlasEnabled(data) {
+    /* >1000 nodes: Atlas only. Ignore classic localStorage / ?viewer=classic. */
+    if (!classicSafe(data)) {
+      clearClassicPreference();
+      return true;
+    }
     var explicit = queryChoice();
     if (explicit) return explicit === 'atlas';
     try {
@@ -252,17 +272,18 @@
     }
   }
 
-  /* The selector is host chrome rather than engine chrome. It is offered
-   * whenever the engine is loaded, so a mid-size wiki can still opt in:
-   * hiding it below MIN_ATLAS_PAGES left no way to try Atlas at all, and
-   * the threshold is a rule of thumb, not a capability boundary.
-   * Changing mode is deliberately a reload: it leaves the classic graph
-   * lifecycle and Atlas canvas teardown independent and keeps hash
-   * routing intact. */
+  /* view: chooser only when Classic is still a safe option (≤1000).
+   * Larger wikis stay on Atlas with no switcher. Changing mode is a
+   * reload so Classic and Atlas lifecycles stay independent. */
   function initChoice(data, activeMode) {
     var button = document.getElementById('viewer-mode');
     var state = document.getElementById('viewer-mode-state');
     if (!button || !state || !window.KnowledgeAtlas) return;
+
+    if (!classicSafe(data)) {
+      button.classList.add('hidden');
+      return;
+    }
 
     state.textContent = activeMode;
     button.title = activeMode === 'atlas'
@@ -385,8 +406,10 @@
 
   window.AtlasViewer = {
     minPages: MIN_ATLAS_PAGES,
+    classicMaxPages: CLASSIC_MAX_PAGES,
     pageCount: pageCount,
     eligible: eligible,
+    classicSafe: classicSafe,
     enabled: atlasEnabled,
     initChoice: initChoice,
     init: init,
