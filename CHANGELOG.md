@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-14 — v1.8.1 — Email-thread skip_retrieve (KEEP_RAG)
+
+**Migration:** none required — defaults are on; existing `.curator/config.json`
+gains the policy on next template sync / can copy `email_thread_policy` from
+`template/config.json`. **Breaking:** none.
+
+`naming.py recommend-analysis` returns **`skip_retrieve`** for email
+blow-by-blow / thread-chronology / email-message-table proposals: do **not**
+mint digest analyses or tables; prefer **vault retrieve** for who/when/order
+and **source summaries** for network. Gated by config
+`email_thread_policy` (default encourage skip). Minimal SKILL/schema/prompts
+pointer only — no essay. Backed by biocure `falsify-email-rag` longer-thread
+probe (union B≫A).
+
 ## 2026-09-13 — Atlas sticky selection fix (retained full-graph edge priorities)
 
 **Migration:** rebuild/vendor Knowledge Atlas into wiki-view after pull

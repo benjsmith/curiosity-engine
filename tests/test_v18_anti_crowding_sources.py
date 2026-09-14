@@ -17,6 +17,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from naming import (  # noqa: E402
     build_source_summary,
+    is_email_blow_by_blow_proposal,
     jaccard,
     lexical_tokens,
     recommend_analysis_write,
@@ -108,6 +109,65 @@ class RecommendAnalysisWrite(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         data = json.loads(proc.stdout)
         self.assertEqual(data["action"], "update")
+
+
+
+class EmailThreadSkipRetrieve(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.wiki = self.root / "wiki"
+        (self.wiki / "analyses").mkdir(parents=True)
+        (self.root / ".curator").mkdir()
+        (self.root / ".curator" / "config.json").write_text(
+            json.dumps({
+                "email_thread_policy": {
+                    "prefer_vault_retrieve": True,
+                    "discourage_blow_by_blow_analyses": True,
+                    "prefer_source_summaries_for_network": True,
+                }
+            })
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_detector_positive(self):
+        self.assertTrue(is_email_blow_by_blow_proposal(
+            "Email thread chronology for access program design"))
+        self.assertTrue(is_email_blow_by_blow_proposal(
+            "Blow-by-blow email exchange between A and B"))
+        self.assertTrue(is_email_blow_by_blow_proposal(
+            "Table of emails in the safety reporting thread"))
+
+    def test_detector_negative(self):
+        self.assertFalse(is_email_blow_by_blow_proposal(
+            "Chinchilla scaling laws",
+            "Compute-optimal training doubles tokens with parameters"))
+
+    def test_recommend_skip_retrieve(self):
+        out = recommend_analysis_write(
+            self.wiki,
+            "Multi-hop email thread chronology: who replied when",
+            "Ordered dates and participants across the Re: chain",
+        )
+        self.assertEqual(out["action"], "skip_retrieve")
+        self.assertIn("vault retrieve", out["rationale"])
+
+    def test_policy_can_disable(self):
+        (self.root / ".curator" / "config.json").write_text(
+            json.dumps({
+                "email_thread_policy": {
+                    "discourage_blow_by_blow_analyses": False,
+                }
+            })
+        )
+        out = recommend_analysis_write(
+            self.wiki,
+            "Email thread chronology for access program design",
+            "Who replied when across the chain",
+        )
+        self.assertEqual(out["action"], "new")
 
 
 class BuildSourceSummary(unittest.TestCase):
