@@ -47,5 +47,10 @@
     "read": "ultra",
     "write_analysis": "lite",
     "write_other": "ultra"
+  },
+  "email_thread_policy": {
+    "prefer_vault_retrieve": true,
+    "discourage_blow_by_blow_analyses": true,
+    "prefer_source_summaries_for_network": true
   }
 }

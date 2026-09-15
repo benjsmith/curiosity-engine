@@ -91,6 +91,8 @@ this file; don't duplicate prompts there.
 >   else prefer a **minor linking analysis** (short; wikilinks existing
 >   pages; states the conjunction/delta) over a full near-twin restatement.
 >   Only mint a full new analysis when the content is genuinely new.
+>   Email blow-by-blow / thread chronology / email-message tables →
+>   `skip_retrieve` (vault retrieve + source summaries; do not mint).
 >   QUERY write-back uses `naming.py recommend-analysis` for the same
 >   decision. Analyses are the primary channel once the editorial/frontier
 >   pool saturates — they should be prolific, multi-directional, and

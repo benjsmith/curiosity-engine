@@ -868,6 +868,78 @@ def score_analysis_similarity(proposed_title: str, proposed_head: str,
     }
 
 
+
+_EMAIL_THREAD_TITLE_RE = re.compile(
+    r"""(?ix)
+    \b(
+        email[-_ ]?(thread|chain|exchange|correspondence|reply|replies)|
+        (blow[-_ ]?by[-_ ]?blow|message[-_ ]?by[-_ ]?message|turn[-_ ]?by[-_ ]?turn)
+          [-_ ]?(email|thread|chain|exchange)?|
+        (who[-_ ]?said[-_ ]?what|thread[-_ ]?chronolog\w*|email[-_ ]?chronolog\w*|
+         multi[-_ ]?(hop|file|message)[-_ ]?email)
+    )\b
+    """
+)
+_EMAIL_THREAD_HEAD_RE = re.compile(
+    r"""(?ix)
+    \b(
+        blow[-_ ]?by[-_ ]?blow|message[-_ ]?by[-_ ]?message|
+        who\s+replied|who\s+initiated|in\s+chronological\s+order|
+        email\s+thread\s+chronolog\w*|quoted\s+prior\s+message
+    )\b
+    """
+)
+_EMAIL_THREAD_TABLE_RE = re.compile(
+    r"""(?ix)
+    \b(
+        email[-_ ]?(thread|chain|message)[-_ ]?(table|timeline|digest|log)|
+        (table|timeline)\s+of\s+emails?
+    )\b
+    """
+)
+
+
+def is_email_blow_by_blow_proposal(proposed_title: str, proposed_head: str = "") -> bool:
+    """True when the proposed analysis/table is email thread blow-by-blow chronology.
+
+    Empirically (biocure falsify-email-rag): vault RAG + source summaries
+    reconstruct participants/dates/order better than reminted wiki digests.
+    """
+    blob = f"{proposed_title or ''}\n{proposed_head or ''}"
+    if _EMAIL_THREAD_TABLE_RE.search(blob):
+        return True
+    if _EMAIL_THREAD_TITLE_RE.search(proposed_title or ""):
+        return True
+    # Head alone: require an email/thread cue plus chronology cue
+    head = proposed_head or ""
+    if _EMAIL_THREAD_HEAD_RE.search(head) and re.search(
+            r"(?i)\b(email|thread|reply|replied|inbox|message)\b", head):
+        return True
+    return False
+
+
+def load_email_thread_policy(wiki_dir: Path) -> dict:
+    """Read optional .curator/config.json email_thread_policy; defaults KEEP_RAG-on."""
+    defaults = {
+        "prefer_vault_retrieve": True,
+        "discourage_blow_by_blow_analyses": True,
+        "prefer_source_summaries_for_network": True,
+    }
+    cfg_path = wiki_dir.parent / ".curator" / "config.json"
+    if not cfg_path.is_file():
+        # also try wiki/.curator (unusual) and cwd
+        alt = Path(".curator") / "config.json"
+        cfg_path = alt if alt.is_file() else cfg_path
+    try:
+        import json as _json
+        cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+        pol = dict(defaults)
+        pol.update(cfg.get("email_thread_policy") or {})
+        return pol
+    except Exception:
+        return defaults
+
+
 def recommend_analysis_write(
     wiki_dir: Path,
     proposed_title: str,
@@ -876,9 +948,12 @@ def recommend_analysis_write(
     update_threshold: float = 0.55,
     link_threshold: float = 0.35,
 ) -> dict:
-    """Recommend update | link | new for a proposed QUERY crystallise write.
+    """Recommend update | link | new | skip_retrieve for QUERY crystallise write.
 
     Scans `wiki/analyses/*.md` with lexical title/head Jaccard only.
+    - **skip_retrieve**: email blow-by-blow / thread chronology / email-message
+      table proposals — do not mint; prefer vault retrieve for chronology and
+      source summaries for network (config `email_thread_policy`, default on).
     - **update**: most of the answer already lives on a near-twin page
       (score >= update_threshold) — edit that page instead of minting another.
     - **link**: related but not the same synthesis (link_threshold <= score
@@ -886,6 +961,28 @@ def recommend_analysis_write(
       existing pages and states the conjunction/delta.
     - **new**: genuinely new content (best score < link_threshold).
     """
+    policy = load_email_thread_policy(wiki_dir)
+    if policy.get("discourage_blow_by_blow_analyses", True) and \
+            is_email_blow_by_blow_proposal(proposed_title, proposed_head or ""):
+        prefer_vault = policy.get("prefer_vault_retrieve", True)
+        prefer_src = policy.get("prefer_source_summaries_for_network", True)
+        return {
+            "action": "skip_retrieve",
+            "proposed_title": proposed_title,
+            "best": None,
+            "candidates": [],
+            "thresholds": {
+                "update": update_threshold,
+                "link": link_threshold,
+            },
+            "email_thread_policy": policy,
+            "rationale": (
+                "email blow-by-blow / thread chronology analysis discouraged; "
+                + ("prefer vault retrieve for who/when/order; " if prefer_vault else "")
+                + ("use source summaries for network/participants; " if prefer_src else "")
+                + "do not mint a digest table or analysis page"
+            ),
+        }
     analyses = sorted((wiki_dir / "analyses").glob("*.md")) \
         if (wiki_dir / "analyses").is_dir() else []
     ranked = []
@@ -1038,7 +1135,7 @@ if __name__ == "__main__":
     ra = sub.add_parser(
         "recommend-analysis",
         help="score a proposed analysis title/head against analyses/*.md "
-             "and recommend update | link | new")
+             "and recommend update | link | new | skip_retrieve")
     ra.add_argument("wiki", nargs="?", default="wiki")
     ra.add_argument("--title", required=True,
                     help="proposed analysis title (with or without [anl] prefix)")
