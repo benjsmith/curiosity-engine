@@ -106,6 +106,9 @@ class EntityGateTest(unittest.TestCase):
         (wiki / "entities" / "project-onyx.md").write_text(ONYX_PAGE)
         (wiki / "entities" / "project-marlin.md").write_text(MARLIN_PAGE)
         (wiki / "concepts" / "deep-sea-programmes.md").write_text(PROGRAMMES_PAGE)
+        (wiki / "concepts" / "career-development-discussions.md").write_text(
+            "---\ntitle: Career development discussion meetings week of 2024-03-04\n"
+            "type: concept\n---\nMeeting roster.\n")
         vault = cls.ws / "vault"
         vault.mkdir()
         (vault / "onyx-brief.extracted.md").write_text(ONYX_SOURCE)
@@ -304,6 +307,16 @@ class EntityGateTest(unittest.TestCase):
         verdict = self.gate("What was planned for July 2026?")
         self.assertEqual(verdict["mentions"], [])
         self.assertEqual(verdict["action"], "proceed")
+
+    def test_topic_phrase_and_abbreviated_date_do_not_false_abstain(self):
+        verdict = self.gate(
+            "Which weekly meetings about career development discussion "
+            "occurred in the week starting on Mar 4th, 2024?")
+        self.assertEqual(verdict["action"], "proceed", verdict)
+        self.assertEqual(len(verdict["mentions"]), 1, verdict)
+        self.assertEqual(verdict["mentions"][0]["status"], "resolved")
+        self.assertEqual(verdict["mentions"][0]["page"],
+                         "concepts/career-development-discussions.md")
 
     def test_partial_abstain_keeps_resolved_context(self):
         raw, out = self.retrieve(

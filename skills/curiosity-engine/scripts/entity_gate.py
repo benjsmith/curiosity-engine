@@ -108,7 +108,7 @@ this that these those there here
 if then than as vs versus not no any all some every each both
 also just please everything anything something nothing
 january february march april may june july august september october
-november december monday tuesday wednesday thursday friday saturday
+november december jan feb mar apr jun jul aug sep sept oct nov dec monday tuesday wednesday thursday friday saturday
 sunday q1 q2 q3 q4
 """.split())
 
@@ -150,6 +150,11 @@ def extract_mentions(query: str) -> list:
         if all(w in _STOPWORDS for w in words):
             return
         if all(re.fullmatch(r"[0-9]+", w) for w in words):
+            return
+        # Numeric date fragments ("4th 2024", "2024") are temporal
+        # constraints, not entity names.
+        if (re.fullmatch(r"(?:\d{1,2}(?:st|nd|rd|th)?\s+)?\d{4}", key)
+                or re.fullmatch(r"\d{1,2}(?:st|nd|rd|th)", key)):
             return
         seen.add(key)
         mentions.append(candidate)
@@ -257,15 +262,29 @@ def _augment_mentions_from_identity(query: str, mentions: list,
             key = _norm(span)
             if not key or key in seen:
                 continue
-            # Prefer the longer mention already kept.
-            if any(_is_word_subphrase(key, sk) for sk in seen):
-                continue
-
             # Exact / mention-in-entity only — never "entity name sits
             # inside this long window", which would swallow look-alikes
-            # next to a real name in coordinated questions.
+            # next to a real name in coordinated questions.  Resolve before
+            # the longest-first suppression: a longer fuzzy topic phrase
+            # must not hide a shorter exact curated name.
             hit = resolve_name(span, index,
                                allow_query_contains_entity=False)
+            enclosing = any(_is_word_subphrase(key, sk) for sk in seen)
+            if enclosing:
+                # Keep a longer exact-resolved name (e.g. an alias phrase),
+                # but replace a longer fuzzy look-alike with this exact page
+                # name. This prevents topic phrases from hiding exact pages
+                # without splitting aliases into individual words.
+                enclosing_exact = any(
+                    _is_word_subphrase(key, _norm(m))
+                    and resolve_name(m, index,
+                                     allow_query_contains_entity=False)
+                    for m in accepted)
+                if enclosing_exact or not hit:
+                    continue
+                accepted = [m for m in accepted
+                            if not _is_word_subphrase(key, _norm(m))]
+                seen = {_norm(m) for m in accepted}
             keep = bool(hit)
             if not keep:
                 # Look-alike n-grams: require multi-token or ≥3 chars so
@@ -283,7 +302,21 @@ def _augment_mentions_from_identity(query: str, mentions: list,
             accepted.append(span)
             seen = {_norm(m) for m in accepted}
 
-    return accepted[:_MAX_MENTIONS]
+    # Multiple exact n-grams can resolve to the same page (for example a
+    # title's individual words plus its topic phrase). Keep the longest one
+    # per page so ordinary prose is not reported as several entities.
+    by_page = {}
+    remainder = []
+    for mention in accepted:
+        resolved = resolve_name(mention, index,
+                                allow_query_contains_entity=False)
+        if not resolved:
+            remainder.append(mention)
+            continue
+        page = resolved.get("page") or resolved.get("title")
+        if page not in by_page or len(mention.split()) > len(by_page[page].split()):
+            by_page[page] = mention
+    return (remainder + list(by_page.values()))[:_MAX_MENTIONS]
 
 
 # ---- Identity index (the curated resolution surface) ----

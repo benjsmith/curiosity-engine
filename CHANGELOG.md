@@ -1,3 +1,12 @@
+## 2026-09-15 — Fix entity_gate false abstain on topic phrases + date fragments
+
+**Migration:** none. **Breaking:** none.
+
+### Fixed
+
+- Entity gate no longer false-abstains on long topic n-grams paired with abbreviated month / numeric date fragments (e.g. "Mar 4th, 2024"): abbreviated months are stopwords, numeric date fragments are skipped, exact identity resolves before longest-first fuzzy suppression, and duplicate n-grams collapsing to the same page are collapsed.
+- `graph.py` rebuild now emits `degraded` / `wiki_embeddings_reason` / `degraded_reason` when embeddings are configured but skipped or incomplete.
+
 # Changelog
 
 ## 2026-09-14 — v1.8.1 — Email-thread skip_retrieve (KEEP_RAG)
