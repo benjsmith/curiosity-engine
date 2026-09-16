@@ -94,7 +94,13 @@ this file; don't duplicate prompts there.
 >   Email blow-by-blow / thread chronology / email-message tables →
 >   `skip_retrieve` (vault retrieve + source summaries; do not mint).
 >   QUERY write-back uses `naming.py recommend-analysis` for the same
->   decision. Analyses are the primary channel once the editorial/frontier
+>   decision.
+>   **Reader-facing wiki pages:** wiki pages are for readers of the
+>   organization, not for the experiment. Never write benchmark / wave /
+>   eval / harness / fuel metadata into page titles or bodies. Prefer
+>   linking hub pages (entities, concepts, projects) over listing many
+>   leaf sources.
+>   Analyses are the primary channel once the editorial/frontier
 >   pool saturates — they should be prolific, multi-directional, and
 >   explicitly forward-looking, without crowding near-duplicates. Two
 >   shapes are both welcome:
