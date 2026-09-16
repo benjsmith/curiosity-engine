@@ -852,6 +852,9 @@ def rebuild(wiki_dir: Path, force: bool = False):
         "rebuilt_at": datetime.now().isoformat(),
     }))
 
+    embedding_expected = bool(_load_config(wiki_dir).get("embedding_enabled"))
+    embedding_degraded = (embedding_expected
+                          and emb_status.get("status") != "embedded")
     stats = {
         "pages": len(page_data),
         "vault_sources": len(vault_sources),
@@ -863,6 +866,13 @@ def rebuild(wiki_dir: Path, force: bool = False):
         "notes": len(note_occurrences),
         "appears_in_edges": appears_in_edges,
         "wiki_embeddings": emb_status.get("status"),
+        "wiki_embeddings_reason": emb_status.get("reason"),
+        "degraded": embedding_degraded,
+        **({"degraded_reason": "embedding_enabled=true but wiki embeddings "
+                                + str(emb_status.get("status"))
+                                + (": " + str(emb_status.get("reason"))
+                                   if emb_status.get("reason") else "")}
+           if embedding_degraded else {}),
         **prov_stats,
     }
     print(json.dumps({"status": "rebuilt", **stats}))
