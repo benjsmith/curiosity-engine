@@ -94,6 +94,9 @@ window.Sidebar = (function () {
     });
 
     // Sidebar collapse / restore (whole-sidebar).
+    // Narrow viewports: auto-collapse so the graph is full-width and the
+    // restore affordance is visible. Semantics match desktop — empty =
+    // visible, "collapsed" = hidden. Never use data-sidebar="open".
     const collapseBtn = document.querySelector('#sidebar-toggle');
     if (collapseBtn) {
       collapseBtn.addEventListener('click', () => {
@@ -108,6 +111,22 @@ window.Sidebar = (function () {
       document.body.dataset.sidebar = '';
     });
     document.querySelector('#graph-pane').appendChild(restore);
+
+    const narrowMq = window.matchMedia('(max-width: 1100px)');
+    const syncNarrowSidebar = () => {
+      if (narrowMq.matches) {
+        document.body.dataset.sidebar = 'collapsed';
+      } else if (document.body.dataset.sidebar === 'collapsed') {
+        document.body.dataset.sidebar = '';
+      }
+    };
+    syncNarrowSidebar();
+    if (typeof narrowMq.addEventListener === 'function') {
+      narrowMq.addEventListener('change', syncNarrowSidebar);
+    } else if (typeof narrowMq.addListener === 'function') {
+      narrowMq.addListener(syncNarrowSidebar);
+    }
+
 
     updateCounts(data);
   }

@@ -1,3 +1,11 @@
+## 2026-09-16 — Wiki viewer mobile modal + sidebar
+
+**Migration:** none. **Breaking:** none.
+
+### Fixed
+
+- Wiki viewer on narrow viewports (≤1100px, including phone landscape): doc modal no longer collapses to ~0 width; file browser sidebar uses desktop collapsed/visible semantics as an overlay with auto-collapse on load so the restore control stays reachable.
+
 ## 2026-09-15 — Fix entity_gate false abstain on topic phrases + date fragments
 
 **Migration:** none. **Breaking:** none.
