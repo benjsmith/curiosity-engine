@@ -154,6 +154,7 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 
 ## Learn more
 
+- [docs/sparse-corpora.md](skills/curiosity-engine/docs/sparse-corpora.md) — hierarchy-fit curation for sparse / lower-density vaults
 - [docs/architecture.md](skills/curiosity-engine/docs/architecture.md) — full design rationale
 - [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md) — non-Claude-Code CLIs, model presets, Ollama, deployment notes, orphan-source wiring
 - [docs/viewers.md](skills/curiosity-engine/docs/viewers.md) — graph viewer (classic + Atlas), search, Obsidian, VS Code + Foam, semantic search

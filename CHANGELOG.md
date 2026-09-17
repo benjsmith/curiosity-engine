@@ -17,7 +17,44 @@
 
 # Changelog
 
-## 2026-09-14 — v1.8.1 — Email-thread skip_retrieve (KEEP_RAG)
+## 2026-09-18 — v1.8.1 — Sparse-corpus hierarchy-fit (+ KEEP_RAG, viewer fixes)
+
+**Migration:** none required for hierarchy-fit (prompt/skill guidance only).
+`email_thread_policy` lands on next template sync / copy from
+`template/config.json` if missing. **Breaking:** none.
+
+### Sparse corpora and hierarchy-fit
+
+Curation guidance for **sparse / lower-density** vaults (enterprise mail
+dumps, uneven folders): match abstraction to the corpus’s *real*
+structure when it is hierarchical (e.g. org → department → person, or
+topic → subtopic); put lasting high-level material on high-level pages
+and keep day-to-day transactional detail lower unless it is
+constitutively high-level. **Do not invent hierarchy** the sources do
+not support, and **do not narrate hub/peer structure** in page prose —
+write the page and wikilink related pages. Prefer substantive related
+links over leaf dumps; never paste email/meeting snippets or signature
+blocks onto high-level pages; never write benchmark/eval/wave metadata
+into wiki bodies.
+
+Documented in `SKILL.md` Writing rules, `template/prompts.md`, and
+`docs/sparse-corpora.md`. Softened in #19 after #18 so scientific /
+flat concept graphs are not forced into org-shaped trees.
+
+### Also in this tag (shipped on main since v1.8.0, previously untagged)
+
+- **KEEP_RAG / `skip_retrieve`** (#14): email blow-by-blow digests prefer
+  vault retrieve + source summaries over minting analysis digests
+  (`naming.py recommend-analysis`, `email_thread_policy`).
+- **Entity gate** (#15): fewer false abstains on topic phrases + date
+  fragments; rebuild reports degraded embedding state.
+- **Viewer:** Atlas-only above 1000 pages (#12); edges auto/on/off (#11);
+  sticky selection clear (#13); mobile modal + sidebar (#16);
+  `fix-source-stubs --refresh` CLI (#10).
+- **Hygiene:** no experiment metadata in wiki pages (#17).
+
+
+## 2026-09-14 — Email-thread skip_retrieve (KEEP_RAG) (folded into v1.8.1)
 
 **Migration:** none required — defaults are on; existing `.curator/config.json`
 gains the policy on next template sync / can copy `email_thread_policy` from
