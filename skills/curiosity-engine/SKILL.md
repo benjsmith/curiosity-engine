@@ -863,6 +863,7 @@ Historical note on the ruleset's origin and why it's no longer a separately-inst
 
 - **Never modify vault files** (only add new ones + their `.extracted.md`).
 - **Concise prose.** Short sentences. No filler. Every sentence carries information. Workers write at the configured `compression` level (default ultra for most page types, lite for analyses).
+- **Hierarchy-fit rewrite.** Rewrite pages to the right level in the corpus hierarchy: high-level topics get short abstracted summaries and links to subordinate/peer hubs; leave day-to-day transactional detail on lower pages unless it is constitutively high-level (e.g. a lasting mandate). Do not paste email/meeting snippets or signature blocks onto high-level hubs; prefer hub wikilinks over leaf dumps; never write benchmark/eval/wave metadata into pages.
 - **Cite every factual claim:** `(vault:papers/attention.extracted.md)`
 - **Link generously:** `[[entity-name]]` for every mention that has or deserves a page. Always hyphen-case.
 - **Filename + display-title:** workers and reviewers that create or rename pages MUST use `naming.py` (`citation_stem`, `source_display_title`, `TYPE_PREFIX`). No ad-hoc schemes.
