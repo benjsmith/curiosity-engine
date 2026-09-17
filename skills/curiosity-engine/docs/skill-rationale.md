@@ -1,5 +1,11 @@
 # Skill design rationale — selected notes
 
+For how curation should behave on **sparse / lower-density vaults**
+(enterprise email dumps, uneven folders), see
+[sparse-corpora.md](sparse-corpora.md). That note expands the
+hierarchy-fit Writing rule without bloating `SKILL.md`.
+
+
 Internal design notes that don't belong in the runtime SKILL.md but
 are useful for contributors and people forking the project.
 
