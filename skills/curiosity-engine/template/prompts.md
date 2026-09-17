@@ -95,15 +95,19 @@ this file; don't duplicate prompts there.
 >   `skip_retrieve` (vault retrieve + source summaries; do not mint).
 >   QUERY write-back uses `naming.py recommend-analysis` for the same
 >   decision.
->   **Hierarchy-fit / reader-facing wiki pages:** rewrite pages to the
->   right level in the corpus hierarchy — high-level topics get short
->   abstracted summaries and links to subordinate/peer hubs; leave
->   day-to-day transactional detail on lower pages unless it is
->   constitutively high-level (e.g. a lasting mandate). Do not paste
->   email/meeting snippets or signature blocks onto high-level hubs;
->   prefer hub wikilinks over leaf dumps. Wiki pages are for readers of
->   the organization, not for the experiment — never write benchmark /
->   wave / eval / harness / fuel metadata into page titles or bodies.
+>   **Hierarchy-fit / reader-facing wiki pages:** match abstraction to
+>   the content’s real structure when it is hierarchical (e.g. org →
+>   department → person, or topic → subtopic): put lasting high-level
+>   material on high-level pages and keep day-to-day transactional
+>   detail on lower pages unless it is constitutively high-level
+>   (e.g. a lasting mandate). Do not invent a hierarchy the corpus
+>   does not support, and do not narrate hub/peer structure in the
+>   prose — just write the page and wikilink related pages. Prefer
+>   linking substantive related pages over dumping many leaf sources.
+>   Never paste email/meeting snippets or signature blocks onto
+>   high-level pages. Wiki pages are for readers of the organization,
+>   not for the experiment — never write benchmark / wave / eval /
+>   harness / fuel metadata into page titles or bodies.
 >   Analyses are the primary channel once the editorial/frontier
 >   pool saturates — they should be prolific, multi-directional, and
 >   explicitly forward-looking, without crowding near-duplicates. Two
