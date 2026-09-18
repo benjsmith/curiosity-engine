@@ -61,6 +61,7 @@ window.GraphSearch = (function () {
       // Always call, including with an empty list — that is how a
       // cancelled search clears the page list.
       if (window.Sidebar && Sidebar.setSearchHits) Sidebar.setSearchHits(ids);
+      if (window.FileBrowser && FileBrowser.setSearchHits) FileBrowser.setSearchHits(ids);
       clearBtn.hidden = !q;
       if (countEl) {
         countEl.hidden = !q;

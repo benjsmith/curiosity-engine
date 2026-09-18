@@ -95,7 +95,7 @@ Known failure modes, in rough order of when you'll hit them:
 - **~500-page wiki ceiling.** Beyond that, plan latency grows. The incremental score cache helps; the tiered-vault design (bounded wiki + unbounded indexed vault) unlocks more; cluster-scoped CURATE (see below) keeps individual waves coherent past the threshold.
 - **Single user.** No protocol for multiple humans editing the same wiki live. Two asynchronous export paths cover different audiences: **OKF** (`okf_export.py build wiki --output-dir <dir>`) projects the wiki to a vendor-neutral [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle for cross-tool / cross-org exchange (read-only; CE structure rides in `x_ce_*` keys — see [`okf-interop.md`](okf-interop.md)); **curiosity-merge** subgraph-export/merge shares whole or sub-wikis with other CE workspaces. Neither is concurrent multi-user editing.
 
-## Shell embed + hosted mode (Phase 2a)
+## Shell embed + hosted mode (Phase 2a / 2b)
 
 Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
 `127.0.0.1:8766`) under `/embed/ce/` — **no iframes**. CE readiness:
@@ -104,8 +104,9 @@ Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
   `viewer_server.py`
 - Hosted hook: `X-CE-Host` / `?host=switchbay|okbay` and `GET /api/hosted`
 - ADR: [`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md)
-- Feature migration intake (filebrowser, graph animation, split):
-  [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
+- **Phase 2b:** `GET /api/tree` filebrowser (vault/ + wiki/) + wiki-view Files
+  mode; knowledge-atlas `playReplayTimeline` animation hook. Split deferred.
+  Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
 
 Bare `viewer.sh` loopback default remains port **8090**; bind host is always
 `127.0.0.1`.
