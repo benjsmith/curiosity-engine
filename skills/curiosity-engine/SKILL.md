@@ -335,6 +335,7 @@ the snapshot threshold changes. See `docs/datasets.md` and
    - **`skip_retrieve`** — email blow-by-blow / thread chronology / email-message table: **do not mint**; answer via vault retrieve (chronology) and source summaries (network). Config: `email_thread_policy` (default on).
    One-line prompt (adapt to the action): *"This synthesises [N] sources — update `analyses/<existing>` / file a short linking analysis / file as `analyses/<slug>`? [Y/n]"*. On approval, draft accordingly (citations preserved verbatim from the answer), run `score_diff.py --new-page` (or the normal edit ratchet for updates), commit through the standard wiki ratchet. On decline, do nothing — log the question only.
    **Wiki pages are for readers, not the experiment:** never write benchmark/wave/eval/harness/fuel metadata into titles or bodies; prefer hub WikiLinks over long leaf-source lists. The trigger is conservative on purpose: pattern-match recall ("what does the wiki say about X?") doesn't fire it; synthesis ("how do A, B, and C interact?") does. Skip the offer if the user phrased the query as a quick lookup (`/q`, "just search for…", "tldr").
+   When an analysis answer is a scalar count, ISO date, or yes/no, put that value in the opening sentence as bold arabic digits / ISO date / Yes|No (e.g. **11**), not only a spelled-out word and not an `Answer:` label.
 8. Append to `.curator/log.md`: question, pages used, whether vault fallback was needed, whether an analysis page was filed.
 
 ### LINT — "check wiki health", "what needs work", "lint"
