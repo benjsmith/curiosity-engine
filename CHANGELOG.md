@@ -17,6 +17,14 @@
 
 # Changelog
 
+## 2026-09-18 — v1.8.2 — Crystallise scalar lead (scoring-aligned)
+
+**Migration:** none. **Breaking:** none.
+
+### Clarified
+
+- QUERY crystallise / analysis writing: when the answer is a scalar count, ISO date, or yes/no, put that value in the opening sentence as bold arabic digits / ISO date / Yes|No (e.g. **11**). Spelled-out-only leads are not enough; **`Answer:` labels are not required**.
+
 ## 2026-09-18 — v1.8.1 — Sparse-corpus hierarchy-fit (+ KEEP_RAG, viewer fixes)
 
 **Migration:** none required for hierarchy-fit (prompt/skill guidance only).

@@ -108,6 +108,7 @@ this file; don't duplicate prompts there.
 >   high-level pages. Wiki pages are for readers of the organization,
 >   not for the experiment — never write benchmark / wave / eval /
 >   harness / fuel metadata into page titles or bodies.
+>   When an analysis answer is a scalar count, ISO date, or yes/no, put that value in the opening sentence as bold arabic digits / ISO date / Yes|No (e.g. **11**), not only a spelled-out word and not an `Answer:` label.
 >   Analyses are the primary channel once the editorial/frontier
 >   pool saturates — they should be prolific, multi-directional, and
 >   explicitly forward-looking, without crowding near-duplicates. Two
