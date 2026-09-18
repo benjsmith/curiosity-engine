@@ -18,6 +18,7 @@
 
   Theme.init();
   Sidebar.init(data);
+  if (window.FileBrowser) FileBrowser.init(data);
   Subgraph.init(data);
   Modal.init(data);
   /* Resolve viewer + paint view: chooser BEFORE any Graph/Atlas mount.
@@ -80,6 +81,7 @@
       return;
     }
     if (Modal.refresh)    Modal.refresh(data);
+    if (window.FileBrowser && FileBrowser.refreshData) FileBrowser.refreshData(data);
     if (Subgraph.init)    Subgraph.init(data);   // re-binds neighbour map
     // Keep the sidebar footer honest if page/edge counts moved.
     if (Sidebar.updateCounts) Sidebar.updateCounts(data);

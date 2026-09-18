@@ -12,6 +12,7 @@ Endpoints
     GET  /api/page?path=<path>          raw markdown of a wiki page
     GET  /api/vault/<name>              vault/*.extracted.md basenames only
     GET  /api/hosted                    hosted-mode stub (host=switchbay|okbay)
+    GET  /api/tree                      vault/ + wiki/ relative paths (filebrowser)
     POST /api/page                      JSON {path, content} → overwrite file
     POST /api/upload-vault              multipart form → save to vault/raw/
 
@@ -60,6 +61,7 @@ from email.policy import default as default_email_policy
 from pathlib import Path
 
 import public_base
+import filebrowser_tree
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -145,6 +147,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_get_vault(url.path[len("/api/vault/"):])
         if url.path == "/api/hosted":
             return self._json(200, public_base.hosted_settings_policy(self._hosted(url)))
+        if url.path == "/api/tree":
+            return self._handle_get_tree()
         # Inject embed bootstrap into HTML so /api fetches honor CE_PUBLIC_BASE.
         if self._looks_like_html(url.path):
             return self._serve_html_with_bootstrap(url)
@@ -233,6 +237,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             sys.stderr.write(f"viewer-server: rebuild failed: {e}\n")
 
     # ── handlers ───────────────────────────────────────────────────
+    def _handle_get_tree(self) -> None:
+        """List vault/ + wiki/ files for the CE filebrowser (Phase 2b)."""
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        return self._json(200, filebrowser_tree.tree_payload(WORKSPACE_DIR))
+
     def _handle_get_page(self, qs: dict) -> None:
         rel = (qs.get("path") or [""])[0]
         try:

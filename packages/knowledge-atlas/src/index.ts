@@ -55,3 +55,10 @@ export {
 export { LocalSceneSource } from "./datasources/local.ts";
 export { ScaledDataSource, SCALED_TOTAL_LEAVES } from "./datasources/scaled.ts";
 export { RemoteDataSource } from "./datasources/remote.ts";
+
+export {
+  playReplayTimeline,
+  type ReplayEvent,
+  type HistoryDoc,
+  type ReplayHandlers,
+} from "./animation/replayTimeline.ts";
