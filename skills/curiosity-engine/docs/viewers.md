@@ -69,6 +69,12 @@ Optional hosted signal: `X-CE-Host: switchbay|okbay` or `?host=`. See
 [`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md).
 Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
 
+**Filebrowser (Phase 2b).** Sidebar **Pages | Files** toggle. Files mode
+calls `GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
+`*.ext` filter, graph-search highlight, and a minimal context menu.
+Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files
+mode. Pack routes and FS mutate ops remain Switchbay-side until parity.
+
 ## Obsidian (alternative — same underlying markdown)
 
 `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian →
