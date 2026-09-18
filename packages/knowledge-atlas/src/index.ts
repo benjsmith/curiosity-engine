@@ -62,3 +62,15 @@ export {
   type HistoryDoc,
   type ReplayHandlers,
 } from "./animation/replayTimeline.ts";
+
+export {
+  buildPartitionSelection,
+  setPartitionPolicy,
+  addToPartitionSelection,
+  removeFromPartitionSelection,
+  partitionPayload,
+  type PartitionPolicy,
+  type PartitionEntry,
+  type PartitionSeed,
+} from "./partition/partitionSelection.ts";
+

@@ -12,7 +12,7 @@ Charter north star: **CE** owns graph, atlas, wiki, search, source viewer, **fil
 | Classic wiki viewer + APIs | `skills/curiosity-engine/template/wiki-view` + `scripts/viewer_server.py` | Phase 2a: `CE_PUBLIC_BASE` / hosted hook |
 | Filebrowser | wiki-view sidebar **Files** mode + `GET /api/tree` | Phase 2b spike landed (browse/search/highlight/ctx) |
 | Graph opening animation | knowledge-atlas `animation/replayTimeline` (+ later wiki-view UI) | Phase 2b: pure timeline hook; SVG/d3 replay UI deferred |
-| Workspace split | CE API + atlas multi-select; shell may keep workspace registry UX | **Deferred** past 2b spike |
+| Workspace split | CE API + atlas multi-select; shell may keep workspace registry UX | Phase 2b+ spike landed (partition API + minimal UI) |
 
 ## Switchbay source map (intake)
 
@@ -89,7 +89,35 @@ Deep-link: `?filebrowser=1` opens Files mode.
 
 **CE intake notes:** Engine multi-select already exists in knowledge-atlas (`select` / `selection-changed`). Move **page move/copy + wiki partition** logic into CE; Switchbay may retain workspace registry / tab open after split. Feature-flag dual-stack until checklist green.
 
-**Phase 2b:** split **not started** (deferred).
+#### Phase 2b+ landed (CE)
+
+| Artifact | Role |
+|----------|------|
+| `scripts/wiki_partition.py` | Page resolve, copy wiki + vault citations + figures, manifests, MOVE → `wiki/.deleted/<stamp>/` |
+| `POST /api/split` + `GET /api/split` in `viewer_server.py` | Sync partition; `target` or `CE_SPLIT_HOME/<name>`; honors `CE_PUBLIC_BASE` |
+| `template/wiki-view/static/split.js` | Minimal panel (`?split=1` / split control); move\|copy policies |
+| `packages/knowledge-atlas` `partitionSelection` | Pure move\|copy selection helpers for atlas multi-select |
+| Tests | `tests/test_wiki_partition.py` + `partitionSelection.test.ts` |
+
+**Parity vs Switchbay (split):**
+
+| Behavior | Status |
+|----------|--------|
+| Export selected pages to new workspace | ✅ CE (`wiki_partition`) |
+| MOVE vs COPY policy | ✅ |
+| Transitive vault citations | ✅ |
+| Wiki-relative figure embeds | ✅ |
+| Dual-side `.curator/splits/` manifests | ✅ |
+| Recoverable source prune (MOVE) | ✅ (`wiki/.deleted/`) |
+| `CE_PUBLIC_BASE` embed paths | ✅ |
+| Atlas multi-select policy helpers | ✅ |
+| Workspace registry / tab open | ❌ shell (Switchbay) |
+| Rubber-band / `sy:split-proposal` UI | ❌ deferred (shell or later CE) |
+| CM `subgraph_export` license modes | ❌ deferred (CE-native copy; no CM dep) |
+| Workspace-root figures / `.workbench` sketches | ❌ deferred |
+| Async curator link-heal agents | ❌ deferred (shell) |
+| OS Trash prune | ❌ deferred (CE uses `.deleted/`) |
+
 
 ## Embed contract (for Switchbay Phase 4a)
 
@@ -101,6 +129,7 @@ Deep-link: `?filebrowser=1` opens Files mode.
 ## Sequencing
 
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
-2. **2b (this spike):** filebrowser shell API + minimal UI; animation timeline hook; split deferred
-3. **2b+:** pack routes / FS ops / SVG replay UI / split API behind flags
-4. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes
+2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
+3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
+4. **2b++:** pack routes / FS ops / SVG replay UI / rubber-band split / CM export parity
+5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes

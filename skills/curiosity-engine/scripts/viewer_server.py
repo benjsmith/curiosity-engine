@@ -13,8 +13,10 @@ Endpoints
     GET  /api/vault/<name>              vault/*.extracted.md basenames only
     GET  /api/hosted                    hosted-mode stub (host=switchbay|okbay)
     GET  /api/tree                      vault/ + wiki/ relative paths (filebrowser)
+    GET  /api/split                     last partition status (workspace split spike)
     POST /api/page                      JSON {path, content} → overwrite file
     POST /api/upload-vault              multipart form → save to vault/raw/
+    POST /api/split                     partition wiki pages into a new workspace
 
 Proxy / embed (Phase 2a)
 ────────────────────────
@@ -50,6 +52,7 @@ Invoked by viewer.sh; not intended to be called by hand.
 from __future__ import annotations
 
 import http.server
+import os
 import json
 import re
 import socketserver
@@ -62,6 +65,7 @@ from pathlib import Path
 
 import public_base
 import filebrowser_tree
+import wiki_partition
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -70,6 +74,7 @@ WORKSPACE_DIR: Path | None = None
 WIKI_DIR: Path | None = None
 VAULT_DIR: Path | None = None
 VAULT_RAW_DIR: Path | None = None
+SPLIT_LAST: dict | None = None
 
 
 def _safe_wiki_path(rel: str) -> Path:
@@ -149,6 +154,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(200, public_base.hosted_settings_policy(self._hosted(url)))
         if url.path == "/api/tree":
             return self._handle_get_tree()
+        if url.path == "/api/split":
+            return self._handle_get_split()
         # Inject embed bootstrap into HTML so /api fetches honor CE_PUBLIC_BASE.
         if self._looks_like_html(url.path):
             return self._serve_html_with_bootstrap(url)
@@ -160,6 +167,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_post_page()
         if url.path == "/api/upload-vault":
             return self._handle_upload()
+        if url.path == "/api/split":
+            return self._handle_post_split()
         return self._json(404, {"error": "not found"})
 
     def _looks_like_html(self, path: str) -> bool:
@@ -242,6 +251,79 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if WORKSPACE_DIR is None:
             return self._json(500, {"error": "workspace unset"})
         return self._json(200, filebrowser_tree.tree_payload(WORKSPACE_DIR))
+
+    def _handle_get_split(self) -> None:
+        """Last workspace-partition status (Phase 2b+ split spike)."""
+        return self._json(200, {"last": SPLIT_LAST})
+
+    def _handle_post_split(self) -> None:
+        """Partition selected wiki pages into a new workspace outside source.
+
+        Body: {target|name, move: [ref], copy: [ref], name?}.
+        If ``target`` is omitted, ``CE_SPLIT_HOME/<name>`` is used when set.
+        Honors CE_PUBLIC_BASE via path rewrite. Sync for the spike; shells
+        may wrap async + workspace registry themselves.
+        """
+        global SPLIT_LAST
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        if isinstance(SPLIT_LAST, dict) and SPLIT_LAST.get("state") == "running":
+            return self._json(409, {"error": "a split is already running"})
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        move = [str(r).strip() for r in (body.get("move") or []) if str(r).strip()]
+        copy = [str(r).strip() for r in (body.get("copy") or []) if str(r).strip()]
+        if not move and not copy:
+            return self._json(400, {"error": "nothing selected"})
+        name = wiki_partition.sanitize_name(str(body.get("name") or ""))
+        target_raw = str(body.get("target") or "").strip()
+        if not target_raw:
+            home = (os.environ.get("CE_SPLIT_HOME") or "").strip()
+            if not home or not name:
+                return self._json(
+                    400,
+                    {"error": "target required (or set CE_SPLIT_HOME + name)"},
+                )
+            target_raw = str(Path(home).expanduser() / name)
+        elif not name:
+            name = wiki_partition.sanitize_name(Path(target_raw).name)
+        if not name:
+            return self._json(400, {"error": "name required"})
+        target = Path(target_raw)
+        rec: dict = {
+            "state": "running",
+            "step": "starting",
+            "target": str(target),
+            "name": name,
+            "error": None,
+        }
+        SPLIT_LAST = rec
+
+        def _progress(step: str) -> None:
+            rec["step"] = step
+
+        try:
+            stats = wiki_partition.partition_workspace(
+                WORKSPACE_DIR,
+                target,
+                move,
+                copy,
+                name=name,
+                progress=_progress,
+            )
+            rec.update(state="done", step="done", **stats)
+            # Rebuild source viewer if pages were moved.
+            if stats.get("moved"):
+                self._rebuild()
+            return self._json(200, {"ok": True, "started": False, **stats})
+        except wiki_partition.PartitionError as e:
+            rec.update(state="error", error=str(e), step="error")
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            rec.update(state="error", error=str(e), step="error")
+            return self._json(500, {"error": str(e)})
 
     def _handle_get_page(self, qs: dict) -> None:
         rel = (qs.get("path") or [""])[0]
