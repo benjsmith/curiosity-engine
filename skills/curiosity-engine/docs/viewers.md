@@ -59,6 +59,16 @@ Each workspace's bundle goes into
 rebuilds it after every inline edit, so refresh and the change is
 visible.
 
+
+## Embed / reverse-proxy (Switchbay, okbay)
+
+For same-origin shell embeds, run the viewer server with
+`CE_PUBLIC_BASE=/embed/ce` (and typically port **8766**). The server strips
+that prefix and injects `window.CE_PUBLIC_BASE` / `ceApi()` into HTML.
+Optional hosted signal: `X-CE-Host: switchbay|okbay` or `?host=`. See
+[`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md).
+Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
+
 ## Obsidian (alternative — same underlying markdown)
 
 `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian →
