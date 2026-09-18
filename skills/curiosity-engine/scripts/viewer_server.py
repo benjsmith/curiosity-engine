@@ -11,8 +11,18 @@ Endpoints
     GET  /                              static file (anything in the bundle)
     GET  /api/page?path=<path>          raw markdown of a wiki page
     GET  /api/vault/<name>              vault/*.extracted.md basenames only
+    GET  /api/hosted                    hosted-mode stub (host=switchbay|okbay)
     POST /api/page                      JSON {path, content} → overwrite file
     POST /api/upload-vault              multipart form → save to vault/raw/
+
+Proxy / embed (Phase 2a)
+────────────────────────
+    Optional ``CE_PUBLIC_BASE`` (e.g. ``/embed/ce``) strips that prefix from
+    request paths and injects ``window.CE_PUBLIC_BASE`` / ``ceApi()`` into
+    HTML so absolute ``/api/*`` fetches stay same-origin under a reverse
+    proxy. Hosted shell: header ``X-CE-Host`` or ``?host=switchbay|okbay``.
+    Always binds ``127.0.0.1`` (loopback). Bare ``viewer.sh`` default port
+    remains 8090; embed hosts commonly use **8766**.
 
 Writes are constrained:
     * /api/page only accepts paths that start with `notes/` or `todos/`
@@ -48,6 +58,8 @@ import urllib.parse
 from email.parser import BytesParser
 from email.policy import default as default_email_policy
 from pathlib import Path
+
+import public_base
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -108,22 +120,73 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(BUNDLE_DIR), **kwargs)
 
+    def _rewrite_path(self) -> urllib.parse.ParseResult:
+        """Strip CE_PUBLIC_BASE so routing + static map to the bundle root."""
+        url = urllib.parse.urlparse(self.path)
+        stripped = public_base.strip_public_base(url.path)
+        if stripped != url.path:
+            self.path = urllib.parse.urlunparse(
+                (url.scheme, url.netloc, stripped, url.params, url.query, url.fragment)
+            )
+            url = urllib.parse.urlparse(self.path)
+        return url
+
+    def _hosted(self, url: urllib.parse.ParseResult) -> str | None:
+        return public_base.hosted_shell_from_request(
+            self.headers, urllib.parse.parse_qs(url.query)
+        )
+
     # ── routing ────────────────────────────────────────────────────
     def do_GET(self):
-        url = urllib.parse.urlparse(self.path)
+        url = self._rewrite_path()
         if url.path == "/api/page":
             return self._handle_get_page(urllib.parse.parse_qs(url.query))
         if url.path.startswith("/api/vault/"):
             return self._handle_get_vault(url.path[len("/api/vault/"):])
+        if url.path == "/api/hosted":
+            return self._json(200, public_base.hosted_settings_policy(self._hosted(url)))
+        # Inject embed bootstrap into HTML so /api fetches honor CE_PUBLIC_BASE.
+        if self._looks_like_html(url.path):
+            return self._serve_html_with_bootstrap(url)
         return super().do_GET()
 
     def do_POST(self):
-        url = urllib.parse.urlparse(self.path)
+        url = self._rewrite_path()
         if url.path == "/api/page":
             return self._handle_post_page()
         if url.path == "/api/upload-vault":
             return self._handle_upload()
         return self._json(404, {"error": "not found"})
+
+    def _looks_like_html(self, path: str) -> bool:
+        p = path.rstrip("/") or "/"
+        if p == "/" or p.endswith(".html") or p.endswith(".htm"):
+            return True
+        return False
+
+    def _serve_html_with_bootstrap(self, url: urllib.parse.ParseResult) -> None:
+        # Resolve like SimpleHTTPRequestHandler: "" / "/" → index.html
+        rel = url.path.lstrip("/")
+        if not rel or rel.endswith("/"):
+            candidate = BUNDLE_DIR / rel / "index.html"
+        else:
+            candidate = BUNDLE_DIR / rel
+            if candidate.is_dir():
+                candidate = candidate / "index.html"
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to(BUNDLE_DIR.resolve())
+        except Exception:
+            return self.send_error(404, "File not found")
+        if not candidate.is_file():
+            return self.send_error(404, "File not found")
+        raw = candidate.read_bytes()
+        body = public_base.inject_viewer_bootstrap(raw, hosted=self._hosted(url))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     # ── helpers ────────────────────────────────────────────────────
     def _json(self, status: int, payload: dict) -> None:
@@ -289,9 +352,15 @@ def main() -> None:
         print(f"wiki dir missing: {WIKI_DIR}", file=sys.stderr)
         sys.exit(1)
 
+    base = public_base.public_base()
     sys.stderr.write(
         f"viewer-server: serving {BUNDLE_DIR} on http://127.0.0.1:{port}\n"
     )
+    if base:
+        sys.stderr.write(
+            f"viewer-server: CE_PUBLIC_BASE={base} "
+            f"(public URLs under http://127.0.0.1:{port}{base}/)\n"
+        )
     sys.stderr.write(
         f"viewer-server: edits go to {WIKI_DIR}, uploads to {VAULT_RAW_DIR}\n"
     )
