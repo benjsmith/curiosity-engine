@@ -18,6 +18,7 @@
 
   Theme.init();
   Sidebar.init(data);
+  if (window.SplitPanel) SplitPanel.init();
   if (window.FileBrowser) FileBrowser.init(data);
   Subgraph.init(data);
   Modal.init(data);
