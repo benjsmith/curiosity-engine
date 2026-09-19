@@ -113,8 +113,8 @@ Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
   (`/api/packs/*`); agent/LLM skill execution still Switchbay
 - **Phase 2b+++++:** workspace registry persistence (`/api/workspaces`) + optional
   curiosity-merge `subgraph_export` hook (`POST /api/cm-export`, dry-run)
-- **Phase 2b++++++:** Classic rubber-band / Shift-click split targeting in wiki-view;
-  Atlas canvas rubber-band / heal / tab-open chrome still Switchbay
+- **Phase 2b++++++ / +++++++:** Classic + Atlas canvas rubber-band split targeting;
+  Atlas replay camera bind (`fitToContent`); heal / tab-open chrome still Switchbay
   Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
 
 Bare `viewer.sh` loopback default remains port **8090**; bind host is always

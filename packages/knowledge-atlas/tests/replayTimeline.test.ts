@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { playReplayTimeline, type ReplayEvent } from "../src/animation/replayTimeline.ts";
 
 describe("playReplayTimeline", () => {

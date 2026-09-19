@@ -125,7 +125,7 @@ Deep-link: `?filebrowser=1` opens Files mode.
 | `GET /api/curation/history` | ≈ synthetic from `data.json` (`created`/type-tier order); prefers `.workbench/curation-history.json` when present |
 | Git-log chronology rebuild | ❌ deferred (use Switchbay/workbench cache if present) |
 | Opening autoplay | ✅ `?replay=1` / `?replay=auto` short intro autoplay; button opens paused |
-| Atlas canvas binding | ❌ deferred (SVG host only — remaining gap) |
+| Atlas canvas binding | ✅ `CurationReplay.bindViewer(CEViewer)` + `fitToContent` after fade; pure `computeAtlasCameraFit` |
 | Fade crossfade onto live graph | ✅ settle → overlay fade-out after autoplay intro |
 | Top-label degree ranking + zoom autofit | ✅ top-30 labels; easeAutoFit on ticks & major scrub jumps |
 
@@ -166,9 +166,20 @@ Pure helpers: `packages/knowledge-atlas/src/animation/replayCamera.ts` (`compute
 | `template/wiki-view/static/graph.js` | `splitEnter` / `splitExit`; Ctrl/⌘-drag rubber-band; Shift-click add; click toggle; Alt/right-click flip move↔copy |
 | `template/wiki-view/static/split.js` | Syncs panel ↔ graph selection; `POST /api/split` via `ceApi`; listens `ce:split-proposal` + `sy:split-proposal` |
 | `packages/knowledge-atlas/src/partition/rubberBand.ts` | Pure `idsInRubberBand` / policy defaults (unit-tested) |
-| Atlas facade | `splitEnter`/`splitExit` seed engine multi-select (no marquee on canvas yet) |
+| Atlas facade | `splitEnter`/`splitExit` + Ctrl/⌘ canvas rubber-band; `fitToContent` for replay bind |
 
 Smoke: open wiki-view with `CE_PUBLIC_BASE=/embed/ce`, `?split=1`, Ctrl-drag over nodes, name workspace, Split.
+
+#### Phase 2b+++++++ landed (CE) — Atlas canvas bind + rubber-band
+
+| Artifact | Role |
+|----------|------|
+| `packages/knowledge-atlas` `replayCamera` | `computeAtlasCameraFit` / `blendAtlasCamera` (centre-origin) |
+| `packages/knowledge-atlas` `rubberBand` | `clientToScenePoint` / `clientRubberToScene` for Atlas boxQuery |
+| `MountHandle` / IIFE | `getCamera` / `setCamera` / `fitToBounds` / `fitToContent` |
+| `template/wiki-view/static/atlas.js` | Ctrl/⌘-drag rubber-band → `hitTester.boxQuery` → split selection |
+| `template/wiki-view/static/replay.js` | `bindViewer(CEViewer)`; `fitAtlasHost` after overlay fade |
+| Tests | extended `rubberBand.test.ts` + `replayCamera.test.ts` |
 
 **Parity vs Switchbay (split):**
 
@@ -184,7 +195,7 @@ Smoke: open wiki-view with `CE_PUBLIC_BASE=/embed/ce`, `?split=1`, Ctrl-drag ove
 | Atlas multi-select policy helpers | ✅ |
 | Workspace registry persistence | ✅ CE (`workspace_registry` + `GET/POST/DELETE /api/workspaces`; auto-register on split) |
 | Tab open / chrome after split | ❌ shell (Switchbay) |
-| Rubber-band / `sy:split-proposal` UI | ✅ CE Classic (`graph.js` + `split.js`; `ce:`/`sy:split-proposal`); Atlas: selection sync only (no canvas rubber-band yet) |
+| Rubber-band / `sy:split-proposal` UI | ✅ CE Classic + **Atlas canvas** Ctrl/⌘-drag (`atlas.js` + `hitTester.boxQuery`); `ce:`/`sy:split-proposal` |
 | CM `subgraph_export` hook (license modes) | ✅ CE (`cm_export` + `POST /api/cm-export`, dry-run supported; optional CM install) |
 | Workspace-root figures / `.workbench` sketches | ❌ deferred |
 | Async curator link-heal agents | ❌ deferred (shell) |
@@ -203,5 +214,5 @@ Smoke: open wiki-view with `CE_PUBLIC_BASE=/embed/ce`, `?split=1`, Ctrl-drag ove
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
 2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
 3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
-4. **2b++ / 2b+++ / 2b++++ / 2b+++++ / 2b++++++ (partial):** FS mutate + pack list/dispatch/install + SVG replay UI + workspace registry + CM export + **Classic rubber-band split UI** landed; Atlas canvas rubber-band / heal agents / git-history rebuild / reveal-in-OS / drop-ingest / tab-open chrome still deferred
+4. **2b++ / 2b+++ / 2b++++ / 2b+++++ / 2b++++++ :** FS mutate + packs + SVG replay + registry + CM export + Classic **and Atlas** rubber-band + Atlas replay camera bind landed; heal agents / git-history rebuild / reveal-in-OS / drop-ingest / tab-open chrome still deferred
 5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes

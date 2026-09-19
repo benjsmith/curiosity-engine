@@ -358,16 +358,30 @@
       },
     });
     var controls = initAtlasControls(handle);
-    /* Split targeting (Atlas): no canvas rubber-band yet (Switchbay parity).
-     * splitEnter seeds engine multi-select; hosts still use Classic for
-     * Ctrl/⌘ rubber-band. Shift/add via panel + selection sync. */
+    /* Split targeting (Atlas): Ctrl/⌘-drag rubber-band (Classic parity) +
+     * engine multi-select sync. Scene-space boxQuery via hitTester. */
     var splitActive = false;
     var splitPolicies = new Map();
     var splitOnChange = null;
     var splitUnsub = null;
+    var rubberCleanup = null;
 
     function defaultSplitPolicy(type) {
+      if (window.KnowledgeAtlas && typeof KnowledgeAtlas.defaultPartitionPolicyForType === 'function') {
+        return KnowledgeAtlas.defaultPartitionPolicyForType(type);
+      }
       return (type === 'entity' || type === 'concept') ? 'copy' : 'move';
+    }
+
+    function pageTypeOf(id) {
+      var page = data.pages && data.pages[id];
+      var typ = page && (page.type || page.page_type);
+      if (!typ && data.nodes) {
+        for (var i = 0; i < data.nodes.length; i++) {
+          if (data.nodes[i].id === id) { typ = data.nodes[i].type; break; }
+        }
+      }
+      return typ;
     }
 
     function notifyAtlasSplit() {
@@ -379,6 +393,108 @@
       } catch (e) {}
     }
 
+    function syncEngineSelection() {
+      if (handle.engine && handle.engine.select) {
+        handle.engine.select(Array.from(splitPolicies.keys()), 'replace');
+      }
+      if (controls && controls.repaint) controls.repaint();
+    }
+
+    function addIdsToSplit(ids) {
+      var added = false;
+      (ids || []).forEach(function (id) {
+        if (!id || splitPolicies.has(id)) return;
+        splitPolicies.set(id, defaultSplitPolicy(pageTypeOf(id)));
+        added = true;
+      });
+      if (added) {
+        syncEngineSelection();
+        notifyAtlasSplit();
+      }
+    }
+
+    function isRubberClickRect(x0, y0, x1, y1) {
+      if (window.KnowledgeAtlas && typeof KnowledgeAtlas.isRubberClick === 'function') {
+        return KnowledgeAtlas.isRubberClick({ x0: x0, y0: y0, x1: x1, y1: y1 });
+      }
+      return Math.abs(x1 - x0) < 4 && Math.abs(y1 - y0) < 4;
+    }
+
+    function clientToScene(canvas, clientX, clientY) {
+      var rect = canvas.getBoundingClientRect();
+      if (window.KnowledgeAtlas && typeof KnowledgeAtlas.clientToScenePoint === 'function') {
+        return KnowledgeAtlas.clientToScenePoint(clientX, clientY, rect);
+      }
+      return {
+        x: clientX - rect.left - rect.width / 2,
+        y: clientY - rect.top - rect.height / 2,
+      };
+    }
+
+    function installAtlasRubberBand() {
+      if (rubberCleanup) { try { rubberCleanup(); } catch (e) {} rubberCleanup = null; }
+      var host = container;
+      var rubberEl = null;
+
+      function mainCanvas() {
+        return host.querySelector('canvas:not(.atlas-minimap)');
+      }
+
+      function onDown(ev) {
+        if (!splitActive) return;
+        if (!(ev.ctrlKey || ev.metaKey)) return;
+        if (ev.button != null && ev.button !== 0) return;
+        var t = ev.target;
+        if (t && t.closest && t.closest('.atlas-minimap')) return;
+        var canvas = mainCanvas();
+        if (!canvas) return;
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        var x0 = ev.clientX, y0 = ev.clientY;
+        rubberEl = document.createElement('div');
+        rubberEl.className = 'split-rubber atlas-split-rubber';
+        rubberEl.style.left = x0 + 'px';
+        rubberEl.style.top = y0 + 'px';
+        rubberEl.style.width = '0px';
+        rubberEl.style.height = '0px';
+        document.body.appendChild(rubberEl);
+
+        function onMove(e2) {
+          var xa = Math.min(x0, e2.clientX), ya = Math.min(y0, e2.clientY);
+          rubberEl.style.left = xa + 'px';
+          rubberEl.style.top = ya + 'px';
+          rubberEl.style.width = Math.abs(e2.clientX - x0) + 'px';
+          rubberEl.style.height = Math.abs(e2.clientY - y0) + 'px';
+        }
+        function onUp(e2) {
+          window.removeEventListener('pointermove', onMove, true);
+          window.removeEventListener('pointerup', onUp, true);
+          window.removeEventListener('pointercancel', onUp, true);
+          if (rubberEl && rubberEl.parentNode) rubberEl.parentNode.removeChild(rubberEl);
+          rubberEl = null;
+          var x1 = e2.clientX, y1 = e2.clientY;
+          if (isRubberClickRect(x0, y0, x1, y1)) return;
+          var canvas2 = mainCanvas();
+          if (!canvas2 || !handle.engine || !handle.engine.hitTester) return;
+          var a = clientToScene(canvas2, x0, y0);
+          var b = clientToScene(canvas2, x1, y1);
+          var hits = handle.engine.hitTester.boxQuery(a.x, a.y, b.x, b.y) || [];
+          var ids = hits.map(function (h) { return h && h.id; }).filter(Boolean);
+          addIdsToSplit(ids);
+        }
+        window.addEventListener('pointermove', onMove, true);
+        window.addEventListener('pointerup', onUp, true);
+        window.addEventListener('pointercancel', onUp, true);
+      }
+
+      host.addEventListener('pointerdown', onDown, true);
+      rubberCleanup = function () {
+        host.removeEventListener('pointerdown', onDown, true);
+        if (rubberEl && rubberEl.parentNode) rubberEl.parentNode.removeChild(rubberEl);
+        rubberEl = null;
+      };
+    }
+
     function atlasSplitEnter(seed, onChange) {
       splitActive = true;
       splitPolicies = new Map();
@@ -387,15 +503,7 @@
         if (!id) return;
         var policy = (typeof s === 'object' && s.policy === 'copy') ? 'copy' : 'move';
         if (typeof s !== 'object' || !s.policy) {
-          // Prefer type from graph data when available
-          var page = data.pages && data.pages[id];
-          var typ = page && (page.type || page.page_type);
-          if (!typ && data.nodes) {
-            for (var i = 0; i < data.nodes.length; i++) {
-              if (data.nodes[i].id === id) { typ = data.nodes[i].type; break; }
-            }
-          }
-          policy = defaultSplitPolicy(typ);
+          policy = defaultSplitPolicy(pageTypeOf(id));
         }
         splitPolicies.set(id, policy);
       });
@@ -406,18 +514,14 @@
           if (!splitActive || !ev || ev.kind !== 'selection-changed') return;
           (ev.ids || []).forEach(function (id) {
             if (!splitPolicies.has(id)) {
-              var page = data.pages && data.pages[id];
-              var typ = page && (page.type || page.page_type);
-              splitPolicies.set(id, defaultSplitPolicy(typ));
+              splitPolicies.set(id, defaultSplitPolicy(pageTypeOf(id)));
             }
           });
           notifyAtlasSplit();
         });
       }
-      if (handle.engine && handle.engine.select) {
-        handle.engine.select(Array.from(splitPolicies.keys()), 'replace');
-      }
-      if (controls && controls.repaint) controls.repaint();
+      installAtlasRubberBand();
+      syncEngineSelection();
       notifyAtlasSplit();
     }
 
@@ -426,6 +530,7 @@
       splitPolicies = new Map();
       splitOnChange = null;
       if (splitUnsub) { try { splitUnsub(); } catch (e) {} splitUnsub = null; }
+      if (rubberCleanup) { try { rubberCleanup(); } catch (e) {} rubberCleanup = null; }
       if (handle.engine && handle.engine.select) handle.engine.select([], 'replace');
       if (controls && controls.repaint) controls.repaint();
     }
@@ -460,6 +565,19 @@
       cycleLabelMode: controls.cycleMode,
       setEdgeMode: controls.setEdgeMode,
       cycleEdgeMode: controls.cycleEdgeMode,
+      /* Curation-replay camera bind (Atlas canvas). */
+      getCamera: function () {
+        return handle.getCamera ? handle.getCamera() : null;
+      },
+      setCamera: function (next) {
+        if (handle.setCamera) handle.setCamera(next);
+      },
+      fitToBounds: function (bounds, opts) {
+        if (handle.fitToBounds) handle.fitToBounds(bounds, opts);
+      },
+      fitToContent: function (opts) {
+        if (handle.fitToContent) handle.fitToContent(opts);
+      },
       destroy: function () {
         atlasSplitExit();
         handle.destroy();

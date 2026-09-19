@@ -80,7 +80,7 @@ SVG overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
 `data.json` with `created`/type-tier ordering, or `.workbench/curation-history.json`
 when a shell pre-warmed it). Play / pause / scrub / step; `?replay=1` opens
 and autoplays a short intro (settle + fade). Enter fade, radius inflate,
-easeAutoFit after major jumps. Atlas canvas binding and git-log rebuild remain
+easeAutoFit after major jumps. Atlas canvas camera bind landed (`bindViewer` + `fitToContent`); git-log rebuild remain
 deferred — see [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
 
 ## Obsidian (alternative — same underlying markdown)

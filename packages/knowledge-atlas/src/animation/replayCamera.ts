@@ -143,3 +143,52 @@ export function compareSyntheticNodes(
   if (da !== db) return da - db;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
+
+/** Atlas mount camera (centre-origin): screen = world * scale + {x,y}. */
+export type AtlasCamera = { x: number; y: number; scale: number };
+
+/**
+ * Fit an Atlas camera so `bounds` (layout / world space) centres in the
+ * viewport. Same padding / maxScale contract as computeFitTransform, but
+ * returns centre-origin pan (camera.x = -cx * scale).
+ */
+export function computeAtlasCameraFit(
+  bounds: FitBounds,
+  opts: FitViewOpts,
+): AtlasCamera {
+  const viewW = opts.viewW;
+  const viewH = opts.viewH;
+  const minCloud = opts.minCloud ?? DEFAULT_MIN_CLOUD;
+  const maxScale = opts.maxScale ?? DEFAULT_MAX_SCALE;
+  const padRatio = opts.padRatio ?? DEFAULT_PAD_RATIO;
+  const minPad = opts.minPad ?? DEFAULT_MIN_PAD;
+
+  const { minX, minY, maxX, maxY } = bounds;
+  const spanX = Math.max(0, maxX - minX);
+  const spanY = Math.max(0, maxY - minY);
+  const pad = Math.max(minPad, Math.min(spanX, spanY) * padRatio);
+  const cloudW = Math.max(minCloud, spanX + pad * 2);
+  const cloudH = Math.max(minCloud, spanY + pad * 2);
+  const scale = Math.min(viewW / cloudW, viewH / cloudH, maxScale);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return {
+    x: -cx * scale,
+    y: -cy * scale,
+    scale,
+  };
+}
+
+/** Exponential blend for Atlas cameras (same k as blendZoom). */
+export function blendAtlasCamera(
+  current: AtlasCamera,
+  target: AtlasCamera,
+  k = 0.08,
+): AtlasCamera {
+  const t = Math.max(0, Math.min(1, k));
+  return {
+    x: current.x + (target.x - current.x) * t,
+    y: current.y + (target.y - current.y) * t,
+    scale: current.scale + (target.scale - current.scale) * t,
+  };
+}
