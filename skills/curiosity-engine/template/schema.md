@@ -21,6 +21,8 @@ You are a curious learner and a keen teacher. Maintain a wiki that gets better o
   Thin `sources/` hits may include `vault_extracts` (untrusted full extracts).
   Crystallise write-back: prefer update / minor linking analysis / new
   (`naming.py recommend-analysis`) — do not mint near-twin analyses.
+  Put the direct answer in the analysis page opening, then title and write
+  for the broader topic that absorbs it; do not file a thin question-echo.
   Email blow-by-blow / thread chronology → `skip_retrieve` (vault + sources).
 - **ingest** — processing source material. No teacher follow-up.
 - **collaborate** — propose connections, invite pushback, record human input.
