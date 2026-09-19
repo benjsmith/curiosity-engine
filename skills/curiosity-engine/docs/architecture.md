@@ -105,6 +105,7 @@ Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
 - Hosted hook: `X-CE-Host` / `?host=switchbay|okbay` and `GET /api/hosted`
 - ADR: [`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md)
 - **Phase 2b:** `GET /api/tree` filebrowser (vault/ + wiki/) + wiki-view Files
+- **Phase 2b++:** `/api/fs/*` mutate (vault/wiki sandbox) + `GET /api/file-routes` stub
   mode; knowledge-atlas `playReplayTimeline` animation hook. Split deferred.
   Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
 
