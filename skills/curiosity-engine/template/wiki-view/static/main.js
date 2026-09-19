@@ -71,6 +71,11 @@
   /* Active viewer facade for SplitPanel rubber-band / splitEnter
    * (Classic Graph or AtlasViewer). Embed v2 mounts the same wiki-view. */
   window.CEViewer = graphApi;
+  /* Bind curation replay camera-fit to Atlas (or Classic) after mount so
+   * ?replay=1 polish lands on the live canvas when the SVG overlay fades. */
+  if (window.CurationReplay && typeof CurationReplay.bindViewer === 'function') {
+    try { CurationReplay.bindViewer(graphApi); } catch (e) { /* ignore */ }
+  }
   if (window.SplitPanel && document.body.dataset.split === '1' && SplitPanel.open) {
     try { SplitPanel.open(); } catch (e) { /* ignore */ }
   }

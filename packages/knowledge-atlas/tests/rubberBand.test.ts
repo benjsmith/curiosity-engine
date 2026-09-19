@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  clientRubberToScene,
+  clientToScenePoint,
   defaultPartitionPolicyForType,
   idsInRubberBand,
   isRubberClick,
@@ -42,5 +44,22 @@ describe("rubberBand", () => {
     expect(defaultPartitionPolicyForType("concept")).toBe("copy");
     expect(defaultPartitionPolicyForType("note")).toBe("move");
     expect(defaultPartitionPolicyForType(undefined)).toBe("move");
+  });
+});
+
+describe("clientToScenePoint / clientRubberToScene", () => {
+  const rect = { left: 100, top: 50, width: 400, height: 300 };
+
+  it("maps client coords to centre-origin scene space", () => {
+    expect(clientToScenePoint(300, 200, rect)).toEqual({ x: 0, y: 0 });
+    expect(clientToScenePoint(100, 50, rect)).toEqual({ x: -200, y: -150 });
+  });
+
+  it("maps a client rubber rect into scene space", () => {
+    const scene = clientRubberToScene(
+      { x0: 100, y0: 50, x1: 300, y1: 200 },
+      rect,
+    );
+    expect(scene).toEqual({ x0: -200, y0: -150, x1: 0, y1: 0 });
   });
 });

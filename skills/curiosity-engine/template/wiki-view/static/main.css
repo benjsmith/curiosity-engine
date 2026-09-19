@@ -1326,6 +1326,17 @@ svg.split-mode .node:not(.split-move):not(.split-copy) { opacity: 0.45; }
   stroke-dasharray: 5 3;
   pointer-events: none;
 }
+/* Atlas canvas rubber-band (fixed overlay in client coords). */
+div.split-rubber.atlas-split-rubber {
+  position: fixed;
+  z-index: 40;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  background: rgba(210, 153, 34, 0.08);
+  border: 1px dashed #d29922;
+  pointer-events: none;
+}
 
 
 /* ── Curation replay overlay (Phase 2b+++ polish) ─────────────────── */

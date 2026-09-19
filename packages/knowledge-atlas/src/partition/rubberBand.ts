@@ -82,3 +82,36 @@ export function defaultPartitionPolicyForType(
   const t = (type || "").toLowerCase();
   return t === "entity" || t === "concept" ? "copy" : "move";
 }
+
+/** Canvas client rect (DOM getBoundingClientRect shape). */
+export type CanvasClientRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+/**
+ * Map a client (viewport) point into Atlas scene space — origin at the
+ * canvas centre, matching hitTester / iife `toScene`.
+ */
+export function clientToScenePoint(
+  clientX: number,
+  clientY: number,
+  canvasRect: CanvasClientRect,
+): { x: number; y: number } {
+  return {
+    x: clientX - canvasRect.left - canvasRect.width / 2,
+    y: clientY - canvasRect.top - canvasRect.height / 2,
+  };
+}
+
+/** Map a client-space rubber rect into scene space for `boxQuery`. */
+export function clientRubberToScene(
+  rect: RubberRect,
+  canvasRect: CanvasClientRect,
+): RubberRect {
+  const a = clientToScenePoint(rect.x0, rect.y0, canvasRect);
+  const b = clientToScenePoint(rect.x1, rect.y1, canvasRect);
+  return { x0: a.x, y0: a.y, x1: b.x, y1: b.y };
+}

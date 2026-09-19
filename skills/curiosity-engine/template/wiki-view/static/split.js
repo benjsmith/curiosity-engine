@@ -34,7 +34,7 @@ window.SplitPanel = (function () {
     if (!els.list) return;
     if (!selection.length) {
       els.list.innerHTML =
-        '<div class="split-empty">Select on the graph: Ctrl/⌘-drag rubber-band, ' +
+        '<div class="split-empty">Select on the graph (Classic or Atlas): Ctrl/⌘-drag rubber-band, ' +
         "Shift-click to add, click to toggle. Or Add current.</div>";
     } else {
       els.list.innerHTML = selection.map(function (e, i) {

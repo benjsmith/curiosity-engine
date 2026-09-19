@@ -242,6 +242,8 @@ window.CurationReplay = (function () {
     settleTimer: null,
     fadeTimer: null,
     autoplay: false,
+    /** Live Atlas/Classic facade (window.CEViewer) for camera bind. */
+    atlasHost: null,
   };
 
   function setCounts(n, e) {
@@ -299,8 +301,8 @@ window.CurationReplay = (function () {
     state.tickCount = 0;
   }
 
-  function easeAutoFit() {
-    if (state.userInteracted || !state.nodes.length || !state.zoom || !state.svg) return;
+  function nodeBounds() {
+    if (!state.nodes.length) return null;
     var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (var i = 0; i < state.nodes.length; i++) {
       var n = state.nodes[i];
@@ -311,22 +313,45 @@ window.CurationReplay = (function () {
       if (x > maxX) maxX = x;
       if (y > maxY) maxY = y;
     }
-    if (!isFinite(minX)) return;
-    var pad = Math.max(40, Math.min(maxX - minX, maxY - minY) * 0.12);
-    var cloudW = Math.max(220, maxX - minX + pad * 2);
-    var cloudH = Math.max(220, maxY - minY + pad * 2);
-    var scale = Math.min(W / cloudW, H / cloudH, 1.5);
-    var cx = (minX + maxX) / 2;
-    var cy = (minY + maxY) / 2;
-    var tx = W / 2 - cx * scale;
-    var ty = H / 2 - cy * scale;
-    var target = d3.zoomIdentity.translate(tx, ty).scale(scale);
+    if (!isFinite(minX)) return null;
+    return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+  }
+
+  function easeAutoFit() {
+    if (state.userInteracted || !state.nodes.length || !state.zoom || !state.svg) return;
+    var bounds = nodeBounds();
+    if (!bounds) return;
+    var target;
+    var KA = window.KnowledgeAtlas;
+    if (KA && typeof KA.computeFitTransform === "function") {
+      var t = KA.computeFitTransform(bounds, { viewW: W, viewH: H });
+      target = d3.zoomIdentity.translate(t.x, t.y).scale(t.k);
+    } else {
+      var pad = Math.max(40, Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.12);
+      var cloudW = Math.max(220, bounds.maxX - bounds.minX + pad * 2);
+      var cloudH = Math.max(220, bounds.maxY - bounds.minY + pad * 2);
+      var scale = Math.min(W / cloudW, H / cloudH, 1.5);
+      var cx = (bounds.minX + bounds.maxX) / 2;
+      var cy = (bounds.minY + bounds.maxY) / 2;
+      target = d3.zoomIdentity
+        .translate(W / 2 - cx * scale, H / 2 - cy * scale)
+        .scale(scale);
+    }
     var current = d3.zoomTransform(state.svg);
     var k = 0.08;
     var blended = d3.zoomIdentity
       .translate(current.x + (target.x - current.x) * k, current.y + (target.y - current.y) * k)
       .scale(current.k + (target.k - current.k) * k);
     d3.select(state.svg).call(state.zoom.transform, blended);
+  }
+
+  /** Apply camera fit to the live Atlas canvas (under / after the SVG overlay). */
+  function fitAtlasHost() {
+    var host = state.atlasHost || window.CEViewer || null;
+    if (!host || typeof host.fitToContent !== "function") return;
+    try {
+      host.fitToContent({ maxScale: 1.5 });
+    } catch (e) { /* ignore */ }
   }
 
   function inflateRadii() {
@@ -632,6 +657,8 @@ window.CurationReplay = (function () {
     state.autoplay = false;
     document.body.dataset.replay = "0";
     if (state.els.toggle) state.els.toggle.setAttribute("aria-pressed", "false");
+    // Reveal live Atlas (or Classic) with a fitted camera after SVG host closes.
+    fitAtlasHost();
   }
 
   async function loadHistory() {
@@ -727,16 +754,38 @@ window.CurationReplay = (function () {
       var params = new URLSearchParams(window.location.search);
       // ?replay=1 → open + short autoplay intro (Switchbay opening parity).
       // ?replay=manual → open paused at empty (chrome only).
+      // Deferred until bindViewer when Atlas mounts so camera fit can land.
       var rp = params.get("replay");
-      if (rp === "1" || rp === "auto") {
-        state.autoplay = true;
-        openOverlay();
-      } else if (rp === "manual") {
-        state.autoplay = false;
+      state._pendingReplay = rp === "1" || rp === "auto" || rp === "manual" ? rp : null;
+      if (state._pendingReplay && !state.atlasHost) {
+        // May open early (Classic); Atlas host rebinds via bindViewer.
+        state.autoplay = state._pendingReplay === "1" || state._pendingReplay === "auto";
         openOverlay();
       }
     } catch (e) {}
   }
 
-  return { init: init, open: openOverlay, close: closeOverlay };
+  /**
+   * Bind the live viewer facade (Atlas or Classic). Called from main.js
+   * after AtlasViewer/Graph.init so ?replay=1 camera fit targets Atlas.
+   */
+  function bindViewer(api) {
+    state.atlasHost = api || null;
+    if (!state._pendingReplay) return;
+    var rp = state._pendingReplay;
+    state._pendingReplay = null;
+    // If overlay already open from init, just keep it; else open now.
+    if (!state.overlay) {
+      state.autoplay = rp === "1" || rp === "auto";
+      openOverlay();
+    }
+  }
+
+  return {
+    init: init,
+    bindViewer: bindViewer,
+    open: openOverlay,
+    close: closeOverlay,
+    fitAtlasHost: fitAtlasHost,
+  };
 })();

@@ -13,6 +13,21 @@ import { coreRadius, isFullGraphScene, populatedShellBands } from "./core/layout
 import { viewScaleToFit } from "./core/scene/shells.ts";
 import { hybridLayout } from "./core/layout/hybrid.ts";
 import { clampCameraScale, projectCamera, responsiveNodeScale, wheelZoomFactor } from "./interaction/camera.ts";
+import {
+  boundsFromPositions,
+  computeAtlasCameraFit,
+  computeFitTransform,
+  type AtlasCamera,
+  type FitBounds,
+} from "./animation/replayCamera.ts";
+import {
+  clientRubberToScene,
+  clientToScenePoint,
+  defaultPartitionPolicyForType,
+  idsInRubberBand,
+  isRubberClick,
+  normalizeRubberRect,
+} from "./partition/rubberBand.ts";
 import { boundaryHoverDelay, projectedBoundaryDepth } from "./interaction/hover.ts";
 import { AggregateTooltip, LONG_PRESS_MS } from "./interaction/tooltip.ts";
 import {
@@ -49,6 +64,13 @@ export type MountHandle = {
   setEdges: (mode: "auto" | "on" | "off") => void;
   /** Update the classic force controls and re-solve the central graph. */
   setPhysics: (physics: Partial<AtlasPhysics>) => void;
+  /** Live camera (centre-origin) for host rubber-band / replay fit. */
+  getCamera: () => AtlasCamera;
+  setCamera: (next: Partial<AtlasCamera>) => void;
+  /** Fit camera to layout-space bounds (curation-replay / host autofit). */
+  fitToBounds: (bounds: FitBounds, opts?: { maxScale?: number }) => void;
+  /** Fit camera to current layout positions (whole scene). */
+  fitToContent: (opts?: { maxScale?: number }) => void;
   destroy: () => void;
 };
 
@@ -643,6 +665,50 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
       }
       engine.setPhysics(physics);
     },
+    getCamera: () => ({ x: camera.x, y: camera.y, scale: camera.scale }),
+    setCamera: (next) => {
+      if (typeof next.x === "number") camera.x = next.x;
+      if (typeof next.y === "number") camera.y = next.y;
+      if (typeof next.scale === "number") {
+        userZoomed = true;
+        camera.scale = clampCameraScale(next.scale);
+        scheduleDensity();
+      }
+      draw(1);
+    },
+    fitToBounds: (bounds, fitOpts) => {
+      const fitted = computeAtlasCameraFit(bounds, {
+        viewW: viewport.width,
+        viewH: viewport.height,
+        maxScale: fitOpts?.maxScale,
+      });
+      userZoomed = true;
+      camera.x = fitted.x;
+      camera.y = fitted.y;
+      camera.scale = clampCameraScale(fitted.scale);
+      scheduleDensity();
+      draw(1);
+    },
+    fitToContent: (fitOpts) => {
+      const snap = engine.snapshot();
+      const layout = snap.layout;
+      if (!layout?.positions?.size) return;
+      const pts: { x: number; y: number }[] = [];
+      for (const p of layout.positions.values()) pts.push({ x: p.x, y: p.y });
+      const b = boundsFromPositions(pts);
+      if (!b) return;
+      const fitted = computeAtlasCameraFit(b, {
+        viewW: viewport.width,
+        viewH: viewport.height,
+        maxScale: fitOpts?.maxScale ?? 1.5,
+      });
+      userZoomed = true;
+      camera.x = fitted.x;
+      camera.y = fitted.y;
+      camera.scale = clampCameraScale(fitted.scale);
+      scheduleDensity();
+      draw(1);
+    },
     destroy: () => {
       destroyed = true;
       cancelAnimationFrame(raf);
@@ -663,3 +729,16 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     },
   };
 }
+
+/** Host-facing pure helpers (also on window.KnowledgeAtlas after IIFE build). */
+export {
+  clientToScenePoint,
+  clientRubberToScene,
+  normalizeRubberRect,
+  isRubberClick,
+  idsInRubberBand,
+  defaultPartitionPolicyForType,
+  computeAtlasCameraFit,
+  computeFitTransform,
+  boundsFromPositions,
+};

@@ -80,9 +80,12 @@ export {
   blendZoom,
   compareSyntheticNodes,
   typeTier,
+  computeAtlasCameraFit,
+  blendAtlasCamera,
   type FitBounds,
   type ZoomTransform,
   type FitViewOpts,
+  type AtlasCamera,
 } from "./animation/replayCamera.ts";
 
 export {
@@ -101,8 +104,11 @@ export {
   isRubberClick,
   idsInRubberBand,
   defaultPartitionPolicyForType,
+  clientToScenePoint,
+  clientRubberToScene,
   type RubberPoint,
   type RubberRect,
   type NormalizedRect,
+  type CanvasClientRect,
 } from "./partition/rubberBand.ts";
 

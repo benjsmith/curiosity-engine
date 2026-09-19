@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  blendAtlasCamera,
   blendZoom,
   boundsFromPositions,
   compareSyntheticNodes,
+  computeAtlasCameraFit,
   computeFitTransform,
   typeTier,
 } from "../src/animation/replayCamera.ts";
@@ -72,5 +74,27 @@ describe("compareSyntheticNodes / created ordering", () => {
     );
     const ids = hist.events.filter((e) => e.op === "node").map((e) => (e.op === "node" ? e.id : ""));
     expect(ids).toEqual(["a", "b"]);
+  });
+});
+
+describe("computeAtlasCameraFit / blendAtlasCamera", () => {
+  it("centres cloud at scene origin", () => {
+    const cam = computeAtlasCameraFit(
+      { minX: 0, minY: 0, maxX: 200, maxY: 100 },
+      { viewW: 1000, viewH: 600 },
+    );
+    expect(cam.scale).toBeGreaterThan(0);
+    // World centre (100, 50) → screen 0 after camera.
+    expect(100 * cam.scale + cam.x).toBeCloseTo(0, 5);
+    expect(50 * cam.scale + cam.y).toBeCloseTo(0, 5);
+  });
+
+  it("blends atlas cameras", () => {
+    const mid = blendAtlasCamera(
+      { x: 0, y: 0, scale: 1 },
+      { x: 100, y: 50, scale: 2 },
+      0.5,
+    );
+    expect(mid).toEqual({ x: 50, y: 25, scale: 1.5 });
   });
 });
