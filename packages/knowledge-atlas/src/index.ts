@@ -64,6 +64,17 @@ export {
 } from "./animation/replayTimeline.ts";
 
 export {
+  buildHistoryFromGraph,
+  sortReplayEvents,
+  snapshotAt,
+  indexAtTime,
+  type GraphNodeIn,
+  type GraphEdgeIn,
+  type BuildHistoryOptions,
+  type ReplaySnapshot,
+} from "./animation/historyFromGraph.ts";
+
+export {
   buildPartitionSelection,
   setPartitionPolicy,
   addToPartitionSelection,

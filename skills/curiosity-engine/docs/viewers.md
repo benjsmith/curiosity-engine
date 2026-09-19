@@ -75,6 +75,14 @@ calls `GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
 Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files
 mode. FS mutate via `/api/fs/*` (create/rename/move/delete/duplicate) and `GET /api/file-routes` discovery are CE-owned; pack *action* dispatch and reveal-in-OS remain Switchbay-side until later parity.
 
+**Curation replay (Phase 2b+++).** Graph-controls **replay ↻** opens an SVG
+overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
+`data.json`, or `.workbench/curation-history.json` if a shell pre-warmed it).
+Play / pause / scrub / step; `?replay=1` deep-link. Timing matches
+knowledge-atlas `playReplayTimeline`. Still short of Switchbay's opening
+autoplay + git chronology + fade/autfit polish — see
+[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
+
 ## Obsidian (alternative — same underlying markdown)
 
 `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian →
