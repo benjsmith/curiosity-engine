@@ -1253,6 +1253,8 @@ body[data-modal="open"] #sidebar * { pointer-events: auto; }
   cursor: pointer;
 }
 .fb-menu-item:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.fb-menu-item.fb-menu-danger { color: #e07070; }
+.fb-menu-item.fb-menu-danger:hover { background: color-mix(in srgb, #e07070 18%, transparent); }
 
 body[data-sidebar-mode="files"] .sidebar-search-wrap { display: none; }
 body[data-sidebar-mode="files"] #sidebar-list { display: none; }

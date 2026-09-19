@@ -1,3 +1,14 @@
+## 2026-09-19 — Phase 2b++ filebrowser FS mutate + pack routes stub
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- Sandboxed FS mutate APIs under `vault/` + `wiki/`: `POST /api/fs/{create,mkdir,rename,move,delete,duplicate}`, `GET /api/fs/stat`.
+- Pack `file_routes` discovery: `GET /api/file-routes` (read-only; install/dispatch stays shell-side).
+- Wiki-view Files context menu: New file/folder, Rename, Duplicate, Delete.
+- Tests: `tests/test_filebrowser_fs.py` (sandbox escape + embed-prefix API).
+
 ## 2026-09-16 — Wiki viewer mobile modal + sidebar
 
 **Migration:** none. **Breaking:** none.

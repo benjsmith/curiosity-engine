@@ -13,10 +13,18 @@ Endpoints
     GET  /api/vault/<name>              vault/*.extracted.md basenames only
     GET  /api/hosted                    hosted-mode stub (host=switchbay|okbay)
     GET  /api/tree                      vault/ + wiki/ relative paths (filebrowser)
+    GET  /api/file-routes               pack Manifest.file_routes (discovery stub)
+    GET  /api/fs/stat?path=             sandbox stat under vault/|wiki/
     GET  /api/split                     last partition status (workspace split spike)
     POST /api/page                      JSON {path, content} → overwrite file
     POST /api/upload-vault              multipart form → save to vault/raw/
     POST /api/split                     partition wiki pages into a new workspace
+    POST /api/fs/create                 {path, kind?, content?} create file/dir
+    POST /api/fs/mkdir                  {path} create empty directory
+    POST /api/fs/rename                 {path, to} rename within sandbox
+    POST /api/fs/move                   {path, to} move within sandbox
+    POST /api/fs/delete                 {path} trash (OS or .workbench/trash)
+    POST /api/fs/duplicate              {path} sibling copy (Switchbay parity)
 
 Proxy / embed (Phase 2a)
 ────────────────────────
@@ -33,6 +41,9 @@ Writes are constrained:
       stays inside `wiki/`.
     * /api/upload-vault sanitises the filename (strips directories,
       replaces non-alnum chars with `_`) before writing to vault/raw/.
+    * /api/fs/* mutates only under `vault/` + `wiki/` (see filebrowser_fs.py);
+      escapes, hidden components, and SKIP_DIRS are refused. Delete goes to
+      OS trash when available, else `.workbench/trash/`.
 
 After any successful write the server invokes
 `wiki_render.py build <wiki_dir> --output-dir <bundle_dir>` so the
@@ -65,6 +76,8 @@ from pathlib import Path
 
 import public_base
 import filebrowser_tree
+import filebrowser_fs
+import filebrowser_packs
 import wiki_partition
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -154,6 +167,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(200, public_base.hosted_settings_policy(self._hosted(url)))
         if url.path == "/api/tree":
             return self._handle_get_tree()
+        if url.path == "/api/file-routes":
+            return self._handle_get_file_routes()
+        if url.path == "/api/fs/stat":
+            return self._handle_fs_stat(urllib.parse.parse_qs(url.query))
         if url.path == "/api/split":
             return self._handle_get_split()
         # Inject embed bootstrap into HTML so /api fetches honor CE_PUBLIC_BASE.
@@ -169,6 +186,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_upload()
         if url.path == "/api/split":
             return self._handle_post_split()
+        if url.path == "/api/fs/create":
+            return self._handle_fs_create()
+        if url.path == "/api/fs/mkdir":
+            return self._handle_fs_mkdir()
+        if url.path == "/api/fs/rename":
+            return self._handle_fs_rename()
+        if url.path == "/api/fs/move":
+            return self._handle_fs_move()
+        if url.path == "/api/fs/delete":
+            return self._handle_fs_delete()
+        if url.path == "/api/fs/duplicate":
+            return self._handle_fs_duplicate()
         return self._json(404, {"error": "not found"})
 
     def _looks_like_html(self, path: str) -> bool:
@@ -251,6 +280,106 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if WORKSPACE_DIR is None:
             return self._json(500, {"error": "workspace unset"})
         return self._json(200, filebrowser_tree.tree_payload(WORKSPACE_DIR))
+
+    def _handle_get_file_routes(self) -> None:
+        """Pack file_routes discovery stub (Phase 2b++)."""
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        return self._json(200, filebrowser_packs.file_routes_payload(WORKSPACE_DIR))
+
+    def _fs_workspace(self):
+        if WORKSPACE_DIR is None:
+            self._json(500, {"error": "workspace unset"})
+            return None
+        return WORKSPACE_DIR
+
+    def _handle_fs_stat(self, qs: dict) -> None:
+        ws = self._fs_workspace()
+        if ws is None:
+            return
+        rel = (qs.get("path") or [""])[0]
+        try:
+            return self._json(200, filebrowser_fs.stat(ws, rel))
+        except filebrowser_fs.FileOpError as e:
+            return self._json(400, {"error": str(e)})
+
+    def _fs_mutate_result(self, op: str, fn) -> None:
+        """Run a filebrowser_fs mutation; rebuild viewer if wiki/ changed."""
+        ws = self._fs_workspace()
+        if ws is None:
+            return
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        try:
+            result = fn(ws, body)
+        except filebrowser_fs.FileOpError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(500, {"error": str(e)})
+        # Rebuild when wiki content may have changed.
+        touched = []
+        if isinstance(result, dict):
+            for key in ("path", "trashed_from"):
+                v = result.get(key)
+                if isinstance(v, str):
+                    touched.append(v)
+            src = body.get("path")
+            if isinstance(src, str):
+                touched.append(src)
+        if any(t.replace("\\", "/").startswith("wiki/") for t in touched):
+            self._rebuild()
+        payload = {"ok": True, **result} if isinstance(result, dict) else {"ok": True}
+        return self._json(200, payload)
+
+    def _handle_fs_create(self) -> None:
+        def _op(ws, body):
+            rel = str(body.get("path") or "")
+            kind = str(body.get("kind") or "file")
+            content = body.get("content", "")
+            if content is None:
+                content = ""
+            if not isinstance(content, str):
+                raise filebrowser_fs.FileOpError("content must be a string")
+            path = filebrowser_fs.create(ws, rel, kind=kind, content=content)
+            return {"path": path, "op": "create"}
+        return self._fs_mutate_result("create", _op)
+
+    def _handle_fs_mkdir(self) -> None:
+        def _op(ws, body):
+            path = filebrowser_fs.mkdir(ws, str(body.get("path") or ""))
+            return {"path": path, "op": "mkdir"}
+        return self._fs_mutate_result("mkdir", _op)
+
+    def _handle_fs_rename(self) -> None:
+        def _op(ws, body):
+            path = filebrowser_fs.rename(
+                ws, str(body.get("path") or ""), str(body.get("to") or "")
+            )
+            return {"path": path, "op": "rename"}
+        return self._fs_mutate_result("rename", _op)
+
+    def _handle_fs_move(self) -> None:
+        def _op(ws, body):
+            path = filebrowser_fs.move(
+                ws, str(body.get("path") or ""), str(body.get("to") or "")
+            )
+            return {"path": path, "op": "move"}
+        return self._fs_mutate_result("move", _op)
+
+    def _handle_fs_delete(self) -> None:
+        def _op(ws, body):
+            rel = str(body.get("path") or "")
+            trashed_to = filebrowser_fs.delete(ws, rel)
+            return {"trashed_to": trashed_to, "trashed_from": rel, "op": "delete"}
+        return self._fs_mutate_result("delete", _op)
+
+    def _handle_fs_duplicate(self) -> None:
+        def _op(ws, body):
+            path = filebrowser_fs.duplicate(ws, str(body.get("path") or ""))
+            return {"path": path, "op": "duplicate"}
+        return self._fs_mutate_result("duplicate", _op)
 
     def _handle_get_split(self) -> None:
         """Last workspace-partition status (Phase 2b+ split spike)."""

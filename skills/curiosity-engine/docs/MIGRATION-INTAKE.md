@@ -1,4 +1,4 @@
-# Migration intake map — Switchbay → CE (Phase 2a / 2b)
+# Migration intake map — Switchbay → CE (Phase 2a / 2b / 2b++)
 
 Charter north star: **CE** owns graph, atlas, wiki, search, source viewer, **filebrowser**, **graph animation + split**. Switchbay keeps PWA shell (workspaces, watcher, tabs chrome, rail UI) and reverse-proxies CE under `/embed/ce/`.
 
@@ -10,7 +10,7 @@ Charter north star: **CE** owns graph, atlas, wiki, search, source viewer, **fil
 |------------|----------------|-------|
 | Atlas / graph engine | `packages/knowledge-atlas` | Already the shared engine; Switchbay Graph tab adapts via examples/switchbay |
 | Classic wiki viewer + APIs | `skills/curiosity-engine/template/wiki-view` + `scripts/viewer_server.py` | Phase 2a: `CE_PUBLIC_BASE` / hosted hook |
-| Filebrowser | wiki-view sidebar **Files** mode + `GET /api/tree` | Phase 2b spike landed (browse/search/highlight/ctx) |
+| Filebrowser | wiki-view sidebar **Files** mode + `GET /api/tree` + `/api/fs/*` | Phase 2b browse; 2b++ FS mutate + file-routes stub |
 | Graph opening animation | knowledge-atlas `animation/replayTimeline` (+ later wiki-view UI) | Phase 2b: pure timeline hook; SVG/d3 replay UI deferred |
 | Workspace split | CE API + atlas multi-select; shell may keep workspace registry UX | Phase 2b+ spike landed (partition API + minimal UI) |
 
@@ -51,11 +51,25 @@ Paths relative to the Switchbay repo root (branch `feat/skill-shell-rationalizat
 | Sort A↔Z | ✅ |
 | Open wiki page → modal | ✅ |
 | Open `*.extracted.md` via vault API | ✅ (`VaultSources.open`) |
-| Pack `file_routes` / ext handlers | ❌ deferred (shell) |
-| FS mutate (delete/dup/reveal-in-OS) | ❌ deferred |
+| Pack `file_routes` / ext handlers | ≈ CE discovery (`GET /api/file-routes`); dispatch / install still shell |
+| FS mutate (create/rename/move/delete/dup) | ✅ CE (`/api/fs/*`, vault/wiki sandbox) |
+| Reveal-in-OS / open-external | ❌ deferred (shell / OS helpers) |
 | Drop-to-ingest | ❌ deferred |
 | SourceBrowser / WikiPane dual pane | ❌ deferred |
 | Ext filter chip UI | ❌ deferred |
+
+#### Phase 2b++ landed (CE) — FS mutate + pack routes stub
+
+| Artifact | Role |
+|----------|------|
+| `scripts/filebrowser_fs.py` | Sandboxed create / mkdir / rename / move / delete / duplicate / stat under `vault/` + `wiki/` only |
+| `scripts/filebrowser_packs.py` | Read-only `pack.json` `file_routes` from `.workbench/packs/`, `packs/`, or `CE_PACKS_DIR` |
+| `POST /api/fs/{create,mkdir,rename,move,delete,duplicate}` + `GET /api/fs/stat` | Honors `CE_PUBLIC_BASE`; wiki writes trigger viewer rebuild |
+| `GET /api/file-routes` | `{ ok, routes, count }` — Switchbay-compatible shape; no install/action dispatch |
+| `template/wiki-view/static/filebrowser.js` | Context menu: New file/folder, Rename, Duplicate, Delete |
+| Tests | `tests/test_filebrowser_fs.py` (sandbox escape + API) |
+
+**API notes for Switchbay embed:** call CE under `/embed/ce/api/fs/*` with the same JSON bodies as Switchbay Step E where overlapping (`delete` `{path}`, `duplicate` `{path}`). CE-only: `create` `{path, kind?, content?}`, `mkdir` `{path}`, `rename`/`move` `{path, to}`. Trash → OS trash when available, else `.workbench/trash/`.
 
 Deep-link: `?filebrowser=1` opens Files mode.
 
@@ -131,5 +145,5 @@ Deep-link: `?filebrowser=1` opens Files mode.
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
 2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
 3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
-4. **2b++:** pack routes / FS ops / SVG replay UI / rubber-band split / CM export parity
+4. **2b++ (partial):** FS mutate + pack file-routes discovery stub landed; SVG replay UI / rubber-band split / CM export / pack action dispatch still deferred
 5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes

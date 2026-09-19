@@ -1,8 +1,9 @@
-/* CE filebrowser (Phase 2b spike) — browse / search / highlight / context menu.
+/* CE filebrowser (Phase 2b / 2b++) — browse / search / highlight / FS mutate.
  *
- * Consumes GET /api/tree (vault/ + wiki/ paths). Pages|Files toggle sits
- * above the existing page sidebar. Pack file-routes, FS mutate ops, and
- * Switchbay workspace-relative pack paths are deferred.
+ * Consumes GET /api/tree (vault/ + wiki/ paths) and POST /api/fs/* for
+ * create / rename / move / delete / duplicate. GET /api/file-routes lists
+ * pack extension handlers (discovery stub; dispatch stays shell-side).
+ * Pages|Files toggle sits above the existing page sidebar.
  */
 window.FileBrowser = (function () {
   function apiUrl(path) {
@@ -290,21 +291,47 @@ window.FileBrowser = (function () {
     showMenu();
   }
 
+  function flash(msg) {
+    if (els.fbStatus) els.fbStatus.textContent = msg;
+  }
+
+  function postFs(endpoint, body) {
+    return fetch(apiUrl(endpoint), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || ("HTTP " + r.status));
+        return j;
+      });
+    });
+  }
+
   function showMenu() {
     if (!els.fbMenu || !menu) return;
     var items = [];
     if (!menu.isDir) {
       items.push({ action: "open", label: "Open" });
+      items.push({ action: "duplicate", label: "Duplicate" });
+      items.push({ action: "rename", label: "Rename…" });
+      items.push({ action: "delete", label: "Delete…", danger: true });
     } else {
       items.push({
         action: "toggle",
         label: expanded.has(menu.path) ? "Collapse" : "Expand",
       });
+      items.push({ action: "new-file", label: "New file…" });
+      items.push({ action: "new-dir", label: "New folder…" });
+      items.push({ action: "rename", label: "Rename…" });
+      items.push({ action: "delete", label: "Delete…", danger: true });
     }
     items.push({ action: "copy", label: "Copy path" });
-    items.push({ action: "reveal", label: "Reveal" });
+    items.push({ action: "reveal", label: "Reveal in tree" });
     els.fbMenu.innerHTML = items.map(function (it) {
-      return '<button type="button" class="fb-menu-item" data-fb-action="'
+      return '<button type="button" class="fb-menu-item'
+        + (it.danger ? " fb-menu-danger" : "")
+        + '" data-fb-action="'
         + it.action + '">' + escapeHtml(it.label) + "</button>";
     }).join("");
     els.fbMenu.hidden = false;
@@ -328,11 +355,22 @@ window.FileBrowser = (function () {
     }
   }
 
+  function parentDir(path) {
+    var i = path.lastIndexOf("/");
+    return i <= 0 ? "" : path.slice(0, i);
+  }
+
+  function basename(path) {
+    var i = path.lastIndexOf("/");
+    return i < 0 ? path : path.slice(i + 1);
+  }
+
   function onMenuClick(ev) {
     var btn = ev.target.closest && ev.target.closest("[data-fb-action]");
     if (!btn || !menu) return;
     var action = btn.getAttribute("data-fb-action");
     var path = menu.path;
+    var isDir = menu.isDir;
     closeMenu();
     if (action === "open") openPath(path);
     else if (action === "toggle") {
@@ -351,6 +389,51 @@ window.FileBrowser = (function () {
         '[data-fb-path="' + cssEscapeAttr(path) + '"]'
       );
       if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+    } else if (action === "duplicate") {
+      postFs("/api/fs/duplicate", { path: path })
+        .then(function (j) {
+          flash("duplicated → " + (j.path || ""));
+          selected = j.path || path;
+          refresh();
+        })
+        .catch(function (e) { flash("duplicate failed: " + e.message); });
+    } else if (action === "delete") {
+      if (!window.confirm("Move to trash?\n" + path)) return;
+      postFs("/api/fs/delete", { path: path })
+        .then(function (j) {
+          flash("trashed → " + (j.trashed_to || "trash"));
+          if (selected === path) selected = parentDir(path) || null;
+          refresh();
+        })
+        .catch(function (e) { flash("delete failed: " + e.message); });
+    } else if (action === "rename") {
+      var cur = basename(path);
+      var next = window.prompt("Rename to:", cur);
+      if (!next || next === cur) return;
+      var dest = parentDir(path) + "/" + next;
+      postFs("/api/fs/rename", { path: path, to: dest })
+        .then(function (j) {
+          flash("renamed → " + (j.path || dest));
+          selected = j.path || dest;
+          refresh();
+        })
+        .catch(function (e) { flash("rename failed: " + e.message); });
+    } else if (action === "new-file" || action === "new-dir") {
+      var label = action === "new-file" ? "New file name:" : "New folder name:";
+      var name = window.prompt(label, action === "new-file" ? "untitled.md" : "new-folder");
+      if (!name) return;
+      var dest = path + "/" + name;
+      var body = action === "new-file"
+        ? { path: dest, kind: "file", content: "" }
+        : { path: dest, kind: "dir" };
+      postFs("/api/fs/create", body)
+        .then(function (j) {
+          flash("created " + (j.path || dest));
+          expanded.add(path);
+          selected = j.path || dest;
+          refresh();
+        })
+        .catch(function (e) { flash("create failed: " + e.message); });
     }
   }
 
@@ -420,6 +503,15 @@ window.FileBrowser = (function () {
     document.addEventListener("keydown", function (ev) {
       if (ev.key === "Escape") closeMenu();
     });
+
+    // Pack file-routes (discovery). Handlers stay shell-side for now;
+    // CE exposes the list so Switchbay embed can call the same endpoint.
+    fetch(apiUrl("/api/file-routes"))
+      .then(function (r) { return r.ok ? r.json() : { routes: [] }; })
+      .then(function (body) {
+        window.__CE_FILE_ROUTES = Array.isArray(body.routes) ? body.routes : [];
+      })
+      .catch(function () { window.__CE_FILE_ROUTES = []; });
 
     // Optional deep-link: ?filebrowser=1
     try {
