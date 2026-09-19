@@ -1,3 +1,29 @@
+## 2026-09-19 — Phase 2b+++++ split registry + CM export hook
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- **Workspace registry** (`workspace_registry.py`): CE-owned persistence under
+  `$CE_WORKSPACE_REGISTRY` or `$XDG_CONFIG_HOME/curiosity-engine/workspaces.json`,
+  sandboxed to `$HOME` / `$CE_WORKSPACE_HOME`. Records split provenance.
+- **APIs:** `GET/POST/DELETE /api/workspaces`; successful `POST /api/split` auto-registers
+  the target (shells still own tab-open chrome).
+- **CM export hook** (`cm_export.py` + `POST /api/cm-export`): invokes curiosity-merge
+  `subgraph_export.py` for a selected page set (license modes via `--include-vault`).
+  Supports `dry_run` (plan argv, no spawn). Discovers CM via `$CE_CM_ROOT` /
+  `$CURIOSITY_MERGE_ROOT` / sibling checkout / skill install paths. Target sandboxed
+  outside the source workspace and inside the registry home root.
+- **Tests:** `tests/test_workspace_registry_cm_export.py` (registry persistence +
+  export dry-run + split auto-register under embed prefix).
+
+### Notes
+
+- Native `wiki_partition` remains the default split path (no CM required).
+- Still Switchbay-only: rubber-band / `sy:split-proposal` UI, link-heal agents,
+  tab open after split, workspace-root figures / `.workbench` sketches, OS Trash prune.
+  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md`.
+
 ## 2026-09-19 — Phase 2b++++ pack action dispatch
 
 **Migration:** none. **Breaking:** none.

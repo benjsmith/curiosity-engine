@@ -20,12 +20,16 @@ Endpoints
     POST /api/packs/toggle              {name, enabled} workspace enable state
     POST /api/packs/install             {path} local-path install → .workbench/packs/
     DELETE /api/packs?name=             uninstall workspace-scope pack
+    DELETE /api/workspaces?path=        unregister workspace path
     GET  /api/fs/stat?path=             sandbox stat under vault/|wiki/
     GET  /api/split                     last partition status (workspace split spike)
+    GET  /api/workspaces                CE workspace registry (paths + split provenance)
     GET  /api/curation/history          HistoryDoc for graph replay UI
     POST /api/page                      JSON {path, content} → overwrite file
     POST /api/upload-vault              multipart form → save to vault/raw/
     POST /api/split                     partition wiki pages into a new workspace
+    POST /api/workspaces                register path {path, set_active?, split?}
+    POST /api/cm-export                 CM subgraph_export hook {pages, target, dry_run?}
     POST /api/fs/create                 {path, kind?, content?} create file/dir
     POST /api/fs/mkdir                  {path} create empty directory
     POST /api/fs/rename                 {path, to} rename within sandbox
@@ -89,6 +93,8 @@ import filebrowser_tree
 import filebrowser_fs
 import filebrowser_packs
 import wiki_partition
+import workspace_registry
+import cm_export
 import curation_history
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -189,6 +195,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_fs_stat(urllib.parse.parse_qs(url.query))
         if url.path == "/api/split":
             return self._handle_get_split()
+        if url.path == "/api/workspaces":
+            return self._handle_get_workspaces()
         if url.path == "/api/curation/history":
             return self._handle_get_curation_history()
         # Inject embed bootstrap into HTML so /api fetches honor CE_PUBLIC_BASE.
@@ -204,6 +212,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_upload()
         if url.path == "/api/split":
             return self._handle_post_split()
+        if url.path == "/api/workspaces":
+            return self._handle_post_workspaces()
+        if url.path == "/api/cm-export":
+            return self._handle_post_cm_export()
         if url.path == "/api/fs/create":
             return self._handle_fs_create()
         if url.path == "/api/fs/mkdir":
@@ -227,6 +239,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         url = self._rewrite_path()
+        if url.path == "/api/workspaces":
+            return self._handle_delete_workspaces(urllib.parse.parse_qs(url.query))
         if url.path == "/api/packs":
             return self._handle_packs_uninstall(urllib.parse.parse_qs(url.query))
         return self._json(404, {"error": "not found"})
@@ -597,6 +611,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 progress=_progress,
             )
             rec.update(state="done", step="done", **stats)
+            # Persist split target in CE workspace registry (shells may also register).
+            try:
+                workspace_registry.register(
+                    Path(stats["target"]),
+                    set_active=False,
+                    split={
+                        "name": stats.get("name") or name,
+                        "source": str(WORKSPACE_DIR),
+                        "target": stats["target"],
+                        "stamp": stats.get("stamp") or "",
+                    },
+                )
+                rec["registered"] = True
+                stats = {**stats, "registered": True}
+            except workspace_registry.RegistryError as reg_err:
+                rec["registered"] = False
+                rec["register_error"] = str(reg_err)
+                stats = {
+                    **stats,
+                    "registered": False,
+                    "register_error": str(reg_err),
+                }
             # Rebuild source viewer if pages were moved.
             if stats.get("moved"):
                 self._rebuild()
@@ -607,6 +643,99 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             rec.update(state="error", error=str(e), step="error")
             return self._json(500, {"error": str(e)})
+
+
+    def _handle_get_workspaces(self) -> None:
+        """CE workspace registry snapshot (Phase 2b+++++ registry slice)."""
+        return self._json(200, workspace_registry.payload())
+
+    def _handle_post_workspaces(self) -> None:
+        """Register a workspace path. Body: {path, set_active?, split?}."""
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        raw = str(body.get("path") or body.get("target") or "").strip()
+        if not raw:
+            return self._json(400, {"error": "path required"})
+        set_active = bool(body.get("set_active") or body.get("active"))
+        split = body.get("split") if isinstance(body.get("split"), dict) else None
+        try:
+            data = workspace_registry.register(
+                Path(raw), set_active=set_active, split=split
+            )
+        except workspace_registry.RegistryError as e:
+            return self._json(400, {"error": str(e)})
+        return self._json(200, {"ok": True, **workspace_registry.payload(), "registered": data["paths"]})
+
+    def _handle_delete_workspaces(self, qs: dict) -> None:
+        raw = (qs.get("path") or [""])[0].strip()
+        if not raw:
+            return self._json(400, {"error": "path required"})
+        try:
+            workspace_registry.unregister(Path(raw))
+        except Exception as e:
+            return self._json(400, {"error": str(e)})
+        return self._json(200, workspace_registry.payload())
+
+    def _handle_post_cm_export(self) -> None:
+        """Invoke curiosity-merge subgraph_export for selected pages.
+
+        Body: {
+          pages|move|copy: [ref], target|name, include_vault?, dry_run?,
+          include_non_native?, label?, register?
+        }.
+        When ``target`` is omitted, ``CE_SPLIT_HOME/<name>`` is used.
+        ``dry_run: true`` validates + returns planned argv without spawning CM.
+        """
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        pages = [str(r).strip() for r in (body.get("pages") or []) if str(r).strip()]
+        move = [str(r).strip() for r in (body.get("move") or []) if str(r).strip()]
+        copy = [str(r).strip() for r in (body.get("copy") or []) if str(r).strip()]
+        pages = list(dict.fromkeys([*pages, *move, *copy]))
+        if not pages:
+            return self._json(400, {"error": "nothing selected"})
+        name = wiki_partition.sanitize_name(str(body.get("name") or ""))
+        target_raw = str(body.get("target") or "").strip()
+        if not target_raw:
+            home = (os.environ.get("CE_SPLIT_HOME") or "").strip()
+            if not home or not name:
+                return self._json(
+                    400,
+                    {"error": "target required (or set CE_SPLIT_HOME + name)"},
+                )
+            target_raw = str(Path(home).expanduser() / name)
+        dry_run = bool(body.get("dry_run"))
+        include_vault = str(body.get("include_vault") or "all")
+        include_non_native = body.get("include_non_native")
+        if include_non_native is None:
+            include_non_native = True
+        register = body.get("register")
+        if register is None:
+            register = not dry_run
+        label = body.get("label")
+        label_s = str(label).strip() if label else None
+        try:
+            result = cm_export.run_export(
+                WORKSPACE_DIR,
+                Path(target_raw),
+                pages,
+                include_vault=include_vault,
+                include_non_native=bool(include_non_native),
+                dry_run=dry_run,
+                register=bool(register),
+                label=label_s,
+            )
+        except cm_export.CmExportError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(500, {"error": str(e)})
+        return self._json(200, result)
 
     def _handle_get_page(self, qs: dict) -> None:
         rel = (qs.get("path") or [""])[0]
