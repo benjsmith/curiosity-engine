@@ -86,7 +86,7 @@
       <button id="edge-mode" class="ctrl-btn hidden" title="Edge visibility (Atlas)" aria-label="Edge visibility">
         <span class="ctrl-label">edges:</span><span id="edge-mode-state">auto</span>
       </button>
-      <button id="split-toggle" class="ctrl-btn" title="Partition selected pages into a new workspace" aria-label="Workspace split" aria-pressed="false">
+      <button id="split-toggle" class="ctrl-btn" title="Partition selected pages (rubber-band / Shift-click on graph)" aria-label="Workspace split" aria-pressed="false">
         <span class="ctrl-label">split</span><span id="split-count">0</span>
       </button>
       <button id="replay-toggle" class="ctrl-btn" title="Replay curation history animation" aria-label="Replay curation history" aria-pressed="false">
@@ -115,7 +115,7 @@
 
     <div id="split-panel" class="split-panel" hidden>
       <div class="split-head">Partition workspace</div>
-      <p class="split-help">Move or copy wiki pages into a new workspace. Shells keep tab/registry chrome.</p>
+      <p class="split-help">Move or copy wiki pages into a new workspace. Classic: Ctrl/⌘-drag rubber-band, Shift-click multi-select, click toggle, right-click flips move↔copy. Shells keep tab/registry chrome.</p>
       <div class="split-fields">
         <label class="split-field">Name <input id="split-name" type="text" placeholder="new-workspace" autocomplete="off" spellcheck="false"></label>
         <label class="split-field">Target <input id="split-target" type="text" placeholder="optional absolute path (or CE_SPLIT_HOME/name)" autocomplete="off" spellcheck="false"></label>

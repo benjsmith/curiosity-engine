@@ -358,6 +358,78 @@
       },
     });
     var controls = initAtlasControls(handle);
+    /* Split targeting (Atlas): no canvas rubber-band yet (Switchbay parity).
+     * splitEnter seeds engine multi-select; hosts still use Classic for
+     * Ctrl/⌘ rubber-band. Shift/add via panel + selection sync. */
+    var splitActive = false;
+    var splitPolicies = new Map();
+    var splitOnChange = null;
+    var splitUnsub = null;
+
+    function defaultSplitPolicy(type) {
+      return (type === 'entity' || type === 'concept') ? 'copy' : 'move';
+    }
+
+    function notifyAtlasSplit() {
+      var out = [];
+      splitPolicies.forEach(function (policy, id) { out.push({ id: id, policy: policy }); });
+      if (splitOnChange) splitOnChange(out);
+      try {
+        window.dispatchEvent(new CustomEvent('ce:split-selection', { detail: { pages: out } }));
+      } catch (e) {}
+    }
+
+    function atlasSplitEnter(seed, onChange) {
+      splitActive = true;
+      splitPolicies = new Map();
+      (seed || []).forEach(function (s) {
+        var id = typeof s === 'string' ? s : s && s.id;
+        if (!id) return;
+        var policy = (typeof s === 'object' && s.policy === 'copy') ? 'copy' : 'move';
+        if (typeof s !== 'object' || !s.policy) {
+          // Prefer type from graph data when available
+          var page = data.pages && data.pages[id];
+          var typ = page && (page.type || page.page_type);
+          if (!typ && data.nodes) {
+            for (var i = 0; i < data.nodes.length; i++) {
+              if (data.nodes[i].id === id) { typ = data.nodes[i].type; break; }
+            }
+          }
+          policy = defaultSplitPolicy(typ);
+        }
+        splitPolicies.set(id, policy);
+      });
+      splitOnChange = onChange || null;
+      if (splitUnsub) { try { splitUnsub(); } catch (e) {} splitUnsub = null; }
+      if (handle.engine && handle.engine.on) {
+        splitUnsub = handle.engine.on(function (ev) {
+          if (!splitActive || !ev || ev.kind !== 'selection-changed') return;
+          (ev.ids || []).forEach(function (id) {
+            if (!splitPolicies.has(id)) {
+              var page = data.pages && data.pages[id];
+              var typ = page && (page.type || page.page_type);
+              splitPolicies.set(id, defaultSplitPolicy(typ));
+            }
+          });
+          notifyAtlasSplit();
+        });
+      }
+      if (handle.engine && handle.engine.select) {
+        handle.engine.select(Array.from(splitPolicies.keys()), 'replace');
+      }
+      if (controls && controls.repaint) controls.repaint();
+      notifyAtlasSplit();
+    }
+
+    function atlasSplitExit() {
+      splitActive = false;
+      splitPolicies = new Map();
+      splitOnChange = null;
+      if (splitUnsub) { try { splitUnsub(); } catch (e) {} splitUnsub = null; }
+      if (handle.engine && handle.engine.select) handle.engine.select([], 'replace');
+      if (controls && controls.repaint) controls.repaint();
+    }
+
     // Covers a scene that landed before onEvent was wired.
     if (stripFocusMark(handle.engine)) controls.repaint();
     // When a static host shards edges to edges.json.gz, assign
@@ -381,11 +453,15 @@
       highlightSearch: function (ids) {
         highlightSearch(handle, controls.repaint, ids);
       },
+      splitEnter: atlasSplitEnter,
+      splitExit: atlasSplitExit,
+      isSplitActive: function () { return splitActive; },
       setLabelMode: controls.setMode,
       cycleLabelMode: controls.cycleMode,
       setEdgeMode: controls.setEdgeMode,
       cycleEdgeMode: controls.cycleEdgeMode,
       destroy: function () {
+        atlasSplitExit();
         handle.destroy();
       },
       /* Chrome-free info surface: the engine renders no panels — host

@@ -85,3 +85,13 @@ export {
   type PartitionSeed,
 } from "./partition/partitionSelection.ts";
 
+export {
+  normalizeRubberRect,
+  isRubberClick,
+  idsInRubberBand,
+  defaultPartitionPolicyForType,
+  type RubberPoint,
+  type RubberRect,
+  type NormalizedRect,
+} from "./partition/rubberBand.ts";
+
