@@ -243,3 +243,43 @@ def duplicate(workspace: Path, rel: str) -> str:
     resolve(workspace, _rel_of(workspace, candidate))
     shutil.copy2(src, candidate)
     return _rel_of(workspace, candidate)
+
+
+def reveal(workspace: Path, rel: str) -> dict:
+    """Open the path in the OS file manager (Finder / Explorer / xdg).
+
+    Mirrors Switchbay ``fileops.reveal``: resolve under the vault/wiki
+    sandbox, then platform-open the parent directory (Linux) or select
+    the file (macOS / Windows). Returns a small status dict for the API.
+    """
+    target = resolve(workspace, rel, must_exist=True)
+    if sys.platform == "darwin":
+        argv = ["open", "-R", str(target)]
+    elif sys.platform == "win32":
+        argv = ["explorer", "/select,", str(target)]
+    else:
+        # Linux: open the containing directory (xdg-open has no -R).
+        argv = ["xdg-open", str(target.parent if target.is_file() else target)]
+    try:
+        subprocess.run(argv, capture_output=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise FileOpError(f"reveal failed: {e}") from e
+    return {"path": _norm_rel(rel), "revealed": True}
+
+
+def open_external(workspace: Path, rel: str) -> dict:
+    """Hand the file off to the OS default app (Preview / xdg-open / start)."""
+    target = resolve(workspace, rel, must_exist=True)
+    if not target.is_file():
+        raise FileOpError("open_external: path must be a file")
+    if sys.platform == "darwin":
+        argv = ["open", str(target)]
+    elif sys.platform == "win32":
+        argv = ["cmd", "/c", "start", "", str(target)]
+    else:
+        argv = ["xdg-open", str(target)]
+    try:
+        subprocess.run(argv, capture_output=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise FileOpError(f"open_external failed: {e}") from e
+    return {"path": _norm_rel(rel), "opened": True}

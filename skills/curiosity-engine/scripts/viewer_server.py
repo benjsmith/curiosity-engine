@@ -18,10 +18,14 @@ Endpoints
     GET  /api/packs/<name>/actions      file_routes / actions for one pack
     POST /api/packs/<pack>/action/<act> dispatch named action {path} (sandbox queue)
     POST /api/packs/toggle              {name, enabled} workspace enable state
-    POST /api/packs/install             {path} local-path install → .workbench/packs/
+    POST /api/packs/install             {path|source|url} local or git → .workbench/packs/
     DELETE /api/packs?name=             uninstall workspace-scope pack
     DELETE /api/workspaces?path=        unregister workspace path
     GET  /api/fs/stat?path=             sandbox stat under vault/|wiki/
+    POST /api/fs/reveal                 {path} reveal-in-OS (Finder/xdg/explorer)
+    POST /api/fs/open-external          {path} open with OS default app
+    POST /api/ingest/from-upload        multipart file → vault/raw/ + queue run
+    POST /api/ingest/from-path          {path} absolute file → vault/raw/ + queue
     GET  /api/split                     last partition status (workspace split spike)
     GET  /api/workspaces                CE workspace registry (paths + split provenance)
     GET  /api/curation/history          HistoryDoc for graph replay UI
@@ -56,8 +60,11 @@ Writes are constrained:
       escapes, hidden components, and SKIP_DIRS are refused. Delete goes to
       OS trash when available, else `.workbench/trash/`.
     * /api/packs/*/action/* requires the target file under vault/|wiki/;
-      install only copies into `.workbench/packs/` (no git). Agent/LLM skill
-      execution stays Switchbay-side — CE queues the run record.
+      install copies or `git clone --depth 1` into `.workbench/packs/`.
+      Agent/LLM skill execution stays Switchbay-side — CE queues the run.
+    * /api/fs/reveal|open-external only resolve vault/|wiki/ paths.
+    * /api/ingest/from-upload|from-path allowlist DEFAULT_EXTS, stage under
+      vault/raw/, queue `.workbench/ingest-runs/` (shell drains / local_ingest).
 
 After any successful write the server invokes
 `wiki_render.py build <wiki_dir> --output-dir <bundle_dir>` so the
@@ -92,6 +99,7 @@ import public_base
 import filebrowser_tree
 import filebrowser_fs
 import filebrowser_packs
+import filebrowser_ingest
 import wiki_partition
 import workspace_registry
 import cm_export
@@ -228,6 +236,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_fs_delete()
         if url.path == "/api/fs/duplicate":
             return self._handle_fs_duplicate()
+        if url.path == "/api/fs/reveal":
+            return self._handle_fs_reveal()
+        if url.path == "/api/fs/open-external":
+            return self._handle_fs_open_external()
+        if url.path == "/api/ingest/from-upload":
+            return self._handle_ingest_from_upload()
+        if url.path == "/api/ingest/from-path":
+            return self._handle_ingest_from_path()
         if url.path == "/api/packs/toggle":
             return self._handle_packs_toggle()
         if url.path == "/api/packs/install":
@@ -410,13 +426,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body = self._read_json_body()
         except ValueError as e:
             return self._json(400, {"error": str(e)})
-        src = str(body.get("path") or "").strip()
+        src = str(
+            body.get("source") or body.get("url") or body.get("path") or ""
+        ).strip()
         if not src:
-            return self._json(400, {"error": "path required"})
+            return self._json(400, {"error": "path or source/url required"})
         try:
-            return self._json(
-                200, filebrowser_packs.install_from_path(WORKSPACE_DIR, src)
-            )
+            if filebrowser_packs.looks_like_git_url(src):
+                result = filebrowser_packs.install_from_git(WORKSPACE_DIR, src)
+            else:
+                result = filebrowser_packs.install_from_path(WORKSPACE_DIR, src)
+            return self._json(200, result)
         except filebrowser_packs.PackError as e:
             return self._json(e.status, {"error": str(e)})
 
@@ -735,6 +755,91 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(400, {"error": str(e)})
         except Exception as e:
             return self._json(500, {"error": str(e)})
+        return self._json(200, result)
+
+    def _handle_fs_reveal(self) -> None:
+        ws = self._fs_workspace()
+        if ws is None:
+            return
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        rel = str(body.get("path") or "").strip()
+        if not rel:
+            return self._json(400, {"error": "path required"})
+        try:
+            result = filebrowser_fs.reveal(ws, rel)
+        except filebrowser_fs.FileOpError as e:
+            return self._json(400, {"error": str(e)})
+        return self._json(200, {"ok": True, **result})
+
+    def _handle_fs_open_external(self) -> None:
+        ws = self._fs_workspace()
+        if ws is None:
+            return
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        rel = str(body.get("path") or "").strip()
+        if not rel:
+            return self._json(400, {"error": "path required"})
+        try:
+            result = filebrowser_fs.open_external(ws, rel)
+        except filebrowser_fs.FileOpError as e:
+            return self._json(400, {"error": str(e)})
+        return self._json(200, {"ok": True, **result})
+
+    def _handle_ingest_from_upload(self) -> None:
+        """Multipart ``file`` → vault/raw/ + ingest-run queue (Switchbay shape)."""
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            return self._json(400, {"error": "multipart/form-data required"})
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            return self._json(400, {"error": "empty body"})
+        if length > filebrowser_ingest.MAX_BYTES + 64 * 1024:
+            return self._json(413, {"error": "file too large (>50 MB)"})
+        body = self.rfile.read(length)
+        head = (f"Content-Type: {ctype}\r\n\r\n").encode("ascii")
+        msg = BytesParser(policy=default_email_policy).parsebytes(head + body)
+        if not msg.is_multipart():
+            return self._json(400, {"error": "not multipart"})
+        filename = None
+        data = None
+        for part in msg.iter_parts():
+            cd = part.get("Content-Disposition", "")
+            if "filename=" not in cd:
+                continue
+            filename = part.get_filename() or ""
+            data = part.get_payload(decode=True)
+            if filename and data is not None:
+                break
+        if not filename or data is None:
+            return self._json(400, {"error": "no `file` field"})
+        try:
+            result = filebrowser_ingest.stage_bytes(WORKSPACE_DIR, filename, data)
+        except filebrowser_ingest.IngestError as e:
+            return self._json(e.status, {"error": str(e)})
+        return self._json(200, result)
+
+    def _handle_ingest_from_path(self) -> None:
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        src = str(body.get("path") or "").strip()
+        if not src:
+            return self._json(400, {"error": "path required"})
+        try:
+            result = filebrowser_ingest.stage_path(WORKSPACE_DIR, src)
+        except filebrowser_ingest.IngestError as e:
+            return self._json(e.status, {"error": str(e)})
         return self._json(200, result)
 
     def _handle_get_page(self, qs: dict) -> None:

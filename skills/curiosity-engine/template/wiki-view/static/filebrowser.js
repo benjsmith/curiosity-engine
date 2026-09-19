@@ -1,8 +1,9 @@
 /* CE filebrowser (Phase 2b / 2b++) — browse / search / highlight / FS mutate.
  *
  * Consumes GET /api/tree (vault/ + wiki/ paths) and POST /api/fs/* for
- * create / rename / move / delete / duplicate. GET /api/file-routes lists
- * pack extension handlers; context menu dispatches via
+ * create / rename / move / delete / duplicate / reveal-in-OS. Drop-ingest
+ * posts multipart to /api/ingest/from-upload (vault/raw/ + queue).
+ * GET /api/file-routes lists pack handlers; context menu dispatches via
  * POST /api/packs/<pack>/action/<action> (sandbox queue; agent exec stays shell).
  * Pages|Files toggle sits above the existing page sidebar.
  */
@@ -27,6 +28,8 @@ window.FileBrowser = (function () {
   var searchHits = new Set(); // relative paths highlighted by graph search
   var pathToPageId = Object.create(null);
   var menu = null; // { x, y, path, isDir }
+  var dragDepth = 0;
+  var uploading = null; // progress label while drop-ingest runs
   var els = {};
 
   function fileExt(path) {
@@ -348,6 +351,10 @@ window.FileBrowser = (function () {
     }
     items.push({ action: "copy", label: "Copy path" });
     items.push({ action: "reveal", label: "Reveal in tree" });
+    items.push({ action: "reveal-os", label: "Reveal in OS" });
+    if (!menu.isDir) {
+      items.push({ action: "open-external", label: "Open externally" });
+    }
     els.fbMenu.innerHTML = items.map(function (it) {
       var extra = "";
       if (it.pack && it.packAction) {
@@ -427,6 +434,16 @@ window.FileBrowser = (function () {
         '[data-fb-path="' + cssEscapeAttr(path) + '"]'
       );
       if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+    } else if (action === "reveal-os") {
+      flash("revealing…");
+      postFs("/api/fs/reveal", { path: path })
+        .then(function () { flash("revealed in OS"); })
+        .catch(function (e) { flash("reveal failed: " + e.message); });
+    } else if (action === "open-external") {
+      flash("opening…");
+      postFs("/api/fs/open-external", { path: path })
+        .then(function () { flash("opened externally"); })
+        .catch(function (e) { flash("open failed: " + e.message); });
     } else if (action === "duplicate") {
       postFs("/api/fs/duplicate", { path: path })
         .then(function (j) {
@@ -491,6 +508,90 @@ window.FileBrowser = (function () {
     if (mode === "files") render();
   }
 
+
+  var DROP_CONFIRM_AT = 10;
+  var DROP_MAX_FILES = 100;
+
+  function setDragOver(on) {
+    if (!els.fbPane) return;
+    if (on) els.fbPane.classList.add("fb-drag-over");
+    else els.fbPane.classList.remove("fb-drag-over");
+  }
+
+  function ingestOneFile(file) {
+    var form = new FormData();
+    form.append("file", file, file.name || "upload.bin");
+    return fetch(apiUrl("/api/ingest/from-upload"), { method: "POST", body: form })
+      .then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error((j && j.error) || ("HTTP " + r.status));
+          return j;
+        });
+      });
+  }
+
+  function onDragEnter(ev) {
+    if (!ev.dataTransfer || !ev.dataTransfer.types) return;
+    var types = Array.prototype.slice.call(ev.dataTransfer.types);
+    if (types.indexOf("Files") < 0) return;
+    dragDepth += 1;
+    setDragOver(true);
+  }
+
+  function onDragLeave() {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) setDragOver(false);
+  }
+
+  function onDragOver(ev) {
+    if (!ev.dataTransfer || !ev.dataTransfer.types) return;
+    var types = Array.prototype.slice.call(ev.dataTransfer.types);
+    if (types.indexOf("Files") < 0) return;
+    ev.preventDefault();
+  }
+
+  function onDrop(ev) {
+    ev.preventDefault();
+    dragDepth = 0;
+    setDragOver(false);
+    var files = Array.prototype.slice.call(
+      (ev.dataTransfer && ev.dataTransfer.files) || []
+    ).filter(function (f) { return f && f.name && f.name.charAt(0) !== "."; });
+    if (files.length > DROP_MAX_FILES) files = files.slice(0, DROP_MAX_FILES);
+    if (files.length === 0) return;
+    if (files.length >= DROP_CONFIRM_AT) {
+      var go = window.confirm(
+        "Ingest " + files.length + " files into vault/raw/? "
+        + "Each is staged and queued for ingest."
+      );
+      if (!go) return;
+    }
+    uploading = "0/" + files.length;
+    flash("ingest " + uploading);
+    var done = 0;
+    var failed = 0;
+    var queue = files.slice();
+    function worker() {
+      var f = queue.shift();
+      if (!f) return Promise.resolve();
+      return ingestOneFile(f)
+        .catch(function () { failed += 1; })
+        .then(function () {
+          done += 1;
+          uploading = done + "/" + files.length;
+          flash("ingest " + uploading);
+          return worker();
+        });
+    }
+    var n = Math.min(3, files.length);
+    Promise.all(Array.from({ length: n }, worker)).then(function () {
+      uploading = null;
+      if (failed > 0) flash(failed + " of " + files.length + " uploads failed");
+      else flash("ingested " + files.length + " → vault/raw/");
+      refresh();
+    });
+  }
+
   function init(data) {
     indexPages(data);
     els.segPages = document.getElementById("sidebar-mode-pages");
@@ -532,6 +633,12 @@ window.FileBrowser = (function () {
     }
     els.fbList.addEventListener("click", onListClick);
     els.fbList.addEventListener("contextmenu", onListContext);
+    if (els.fbPane) {
+      els.fbPane.addEventListener("dragenter", onDragEnter);
+      els.fbPane.addEventListener("dragleave", onDragLeave);
+      els.fbPane.addEventListener("dragover", onDragOver);
+      els.fbPane.addEventListener("drop", onDrop);
+    }
     if (els.fbMenu) els.fbMenu.addEventListener("click", onMenuClick);
     document.addEventListener("click", function (ev) {
       if (!menu) return;
