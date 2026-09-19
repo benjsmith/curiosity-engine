@@ -1,3 +1,20 @@
+## 2026-09-19 — Phase 2b++++ pack action dispatch
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- Pack APIs (Switchbay `pack.json` shape): `GET /api/packs`, `GET /api/packs/<name>/actions`,
+  `POST /api/packs/<pack>/action/<action>` (vault/wiki sandbox queue → `{run_id}`),
+  `POST /api/packs/toggle`, `POST /api/packs/install` (local path), `DELETE /api/packs?name=`.
+- Filebrowser context menu runs pack `file_routes` via the dispatch API.
+- Tests: `tests/test_filebrowser_packs.py` (escape / disabled / embed prefix).
+
+### Notes
+
+- Agent/LLM skill execution, git pack install, pip extras, reveal-in-OS, and drop-ingest
+  remain Switchbay-only (see `MIGRATION-INTAKE.md`).
+
 ## 2026-09-19 — Phase 2b++ filebrowser FS mutate + pack routes stub
 
 **Migration:** none. **Breaking:** none.
