@@ -18,6 +18,9 @@
 
   Theme.init();
   Sidebar.init(data);
+  if (window.SplitPanel) SplitPanel.init();
+  if (window.FileBrowser) FileBrowser.init(data);
+  if (window.CurationReplay) CurationReplay.init(data);
   Subgraph.init(data);
   Modal.init(data);
   /* Resolve viewer + paint view: chooser BEFORE any Graph/Atlas mount.
@@ -65,6 +68,12 @@
   /* Graph search marks the canvas and the page list together. Wired
    * after the viewer so it talks to whichever one took the pane. */
   if (window.GraphSearch) GraphSearch.init(data, graphApi);
+  /* Active viewer facade for SplitPanel rubber-band / splitEnter
+   * (Classic Graph or AtlasViewer). Embed v2 mounts the same wiki-view. */
+  window.CEViewer = graphApi;
+  if (window.SplitPanel && document.body.dataset.split === '1' && SplitPanel.open) {
+    try { SplitPanel.open(); } catch (e) { /* ignore */ }
+  }
   _maybeShowScanStaleBanner(data);
 
   /* refetchData — called after the Edit module saves a page. Pulls a
@@ -80,6 +89,7 @@
       return;
     }
     if (Modal.refresh)    Modal.refresh(data);
+    if (window.FileBrowser && FileBrowser.refreshData) FileBrowser.refreshData(data);
     if (Subgraph.init)    Subgraph.init(data);   // re-binds neighbour map
     // Keep the sidebar footer honest if page/edge counts moved.
     if (Sidebar.updateCounts) Sidebar.updateCounts(data);

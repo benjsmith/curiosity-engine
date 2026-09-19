@@ -1,3 +1,78 @@
+## 2026-09-19 — Phase 2b++++++ rubber-band split targeting UI
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- **Classic graph rubber-band:** Ctrl/⌘-drag marquee select; Shift-click multi-select;
+  click toggle membership; Alt-click / right-click flips move↔copy (entities/concepts
+  default to copy). `Graph.splitEnter` / `splitExit` sync with the split panel.
+- **Split panel:** listens `ce:split-selection`, `ce:split-proposal`, and
+  `sy:split-proposal`; still POSTs `/api/split` via `ceApi` / `CE_PUBLIC_BASE`
+  (embed v2 under `/embed/ce`).
+- **Pure helpers:** `packages/knowledge-atlas` `rubberBand.ts` + `rubberBand.test.ts`.
+- Atlas: `splitEnter`/`splitExit` seed engine multi-select (canvas marquee deferred).
+
+### Notes
+
+- Still Switchbay-only / deferred: Atlas canvas rubber-band, link-heal agents,
+  tab open after split, workspace-root figures / `.workbench` sketches, OS Trash prune.
+  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md`.
+
+## 2026-09-19 — Phase 2b+++++ split registry + CM export hook
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- **Workspace registry** (`workspace_registry.py`): CE-owned persistence under
+  `$CE_WORKSPACE_REGISTRY` or `$XDG_CONFIG_HOME/curiosity-engine/workspaces.json`,
+  sandboxed to `$HOME` / `$CE_WORKSPACE_HOME`. Records split provenance.
+- **APIs:** `GET/POST/DELETE /api/workspaces`; successful `POST /api/split` auto-registers
+  the target (shells still own tab-open chrome).
+- **CM export hook** (`cm_export.py` + `POST /api/cm-export`): invokes curiosity-merge
+  `subgraph_export.py` for a selected page set (license modes via `--include-vault`).
+  Supports `dry_run` (plan argv, no spawn). Discovers CM via `$CE_CM_ROOT` /
+  `$CURIOSITY_MERGE_ROOT` / sibling checkout / skill install paths. Target sandboxed
+  outside the source workspace and inside the registry home root.
+- **Tests:** `tests/test_workspace_registry_cm_export.py` (registry persistence +
+  export dry-run + split auto-register under embed prefix).
+
+### Notes
+
+- Native `wiki_partition` remains the default split path (no CM required).
+- Still Switchbay-only: rubber-band / `sy:split-proposal` UI, link-heal agents,
+  tab open after split, workspace-root figures / `.workbench` sketches, OS Trash prune.
+  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md`.
+
+## 2026-09-19 — Phase 2b++++ pack action dispatch
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- Pack APIs (Switchbay `pack.json` shape): `GET /api/packs`, `GET /api/packs/<name>/actions`,
+  `POST /api/packs/<pack>/action/<action>` (vault/wiki sandbox queue → `{run_id}`),
+  `POST /api/packs/toggle`, `POST /api/packs/install` (local path), `DELETE /api/packs?name=`.
+- Filebrowser context menu runs pack `file_routes` via the dispatch API.
+- Tests: `tests/test_filebrowser_packs.py` (escape / disabled / embed prefix).
+
+### Notes
+
+- Agent/LLM skill execution, git pack install, pip extras, reveal-in-OS, and drop-ingest
+  remain Switchbay-only (see `MIGRATION-INTAKE.md`).
+
+## 2026-09-19 — Phase 2b++ filebrowser FS mutate + pack routes stub
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- Sandboxed FS mutate APIs under `vault/` + `wiki/`: `POST /api/fs/{create,mkdir,rename,move,delete,duplicate}`, `GET /api/fs/stat`.
+- Pack `file_routes` discovery: `GET /api/file-routes` (read-only; install/dispatch stays shell-side).
+- Wiki-view Files context menu: New file/folder, Rename, Duplicate, Delete.
+- Tests: `tests/test_filebrowser_fs.py` (sandbox escape + embed-prefix API).
+
 ## 2026-09-16 — Wiki viewer mobile modal + sidebar
 
 **Migration:** none. **Breaking:** none.
