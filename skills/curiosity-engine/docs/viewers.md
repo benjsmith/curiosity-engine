@@ -73,7 +73,7 @@ Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
 calls `GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
 `*.ext` filter, graph-search highlight, and a minimal context menu.
 Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files
-mode. FS mutate via `/api/fs/*` (create/rename/move/delete/duplicate) and `GET /api/file-routes` discovery are CE-owned; pack *action* dispatch and reveal-in-OS remain Switchbay-side until later parity.
+mode. FS mutate via `/api/fs/*` and pack APIs (`GET /api/file-routes`, `/api/packs/*` list/dispatch/enable/local-install) are CE-owned; agent/LLM skill *execution*, reveal-in-OS, and drop-ingest remain Switchbay-side until later parity.
 
 **Curation replay (Phase 2b+++).** Graph-controls **replay ↻** opens an SVG
 overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
