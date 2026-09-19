@@ -24,7 +24,8 @@ Dispatch (``POST /api/packs/<pack>/action/<action>`` with ``{path}``):
     ``{run_id, pack, action}`` (Switchbay-compatible). Agent/LLM execution
     stays shell-side — CE accepts + sandboxes the request.
 
-Install: local-path copy into ``.workbench/packs/`` only (no git clone).
+Install: local-path copy into ``.workbench/packs/``, or git clone
+``--depth 1`` from an http(s)/git@ URL (same sandbox as path install).
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -255,6 +257,117 @@ def set_enabled(workspace: Path, name: str, enabled: bool) -> dict[str, Any]:
     _save_state(workspace, state)
     updated = get_pack(workspace, name)
     return {"ok": True, "pack": updated}
+
+
+
+_GIT_URL_PREFIXES = ("http://", "https://", "git@", "ssh://", "git+")
+
+
+def looks_like_git_url(source: str) -> bool:
+    """True for Switchbay-shaped pack install URL inputs."""
+    s = (source or "").strip()
+    if not s:
+        return False
+    if s.startswith(_GIT_URL_PREFIXES) or s.endswith(".git"):
+        return True
+    return False
+
+
+def _slug_from_url(url: str) -> str:
+    s = url.rstrip("/")
+    if s.endswith(".git"):
+        s = s[: -len(".git")]
+    s = s.rsplit("/", 1)[-1]
+    s = s.rsplit(":", 1)[-1]
+    s = re.sub(r"[^a-z0-9._-]+", "-", s.lower()).strip("-")
+    return s or "pack"
+
+
+def _validate_git_url(url: str) -> str:
+    """Allow only remote git transports; refuse file:// and local paths."""
+    u = (url or "").strip()
+    if not u:
+        raise PackError("url is required")
+    lower = u.lower()
+    if lower.startswith("file:"):
+        raise PackError("file:// URLs are not allowed for pack install")
+    if u.startswith("/") or u.startswith("\\") or (len(u) > 1 and u[1] == ":"):
+        raise PackError("local paths must use install_from_path, not git")
+    if not looks_like_git_url(u):
+        raise PackError(f"not a git URL: {u!r}")
+    # Strip git+ prefix used by some lockfiles.
+    if u.startswith("git+"):
+        u = u[4:]
+    return u
+
+
+def install_from_git(workspace: Path, url: str) -> dict[str, Any]:
+    """Clone ``url`` (``git clone --depth 1``) into ``.workbench/packs/<name>/``.
+
+    Directory name is derived from the URL slug; if pack.json ``name`` differs,
+    the directory is renamed to match (Switchbay parity). Refuses file:// and
+    nested installs into the destination tree. Does **not** fetch remote skills.
+    """
+    u = _validate_git_url(url)
+    ws = Path(workspace).resolve()
+    target_name = _slug_from_url(u)
+    if not _NAME_RE.match(target_name):
+        raise PackError(f"can't derive a safe pack name from {url!r}")
+    dest_root = ws / ".workbench" / "packs"
+    dest_root.mkdir(parents=True, exist_ok=True)
+    dest_root_res = dest_root.resolve()
+    target = dest_root / target_name
+    if target.exists():
+        raise PackError(f"pack {target_name!r} already installed in workspace")
+    # Ensure target stays under dest_root.
+    if not str(target.resolve()).startswith(str(dest_root_res) + os.sep):
+        raise PackError("refusing to install outside packs dir")
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH"}
+    }
+    try:
+        proc = subprocess.run(
+            ["git", "clone", "--depth", "1", u, str(target)],
+            capture_output=True,
+            timeout=120,
+            check=False,
+            env=env,
+        )
+    except FileNotFoundError as e:
+        raise PackError("git is not available on PATH") from e
+    except subprocess.TimeoutExpired as e:
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        raise PackError("git clone timed out") from e
+    if proc.returncode != 0:
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()[:400]
+        raise PackError(f"git clone failed (rc={proc.returncode}): {err}")
+    raw = _read_manifest(target)
+    if raw is None:
+        shutil.rmtree(target, ignore_errors=True)
+        raise PackError(f"cloned repo has no valid {PACK_FILE}")
+    name = str(raw.get("name") or "").strip()
+    if not _NAME_RE.match(name):
+        shutil.rmtree(target, ignore_errors=True)
+        raise PackError(f"manifest name invalid: {name!r}")
+    if name != target_name:
+        renamed = dest_root / name
+        if renamed.exists():
+            shutil.rmtree(target, ignore_errors=True)
+            raise PackError(f"manifest name {name!r} collides with existing pack")
+        if not str(renamed.resolve()).startswith(str(dest_root_res) + os.sep):
+            shutil.rmtree(target, ignore_errors=True)
+            raise PackError("refusing to install outside packs dir")
+        target.rename(renamed)
+        target = renamed
+    rec = get_pack(ws, name)
+    if rec is None:
+        raise PackError("install succeeded but pack not discoverable")
+    return {"ok": True, "pack": rec, "source": "git"}
 
 
 def install_from_path(workspace: Path, src: str | Path) -> dict[str, Any]:
