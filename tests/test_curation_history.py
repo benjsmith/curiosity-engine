@@ -37,6 +37,23 @@ class BuildFromData(unittest.TestCase):
         self.assertEqual(doc["degree"]["a"], 1)
         self.assertEqual(doc["degree"]["b"], 1)
 
+
+    def test_created_orders_before_type(self):
+        data = {
+            "nodes": [
+                {"id": "late", "title": "Late", "type": "source", "degree": 9},
+                {"id": "early", "title": "Early", "type": "note", "degree": 0},
+            ],
+            "edges": [],
+            "pages": {
+                "late": {"properties": {"created": "2024-06-01"}},
+                "early": {"properties": {"created": "2020-01-01"}},
+            },
+        }
+        doc = curation_history.build_from_data(data, duration_s=10, source="test")
+        node_ids = [e["id"] for e in doc["events"] if e["op"] == "node"]
+        self.assertEqual(node_ids, ["early", "late"])
+
     def test_empty(self):
         doc = curation_history.build_from_data({})
         self.assertEqual(doc["events"], [])

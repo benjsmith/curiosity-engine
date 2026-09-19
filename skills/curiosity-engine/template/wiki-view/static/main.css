@@ -1328,7 +1328,7 @@ svg.split-mode .node:not(.split-move):not(.split-copy) { opacity: 0.45; }
 }
 
 
-/* ── Curation replay overlay (Phase 2b+++) ──────────────────────── */
+/* ── Curation replay overlay (Phase 2b+++ polish) ─────────────────── */
 .ce-curation-replay {
   position: absolute;
   inset: 0;
@@ -1337,6 +1337,12 @@ svg.split-mode .node:not(.split-move):not(.split-copy) { opacity: 0.45; }
   z-index: 5;
   display: flex;
   flex-direction: column;
+  opacity: 1;
+  transition: opacity 1.4s ease-out;
+}
+.ce-curation-replay--fading {
+  pointer-events: none;
+  opacity: 0;
 }
 .ce-curation-replay-svg {
   flex: 1;

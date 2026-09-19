@@ -1,9 +1,10 @@
-/* Curation replay overlay (Phase 2b+++).
+/* Curation replay overlay (Phase 2b+++ polish).
  *
  * Vanilla port of Switchbay CurationReplay UX — play / pause / scrub / step
- * over a HistoryDoc. Timing contract matches knowledge-atlas
- * playReplayTimeline; SVG force layout is a slim d3 host (no React).
- * Honors window.ceApi / CE_PUBLIC_BASE. Deep-link: ?replay=1
+ * over a HistoryDoc. Timing matches knowledge-atlas playReplayTimeline;
+ * SVG force layout is a slim d3 host (no React). Honors window.ceApi /
+ * CE_PUBLIC_BASE. Deep-link ?replay=1 opens + autoplays a short intro.
+ * Polish: enter fade, radius inflate, settle, overlay fade, auto-fit.
  */
 window.CurationReplay = (function () {
   var W = 1000;
@@ -56,13 +57,19 @@ window.CurationReplay = (function () {
     var nodesIn = (data && data.nodes) || [];
     var edgesIn = (data && data.edges) || [];
     var duration = 12;
+    var pages = (data && data.pages) || {};
     var nodes = nodesIn
       .map(function (n) {
+        var created = n.created || "";
+        if (!created && pages[n.id] && pages[n.id].properties) {
+          created = pages[n.id].properties.created || "";
+        }
         return {
           id: String(n.id || "").trim(),
           title: String(n.title || n.id || ""),
           type: String(n.type || "unclassified"),
           degree: typeof n.degree === "number" ? n.degree : 0,
+          created: String(created || "").trim(),
         };
       })
       .filter(function (n) {
@@ -71,10 +78,29 @@ window.CurationReplay = (function () {
     if (!nodes.length) {
       return { duration: duration, events: [], source: "empty", degree: {}, node_count: 0 };
     }
+    var TYPE_TIER = {
+      source: 0, sources: 0, project: 1, entity: 2, concept: 3,
+      evidence: 4, fact: 4, figure: 5, table: 5, note: 6, todo: 6,
+      "todo-list": 6, analysis: 7,
+    };
+    function typeTier(t) {
+      return TYPE_TIER[(t || "unclassified").toLowerCase()] != null
+        ? TYPE_TIER[(t || "unclassified").toLowerCase()]
+        : 8;
+    }
     nodes.sort(function (a, b) {
-      var as = a.type === "source" || a.type === "sources" ? 0 : 1;
-      var bs = b.type === "source" || b.type === "sources" ? 0 : 1;
-      if (as !== bs) return as - bs;
+      var ac = (a.created || "").trim();
+      var bc = (b.created || "").trim();
+      if (ac || bc) {
+        if (ac && !bc) return -1;
+        if (!ac && bc) return 1;
+        var at = Date.parse(ac) || 0;
+        var bt = Date.parse(bc) || 0;
+        if (at !== bt) return at - bt;
+      }
+      var ta = typeTier(a.type);
+      var tb = typeTier(b.type);
+      if (ta !== tb) return ta - tb;
       if (b.degree !== a.degree) return b.degree - a.degree;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
@@ -209,6 +235,13 @@ window.CurationReplay = (function () {
     byId: null,
     degree: null,
     els: {},
+    zoom: null,
+    userInteracted: false,
+    tickCount: 0,
+    pendingNodeAdds: 0,
+    settleTimer: null,
+    fadeTimer: null,
+    autoplay: false,
   };
 
   function setCounts(n, e) {
@@ -241,13 +274,67 @@ window.CurationReplay = (function () {
       state.stopPlay = null;
     }
     state.playing = false;
+    if (state.settleTimer) {
+      clearTimeout(state.settleTimer);
+      state.settleTimer = null;
+    }
+    if (state.fadeTimer) {
+      clearTimeout(state.fadeTimer);
+      state.fadeTimer = null;
+    }
     if (state.sim) {
       state.sim.stop();
       state.sim = null;
     }
+    if (state.svg && state._markUser) {
+      state.svg.removeEventListener("wheel", state._markUser);
+      state.svg.removeEventListener("mousedown", state._markUser);
+      state.svg.removeEventListener("touchstart", state._markUser);
+      state._markUser = null;
+    }
     state.nodes = [];
     state.links = [];
     state.byId = new Map();
+    state.pendingNodeAdds = 0;
+    state.tickCount = 0;
+  }
+
+  function easeAutoFit() {
+    if (state.userInteracted || !state.nodes.length || !state.zoom || !state.svg) return;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (var i = 0; i < state.nodes.length; i++) {
+      var n = state.nodes[i];
+      var x = n.x != null ? n.x : W / 2;
+      var y = n.y != null ? n.y : H / 2;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+    if (!isFinite(minX)) return;
+    var pad = Math.max(40, Math.min(maxX - minX, maxY - minY) * 0.12);
+    var cloudW = Math.max(220, maxX - minX + pad * 2);
+    var cloudH = Math.max(220, maxY - minY + pad * 2);
+    var scale = Math.min(W / cloudW, H / cloudH, 1.5);
+    var cx = (minX + maxX) / 2;
+    var cy = (minY + maxY) / 2;
+    var tx = W / 2 - cx * scale;
+    var ty = H / 2 - cy * scale;
+    var target = d3.zoomIdentity.translate(tx, ty).scale(scale);
+    var current = d3.zoomTransform(state.svg);
+    var k = 0.08;
+    var blended = d3.zoomIdentity
+      .translate(current.x + (target.x - current.x) * k, current.y + (target.y - current.y) * k)
+      .scale(current.k + (target.k - current.k) * k);
+    d3.select(state.svg).call(state.zoom.transform, blended);
+  }
+
+  function inflateRadii() {
+    for (var i = 0; i < state.nodes.length; i++) {
+      var n = state.nodes[i];
+      var target = radiusFor(n._inc || 0);
+      if (Math.abs(target - n.r) > 0.05) n.r += (target - n.r) * 0.18;
+    }
   }
 
   function ensureLayers() {
@@ -260,6 +347,8 @@ window.CurationReplay = (function () {
     state.nodeG = root.append("g").attr("class", "ce-replay-nodes");
     state.labelG = root.append("g").attr("class", "ce-replay-labels");
     state.rootG = root;
+    state.userInteracted = false;
+    state.tickCount = 0;
 
     var zoom = d3
       .zoom()
@@ -267,8 +356,17 @@ window.CurationReplay = (function () {
       .on("zoom", function (event) {
         root.attr("transform", event.transform.toString());
       });
+    zoom.on("start.user", function (event) {
+      if (event.sourceEvent) state.userInteracted = true;
+    });
     sel.call(zoom);
     sel.call(zoom.transform, d3.zoomIdentity);
+    state.zoom = zoom;
+    var markUser = function () { state.userInteracted = true; };
+    state.svg.addEventListener("wheel", markUser, { passive: true });
+    state.svg.addEventListener("mousedown", markUser);
+    state.svg.addEventListener("touchstart", markUser, { passive: true });
+    state._markUser = markUser;
 
     state.sim = d3
       .forceSimulation(state.nodes)
@@ -290,43 +388,29 @@ window.CurationReplay = (function () {
           .distance(PHYSICS.link)
           .strength(0.55),
       )
-      .alphaDecay(0.02)
+      .alphaDecay(0.005)
+      .alphaTarget(0.03)
       .velocityDecay(0.35);
 
     state.sim.on("tick", function () {
+      state.tickCount += 1;
       state.linkG
         .selectAll("line")
-        .attr("x1", function (d) {
-          return d.source.x || 0;
-        })
-        .attr("y1", function (d) {
-          return d.source.y || 0;
-        })
-        .attr("x2", function (d) {
-          return d.target.x || 0;
-        })
-        .attr("y2", function (d) {
-          return d.target.y || 0;
-        });
+        .attr("x1", function (d) { return d.source.x || 0; })
+        .attr("y1", function (d) { return d.source.y || 0; })
+        .attr("x2", function (d) { return d.target.x || 0; })
+        .attr("y2", function (d) { return d.target.y || 0; });
       state.nodeG
         .selectAll("circle")
-        .attr("cx", function (d) {
-          return d.x || 0;
-        })
-        .attr("cy", function (d) {
-          return d.y || 0;
-        })
-        .attr("r", function (d) {
-          return d.r;
-        });
+        .attr("cx", function (d) { return d.x || 0; })
+        .attr("cy", function (d) { return d.y || 0; })
+        .attr("r", function (d) { return d.r; });
       state.labelG
         .selectAll("text")
-        .attr("x", function (d) {
-          return d.x || 0;
-        })
-        .attr("y", function (d) {
-          return (d.y || 0) - d.r - 4;
-        });
+        .attr("x", function (d) { return d.x || 0; })
+        .attr("y", function (d) { return (d.y || 0) - d.r - 4; });
+      if (state.tickCount % 3 === 0) inflateRadii();
+      if (state.tickCount % 5 === 0) easeAutoFit();
     });
   }
 
@@ -344,12 +428,16 @@ window.CurationReplay = (function () {
           })
           .attr("stroke", "rgba(0,0,0,0.35)")
           .attr("stroke-width", 0.6)
-          .attr("opacity", 0.95);
+          .attr("r", function (d) { return d.r; })
+          .attr("opacity", 0)
+          .call(function (selN) {
+            selN.transition().duration(500).attr("opacity", 0.95);
+          });
       });
 
     var labelled = state.nodes.slice().sort(function (a, b) {
       return (b.finalDeg || 0) - (a.finalDeg || 0);
-    }).slice(0, 24);
+    }).slice(0, 30);
 
     state.labelG
       .selectAll("text")
@@ -362,9 +450,12 @@ window.CurationReplay = (function () {
           .attr("text-anchor", "middle")
           .attr("fill", "var(--text-muted, #aaa)")
           .attr("font-size", 10)
-          .attr("opacity", 0.85)
+          .attr("opacity", 0)
           .text(function (d) {
             return d.title;
+          })
+          .call(function (selT) {
+            selT.transition().duration(700).attr("opacity", 0.85);
           });
       });
 
@@ -376,12 +467,21 @@ window.CurationReplay = (function () {
           .append("line")
           .attr("stroke", "#888")
           .attr("stroke-width", 0.5)
-          .attr("stroke-opacity", 0.35);
+          .attr("stroke-opacity", 0)
+          .call(function (selL) {
+            selL.transition().duration(700).attr("stroke-opacity", 0.35);
+          });
       });
 
     state.sim.nodes(state.nodes);
     state.sim.force("link").links(state.links);
-    state.sim.alpha(0.35).restart();
+    if (state.pendingNodeAdds > 0 && state.sim.alpha() < 0.22) {
+      var kick = Math.min(0.22, 0.06 + state.pendingNodeAdds * 0.004);
+      state.sim.alpha(kick);
+    } else if (!state.playing) {
+      state.sim.alpha(Math.max(state.sim.alpha(), 0.18)).restart();
+    }
+    state.pendingNodeAdds = 0;
     setCounts(state.nodes.length, state.links.length);
   }
 
@@ -389,7 +489,7 @@ window.CurationReplay = (function () {
     if (ev.op === "node") {
       if (state.byId.has(ev.id)) return;
       var angle = state.nodes.length * 0.61803 * Math.PI * 2;
-      var r = 160 + Math.random() * 60;
+      var r = 180 + Math.random() * 80;
       var cx = state.nodes.length
         ? state.nodes.reduce(function (s, n) {
             return s + (n.x || W / 2);
@@ -405,31 +505,41 @@ window.CurationReplay = (function () {
         title: ev.title,
         type: ev.type,
         finalDeg: (state.degree && state.degree[ev.id]) || 0,
+        _inc: 0,
         r: radiusFor(0),
         x: cx + Math.cos(angle) * r,
         y: cy + Math.sin(angle) * r,
       };
       state.nodes.push(node);
       state.byId.set(ev.id, node);
+      state.pendingNodeAdds = (state.pendingNodeAdds || 0) + 1;
     } else if (ev.op === "edge") {
       var s = state.byId.get(ev.source);
       var t = state.byId.get(ev.target);
       if (s && t) {
         state.links.push({ source: s, target: t });
-        s.r = radiusFor((s.finalDeg || 0) * 0.5 + 1);
-        t.r = radiusFor((t.finalDeg || 0) * 0.5 + 1);
+        s._inc = (s._inc || 0) + 1;
+        t._inc = (t._inc || 0) + 1;
       }
     }
   }
 
   function rebuildTo(index) {
+    var prev = state.cursor;
+    var keepUser = state.userInteracted;
     tearSim();
     ensureLayers();
+    // Major scrub jumps: re-enable autofit unless the user already panned/zoomed.
+    state.userInteracted = keepUser && Math.abs((index || 0) - prev) <= 1;
     state.cursor = Math.max(0, Math.min(index, (state.history.events || []).length));
     var events = sortEvents(state.history.events);
     for (var i = 0; i < state.cursor; i++) applyEvent(events[i]);
     paint();
     updateChrome();
+    // Kick a few fit ticks after large jumps.
+    if (!state.userInteracted && state.cursor > 0) {
+      for (var f = 0; f < 8; f++) easeAutoFit();
+    }
   }
 
   function pause() {
@@ -441,6 +551,25 @@ window.CurationReplay = (function () {
     updateChrome();
   }
 
+  function beginSettleAndFade() {
+    if (state.sim) {
+      state.sim.alphaTarget(0).alpha(0.55).restart();
+    }
+    setStatus("Settling…");
+    if (state.settleTimer) clearTimeout(state.settleTimer);
+    state.settleTimer = setTimeout(function () {
+      state.settleTimer = null;
+      if (!state.overlay) return;
+      setStatus("Done — fading to live graph");
+      state.overlay.classList.add("ce-curation-replay--fading");
+      if (state.fadeTimer) clearTimeout(state.fadeTimer);
+      state.fadeTimer = setTimeout(function () {
+        state.fadeTimer = null;
+        closeOverlay();
+      }, 1400);
+    }, 1800);
+  }
+
   function play() {
     if (!state.history) return;
     var total = (state.history.events || []).length;
@@ -448,12 +577,22 @@ window.CurationReplay = (function () {
       rebuildTo(0);
     }
     pause();
+    if (state.settleTimer) {
+      clearTimeout(state.settleTimer);
+      state.settleTimer = null;
+    }
+    if (state.fadeTimer) {
+      clearTimeout(state.fadeTimer);
+      state.fadeTimer = null;
+    }
+    if (state.overlay) state.overlay.classList.remove("ce-curation-replay--fading");
     state.playing = true;
     updateChrome();
     setStatus("Playing…");
     var start = state.cursor;
+    // Slightly faster than wall duration so intro stays short (~8s feel).
     state.stopPlay = playFrom(state.history, start, {
-      rate: Math.max(0.25, (state.history.duration || 12) / 8),
+      rate: Math.max(0.35, (state.history.duration || 12) / 7),
       onEvent: function (ev, absIndex) {
         applyEvent(ev);
         state.cursor = absIndex + 1;
@@ -465,7 +604,12 @@ window.CurationReplay = (function () {
         state.stopPlay = null;
         state.cursor = total;
         updateChrome();
-        setStatus("Done — scrub or Replay");
+        if (state.autoplay) {
+          beginSettleAndFade();
+        } else {
+          setStatus("Done — scrub or Replay");
+          if (state.sim) state.sim.alphaTarget(0).alpha(0.4).restart();
+        }
       },
     });
   }
@@ -481,9 +625,11 @@ window.CurationReplay = (function () {
     pause();
     tearSim();
     if (state.overlay) {
+      state.overlay.classList.remove("ce-curation-replay--fading");
       state.overlay.remove();
       state.overlay = null;
     }
+    state.autoplay = false;
     document.body.dataset.replay = "0";
     if (state.els.toggle) state.els.toggle.setAttribute("aria-pressed", "false");
   }
@@ -561,6 +707,10 @@ window.CurationReplay = (function () {
         : "No curation history yet",
     );
     rebuildTo(0);
+    if (state.autoplay && nEv) {
+      setStatus("Intro autoplay…");
+      play();
+    }
   }
 
   function init(data) {
@@ -569,12 +719,20 @@ window.CurationReplay = (function () {
     state.els.toggle = document.getElementById("replay-toggle");
     if (state.els.toggle) {
       state.els.toggle.addEventListener("click", function () {
+        state.autoplay = false;
         openOverlay();
       });
     }
     try {
       var params = new URLSearchParams(window.location.search);
-      if (params.get("replay") === "1") {
+      // ?replay=1 → open + short autoplay intro (Switchbay opening parity).
+      // ?replay=manual → open paused at empty (chrome only).
+      var rp = params.get("replay");
+      if (rp === "1" || rp === "auto") {
+        state.autoplay = true;
+        openOverlay();
+      } else if (rp === "manual") {
+        state.autoplay = false;
         openOverlay();
       }
     } catch (e) {}

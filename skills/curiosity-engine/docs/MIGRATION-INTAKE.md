@@ -114,20 +114,22 @@ Deep-link: `?filebrowser=1` opens Files mode.
 | `template/wiki-view/static/replay.js` | Vanilla SVG overlay: play/pause/scrub/step (`?replay=1`) |
 | Tests | `tests/test_curation_history.py` |
 
-**Parity vs Switchbay (CurationReplay):**
+**Parity vs Switchbay (CurationReplay) — Phase 2b+++ polish:**
 
 | Behavior | Status |
 |----------|--------|
 | HistoryDoc + timed play | ✅ (`playReplayTimeline` contract + vanilla port) |
 | Play / pause / scrub / step chrome | ✅ CE (Switchbay is autoplay-only + ↻) |
-| SVG force grow animation | ≈ slim d3 host (no settle/fade/auto-fit polish) |
+| SVG force grow animation | ✅ enter fade + radius inflate + settle kick |
 | `CE_PUBLIC_BASE` / `ceApi` | ✅ |
-| `GET /api/curation/history` | ≈ from `data.json` synthetic order; git first-seen optional via shell cache |
-| Git-log chronology rebuild | ❌ deferred (use Switchbay cache if present) |
-| Opening autoplay on Graph tab mount | ❌ deferred (opt-in button / `?replay=1`) |
-| Atlas canvas binding | ❌ deferred |
-| Fade crossfade onto live graph | ❌ deferred |
-| Top-label degree ranking + zoom autfit | ≈ partial (top-24 labels; manual zoom only) |
+| `GET /api/curation/history` | ≈ synthetic from `data.json` (`created`/type-tier order); prefers `.workbench/curation-history.json` when present |
+| Git-log chronology rebuild | ❌ deferred (use Switchbay/workbench cache if present) |
+| Opening autoplay | ✅ `?replay=1` / `?replay=auto` short intro autoplay; button opens paused |
+| Atlas canvas binding | ❌ deferred (SVG host only — remaining gap) |
+| Fade crossfade onto live graph | ✅ settle → overlay fade-out after autoplay intro |
+| Top-label degree ranking + zoom autofit | ✅ top-30 labels; easeAutoFit on ticks & major scrub jumps |
+
+Pure helpers: `packages/knowledge-atlas/src/animation/replayCamera.ts` (`computeFitTransform`, `compareSyntheticNodes`, …).
 
 
 ### Split (subgraph → new workspace)
