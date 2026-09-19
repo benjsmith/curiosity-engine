@@ -1307,6 +1307,26 @@ body[data-sidebar-mode="pages"] #filebrowser-pane { display: none; }
 .split-status { font-size: 12px; margin-top: 8px; opacity: .85; min-height: 1.2em; }
 #split-toggle[aria-pressed="true"] { outline: 1px solid var(--accent, #6be8b3); }
 
+/* Split mode rubber-band (Classic SVG; Switchbay parity) */
+svg.split-mode .node { cursor: pointer; }
+svg.split-mode .node:not(.split-move):not(.split-copy) { opacity: 0.45; }
+.node.split-move > circle.node-body {
+  stroke: #d29922 !important;
+  stroke-width: 3px !important;
+}
+.node.split-copy > circle.node-body {
+  stroke: #3fb950 !important;
+  stroke-width: 3px !important;
+  stroke-dasharray: 4 3;
+}
+.split-rubber {
+  fill: rgba(210, 153, 34, 0.08);
+  stroke: #d29922;
+  stroke-width: 1px;
+  stroke-dasharray: 5 3;
+  pointer-events: none;
+}
+
 
 /* ── Curation replay overlay (Phase 2b+++) ──────────────────────── */
 .ce-curation-replay {

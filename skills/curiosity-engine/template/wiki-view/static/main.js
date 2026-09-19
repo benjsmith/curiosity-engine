@@ -68,6 +68,12 @@
   /* Graph search marks the canvas and the page list together. Wired
    * after the viewer so it talks to whichever one took the pane. */
   if (window.GraphSearch) GraphSearch.init(data, graphApi);
+  /* Active viewer facade for SplitPanel rubber-band / splitEnter
+   * (Classic Graph or AtlasViewer). Embed v2 mounts the same wiki-view. */
+  window.CEViewer = graphApi;
+  if (window.SplitPanel && document.body.dataset.split === '1' && SplitPanel.open) {
+    try { SplitPanel.open(); } catch (e) { /* ignore */ }
+  }
   _maybeShowScanStaleBanner(data);
 
   /* refetchData — called after the Edit module saves a page. Pulls a
