@@ -73,7 +73,7 @@ Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
 calls `GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
 `*.ext` filter, graph-search highlight, and a minimal context menu.
 Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files
-mode. Pack routes and FS mutate ops remain Switchbay-side until parity.
+mode. FS mutate via `/api/fs/*` (create/rename/move/delete/duplicate) and `GET /api/file-routes` discovery are CE-owned; pack *action* dispatch and reveal-in-OS remain Switchbay-side until later parity.
 
 ## Obsidian (alternative — same underlying markdown)
 
