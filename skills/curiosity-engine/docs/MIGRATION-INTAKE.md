@@ -149,7 +149,11 @@ Deep-link: `?filebrowser=1` opens Files mode.
 | `POST /api/split` + `GET /api/split` in `viewer_server.py` | Sync partition; `target` or `CE_SPLIT_HOME/<name>`; honors `CE_PUBLIC_BASE` |
 | `template/wiki-view/static/split.js` | Minimal panel (`?split=1` / split control); move\|copy policies |
 | `packages/knowledge-atlas` `partitionSelection` | Pure move\|copy selection helpers for atlas multi-select |
-| Tests | `tests/test_wiki_partition.py` + `partitionSelection.test.ts` |
+| `scripts/workspace_registry.py` | CE-owned workspace registry (`CE_WORKSPACE_REGISTRY` / XDG); sandbox under `$HOME` or `CE_WORKSPACE_HOME` |
+| `scripts/cm_export.py` | Optional curiosity-merge `subgraph_export` subprocess hook (dry-run + sandbox) |
+| `GET/POST/DELETE /api/workspaces` | Registry list / register / unregister |
+| `POST /api/cm-export` | CM export for selected pages (`dry_run` supported) |
+| Tests | `tests/test_wiki_partition.py` + `tests/test_workspace_registry_cm_export.py` + `partitionSelection.test.ts` |
 
 **Parity vs Switchbay (split):**
 
@@ -163,9 +167,10 @@ Deep-link: `?filebrowser=1` opens Files mode.
 | Recoverable source prune (MOVE) | ✅ (`wiki/.deleted/`) |
 | `CE_PUBLIC_BASE` embed paths | ✅ |
 | Atlas multi-select policy helpers | ✅ |
-| Workspace registry / tab open | ❌ shell (Switchbay) |
+| Workspace registry persistence | ✅ CE (`workspace_registry` + `GET/POST/DELETE /api/workspaces`; auto-register on split) |
+| Tab open / chrome after split | ❌ shell (Switchbay) |
 | Rubber-band / `sy:split-proposal` UI | ❌ deferred (shell or later CE) |
-| CM `subgraph_export` license modes | ❌ deferred (CE-native copy; no CM dep) |
+| CM `subgraph_export` hook (license modes) | ✅ CE (`cm_export` + `POST /api/cm-export`, dry-run supported; optional CM install) |
 | Workspace-root figures / `.workbench` sketches | ❌ deferred |
 | Async curator link-heal agents | ❌ deferred (shell) |
 | OS Trash prune | ❌ deferred (CE uses `.deleted/`) |
@@ -183,5 +188,5 @@ Deep-link: `?filebrowser=1` opens Files mode.
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
 2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
 3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
-4. **2b++ / 2b+++ / 2b++++ (partial):** FS mutate + pack list/dispatch/install + SVG replay UI landed; rubber-band split / CM export / agent skill *execution* / git-history rebuild / reveal-in-OS / drop-ingest still deferred
+4. **2b++ / 2b+++ / 2b++++ / 2b+++++ (partial):** FS mutate + pack list/dispatch/install + SVG replay UI + **workspace registry + CM export hook** landed; rubber-band split / heal agents / git-history rebuild / reveal-in-OS / drop-ingest / tab-open chrome still deferred
 5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes
