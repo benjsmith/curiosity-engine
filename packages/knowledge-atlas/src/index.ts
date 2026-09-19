@@ -75,6 +75,17 @@ export {
 } from "./animation/historyFromGraph.ts";
 
 export {
+  computeFitTransform,
+  boundsFromPositions,
+  blendZoom,
+  compareSyntheticNodes,
+  typeTier,
+  type FitBounds,
+  type ZoomTransform,
+  type FitViewOpts,
+} from "./animation/replayCamera.ts";
+
+export {
   buildPartitionSelection,
   setPartitionPolicy,
   addToPartitionSelection,

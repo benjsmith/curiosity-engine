@@ -21,6 +21,35 @@ MAX_EVENTS = 2500
 CACHE_REL = Path(".workbench") / "curation-history.json"
 
 
+
+_TYPE_TIER = {
+    "source": 0,
+    "sources": 0,
+    "project": 1,
+    "entity": 2,
+    "concept": 3,
+    "evidence": 4,
+    "fact": 4,
+    "figure": 5,
+    "table": 5,
+    "note": 6,
+    "todo": 6,
+    "todo-list": 6,
+    "analysis": 7,
+}
+
+
+def _type_tier(t: str) -> int:
+    return _TYPE_TIER.get((t or "unclassified").lower(), 8)
+
+
+def _node_sort_key(n: dict[str, Any]) -> tuple:
+    """Prefer ISO created asc; else type tier → degree desc → id."""
+    created = str(n.get("created") or "").strip()
+    if created:
+        return (0, created, -(n.get("degree") or 0), n["id"])
+    return (1, _type_tier(str(n.get("type") or "")), -(n.get("degree") or 0), n["id"])
+
 def _edge_id(ref: Any) -> str:
     if isinstance(ref, str):
         return ref
@@ -47,12 +76,16 @@ def build_from_data(
         nid = str(n.get("id") or "").strip()
         if not nid:
             continue
+        created = n.get("created")
+        if not created and isinstance(n.get("properties"), dict):
+            created = n["properties"].get("created")
         nodes.append(
             {
                 "id": nid,
                 "title": str(n.get("title") or nid),
                 "type": str(n.get("type") or "unclassified"),
                 "degree": int(n.get("degree") or 0),
+                "created": str(created).strip() if created else "",
             }
         )
     if not nodes:
@@ -65,11 +98,22 @@ def build_from_data(
             "version": SCHEMA_VERSION,
         }
 
-    def rank(n: dict[str, Any]) -> tuple[int, int, str]:
-        is_source = 0 if n["type"] in ("source", "sources") else 1
-        return (is_source, -(n["degree"] or 0), n["id"])
 
-    nodes.sort(key=rank)
+    pages = (data or {}).get("pages") or {}
+    if isinstance(pages, dict):
+        for n in nodes:
+            if n.get("created"):
+                continue
+            page = pages.get(n["id"])
+            if not isinstance(page, dict):
+                continue
+            props = page.get("properties")
+            if not isinstance(props, dict):
+                props = {}
+            created = props.get("created") or page.get("created")
+            if created:
+                n["created"] = str(created).strip()
+    nodes.sort(key=_node_sort_key)
     by_id = {n["id"]: n for n in nodes}
     index_of = {n["id"]: i for i, n in enumerate(nodes)}
     n_count = len(nodes)

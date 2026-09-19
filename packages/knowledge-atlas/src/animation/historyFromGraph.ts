@@ -7,6 +7,7 @@
  */
 
 import type { HistoryDoc, ReplayEvent } from "./replayTimeline.ts";
+import { compareSyntheticNodes } from "./replayCamera.ts";
 
 export type GraphNodeIn = {
   id: string;
@@ -14,6 +15,8 @@ export type GraphNodeIn = {
   type?: string;
   degree?: number;
   path?: string;
+  /** ISO date from frontmatter `created` when available. */
+  created?: string;
 };
 
 export type GraphEdgeIn = {
@@ -67,6 +70,7 @@ export function buildHistoryFromGraph(
       title: String(n.title || n.id || "").trim() || String(n.id || ""),
       type: String(n.type || "unclassified"),
       degree: typeof n.degree === "number" ? n.degree : 0,
+      created: typeof n.created === "string" ? n.created.trim() : "",
     }))
     .filter((n) => n.id);
 
@@ -74,17 +78,8 @@ export function buildHistoryFromGraph(
     return { duration, events: [], source: "empty", node_count: 0, degree: {} };
   }
 
-  const rank = (n: (typeof nodes)[0]): [number, number, string] => {
-    const isSource = n.type === "source" || n.type === "sources" ? 0 : 1;
-    return [isSource, -(n.degree || 0), n.id];
-  };
-  nodes.sort((a, b) => {
-    const ra = rank(a);
-    const rb = rank(b);
-    if (ra[0] !== rb[0]) return ra[0] - rb[0];
-    if (ra[1] !== rb[1]) return ra[1] - rb[1];
-    return ra[2] < rb[2] ? -1 : ra[2] > rb[2] ? 1 : 0;
-  });
+  // Prefer frontmatter `created` when present; else type-tier → degree → id.
+  nodes.sort(compareSyntheticNodes);
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const indexOf = new Map(nodes.map((n, i) => [n.id, i]));

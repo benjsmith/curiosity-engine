@@ -75,13 +75,13 @@ calls `GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
 Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files
 mode. FS mutate via `/api/fs/*` and pack APIs (`GET /api/file-routes`, `/api/packs/*` list/dispatch/enable/local-install) are CE-owned; agent/LLM skill *execution*, reveal-in-OS, and drop-ingest remain Switchbay-side until later parity.
 
-**Curation replay (Phase 2b+++).** Graph-controls **replay ↻** opens an SVG
-overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
-`data.json`, or `.workbench/curation-history.json` if a shell pre-warmed it).
-Play / pause / scrub / step; `?replay=1` deep-link. Timing matches
-knowledge-atlas `playReplayTimeline`. Still short of Switchbay's opening
-autoplay + git chronology + fade/autfit polish — see
-[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
+**Curation replay (Phase 2b+++ polish).** Graph-controls **replay ↻** opens an
+SVG overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
+`data.json` with `created`/type-tier ordering, or `.workbench/curation-history.json`
+when a shell pre-warmed it). Play / pause / scrub / step; `?replay=1` opens
+and autoplays a short intro (settle + fade). Enter fade, radius inflate,
+easeAutoFit after major jumps. Atlas canvas binding and git-log rebuild remain
+deferred — see [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
 
 ## Obsidian (alternative — same underlying markdown)
 
