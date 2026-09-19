@@ -104,9 +104,12 @@ Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
   `viewer_server.py`
 - Hosted hook: `X-CE-Host` / `?host=switchbay|okbay` and `GET /api/hosted`
 - ADR: [`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md)
-- **Phase 2b:** `GET /api/tree` filebrowser (vault/ + wiki/) + wiki-view Files
+- **Phase 2b:** `GET /api/tree` filebrowser (vault/ + wiki/) + wiki-view Files mode;
+  knowledge-atlas `playReplayTimeline` animation hook
+- **Phase 2b+:** wiki partition / `POST /api/split` + minimal split UI
 - **Phase 2b++:** `/api/fs/*` mutate (vault/wiki sandbox) + `GET /api/file-routes` stub
-  mode; knowledge-atlas `playReplayTimeline` animation hook. Split deferred.
+- **Phase 2b+++:** SVG curation replay UI (`GET /api/curation/history`, play/pause/scrub);
+  pack *action* dispatch still deferred
   Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
 
 Bare `viewer.sh` loopback default remains port **8090**; bind host is always
