@@ -51,7 +51,7 @@ Paths relative to the Switchbay repo root (branch `feat/skill-shell-rationalizat
 | Sort A↔Z | ✅ |
 | Open wiki page → modal | ✅ |
 | Open `*.extracted.md` via vault API | ✅ (`VaultSources.open`) |
-| Pack `file_routes` / ext handlers | ≈ CE discovery (`GET /api/file-routes`); dispatch / install still shell |
+| Pack `file_routes` / ext handlers | ≈ CE discovery + dispatch/install/enable (`GET /api/file-routes`, `/api/packs/*`); agent/LLM skill exec still shell |
 | FS mutate (create/rename/move/delete/dup) | ✅ CE (`/api/fs/*`, vault/wiki sandbox) |
 | Reveal-in-OS / open-external | ❌ deferred (shell / OS helpers) |
 | Drop-to-ingest | ❌ deferred |
@@ -65,11 +65,24 @@ Paths relative to the Switchbay repo root (branch `feat/skill-shell-rationalizat
 | `scripts/filebrowser_fs.py` | Sandboxed create / mkdir / rename / move / delete / duplicate / stat under `vault/` + `wiki/` only |
 | `scripts/filebrowser_packs.py` | Read-only `pack.json` `file_routes` from `.workbench/packs/`, `packs/`, or `CE_PACKS_DIR` |
 | `POST /api/fs/{create,mkdir,rename,move,delete,duplicate}` + `GET /api/fs/stat` | Honors `CE_PUBLIC_BASE`; wiki writes trigger viewer rebuild |
-| `GET /api/file-routes` | `{ ok, routes, count }` — Switchbay-compatible shape; no install/action dispatch |
+| `GET /api/file-routes` | `{ ok, routes, count }` — enabled packs only |
 | `template/wiki-view/static/filebrowser.js` | Context menu: New file/folder, Rename, Duplicate, Delete |
 | Tests | `tests/test_filebrowser_fs.py` (sandbox escape + API) |
 
 **API notes for Switchbay embed:** call CE under `/embed/ce/api/fs/*` with the same JSON bodies as Switchbay Step E where overlapping (`delete` `{path}`, `duplicate` `{path}`). CE-only: `create` `{path, kind?, content?}`, `mkdir` `{path}`, `rename`/`move` `{path, to}`. Trash → OS trash when available, else `.workbench/trash/`.
+
+#### Phase 2b++++ landed (CE) — pack action dispatch
+
+| Artifact | Role |
+|----------|------|
+| `scripts/filebrowser_packs.py` | list / enable / local install / uninstall + sandboxed `dispatch_action` (same `pack.json` Manifest) |
+| `GET /api/packs`, `GET /api/packs/<name>/actions` | Pack registry + per-pack file_routes |
+| `POST /api/packs/<pack>/action/<action>` | `{path}` under vault/wiki → `{run_id, pack, action}` queue (`.workbench/pack-runs/`) |
+| `POST /api/packs/toggle`, `POST /api/packs/install`, `DELETE /api/packs?name=` | Enable state + local-path install into `.workbench/packs/` (no git) |
+| `template/wiki-view/static/filebrowser.js` | Context menu pack actions → dispatch API |
+| Tests | `tests/test_filebrowser_packs.py` (sandbox escape + embed-prefix API) |
+
+**Still Switchbay-only (filebrowser):** reveal-in-OS / open-external, drop-to-ingest, git pack install, pip `requires_extra`, agent/LLM skill execution for queued runs, SourceBrowser/WikiPane dual pane, ext filter chips.
 
 Deep-link: `?filebrowser=1` opens Files mode.
 
@@ -170,5 +183,5 @@ Deep-link: `?filebrowser=1` opens Files mode.
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
 2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
 3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
-4. **2b++ / 2b+++ (partial):** FS mutate + file-routes stub + SVG replay UI landed; rubber-band split / CM export / pack *action* dispatch / git-history rebuild still deferred
+4. **2b++ / 2b+++ / 2b++++ (partial):** FS mutate + pack list/dispatch/install + SVG replay UI landed; rubber-band split / CM export / agent skill *execution* / git-history rebuild / reveal-in-OS / drop-ingest still deferred
 5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes

@@ -107,9 +107,10 @@ Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
 - **Phase 2b:** `GET /api/tree` filebrowser (vault/ + wiki/) + wiki-view Files mode;
   knowledge-atlas `playReplayTimeline` animation hook
 - **Phase 2b+:** wiki partition / `POST /api/split` + minimal split UI
-- **Phase 2b++:** `/api/fs/*` mutate (vault/wiki sandbox) + `GET /api/file-routes` stub
-- **Phase 2b+++:** SVG curation replay UI (`GET /api/curation/history`, play/pause/scrub);
-  pack *action* dispatch still deferred
+- **Phase 2b++:** `/api/fs/*` mutate (vault/wiki sandbox) + `GET /api/file-routes`
+- **Phase 2b+++:** SVG curation replay UI (`GET /api/curation/history`, play/pause/scrub)
+- **Phase 2b++++:** pack list / enable / local install + sandboxed action dispatch
+  (`/api/packs/*`); agent/LLM skill execution still Switchbay
   Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
 
 Bare `viewer.sh` loopback default remains port **8090**; bind host is always

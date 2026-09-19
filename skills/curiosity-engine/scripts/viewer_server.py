@@ -13,7 +13,13 @@ Endpoints
     GET  /api/vault/<name>              vault/*.extracted.md basenames only
     GET  /api/hosted                    hosted-mode stub (host=switchbay|okbay)
     GET  /api/tree                      vault/ + wiki/ relative paths (filebrowser)
-    GET  /api/file-routes               pack Manifest.file_routes (discovery stub)
+    GET  /api/file-routes               pack Manifest.file_routes (enabled packs)
+    GET  /api/packs                     list discovered packs + actions
+    GET  /api/packs/<name>/actions      file_routes / actions for one pack
+    POST /api/packs/<pack>/action/<act> dispatch named action {path} (sandbox queue)
+    POST /api/packs/toggle              {name, enabled} workspace enable state
+    POST /api/packs/install             {path} local-path install → .workbench/packs/
+    DELETE /api/packs?name=             uninstall workspace-scope pack
     GET  /api/fs/stat?path=             sandbox stat under vault/|wiki/
     GET  /api/split                     last partition status (workspace split spike)
     GET  /api/curation/history          HistoryDoc for graph replay UI
@@ -45,6 +51,9 @@ Writes are constrained:
     * /api/fs/* mutates only under `vault/` + `wiki/` (see filebrowser_fs.py);
       escapes, hidden components, and SKIP_DIRS are refused. Delete goes to
       OS trash when available, else `.workbench/trash/`.
+    * /api/packs/*/action/* requires the target file under vault/|wiki/;
+      install only copies into `.workbench/packs/` (no git). Agent/LLM skill
+      execution stays Switchbay-side — CE queues the run record.
 
 After any successful write the server invokes
 `wiki_render.py build <wiki_dir> --output-dir <bundle_dir>` so the
@@ -171,6 +180,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_get_tree()
         if url.path == "/api/file-routes":
             return self._handle_get_file_routes()
+        if url.path == "/api/packs":
+            return self._handle_get_packs()
+        m_actions = self._match_pack_actions(url.path)
+        if m_actions is not None:
+            return self._handle_get_pack_actions(m_actions)
         if url.path == "/api/fs/stat":
             return self._handle_fs_stat(urllib.parse.parse_qs(url.query))
         if url.path == "/api/split":
@@ -202,6 +216,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_fs_delete()
         if url.path == "/api/fs/duplicate":
             return self._handle_fs_duplicate()
+        if url.path == "/api/packs/toggle":
+            return self._handle_packs_toggle()
+        if url.path == "/api/packs/install":
+            return self._handle_packs_install()
+        m_action = self._match_pack_action(url.path)
+        if m_action is not None:
+            return self._handle_pack_action(m_action[0], m_action[1])
+        return self._json(404, {"error": "not found"})
+
+    def do_DELETE(self):
+        url = self._rewrite_path()
+        if url.path == "/api/packs":
+            return self._handle_packs_uninstall(urllib.parse.parse_qs(url.query))
         return self._json(404, {"error": "not found"})
 
     def _looks_like_html(self, path: str) -> bool:
@@ -286,10 +313,111 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self._json(200, filebrowser_tree.tree_payload(WORKSPACE_DIR))
 
     def _handle_get_file_routes(self) -> None:
-        """Pack file_routes discovery stub (Phase 2b++)."""
+        """Pack file_routes from enabled packs (Phase 2b++++)."""
         if WORKSPACE_DIR is None:
             return self._json(500, {"error": "workspace unset"})
         return self._json(200, filebrowser_packs.file_routes_payload(WORKSPACE_DIR))
+
+    def _match_pack_actions(self, path: str) -> str | None:
+        """GET /api/packs/<name>/actions → pack name."""
+        prefix = "/api/packs/"
+        suffix = "/actions"
+        if not path.startswith(prefix) or not path.endswith(suffix):
+            return None
+        mid = path[len(prefix):-len(suffix)]
+        if not mid or "/" in mid:
+            return None
+        return mid
+
+    def _match_pack_action(self, path: str) -> tuple[str, str] | None:
+        """POST /api/packs/<pack>/action/<action> → (pack, action)."""
+        prefix = "/api/packs/"
+        if not path.startswith(prefix):
+            return None
+        rest = path[len(prefix):]
+        parts = rest.split("/")
+        if len(parts) != 3 or parts[1] != "action":
+            return None
+        return parts[0], parts[2]
+
+    def _handle_get_packs(self) -> None:
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        return self._json(200, filebrowser_packs.packs_payload(WORKSPACE_DIR))
+
+    def _handle_get_pack_actions(self, name: str) -> None:
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        try:
+            return self._json(200, filebrowser_packs.actions_for_pack(WORKSPACE_DIR, name))
+        except filebrowser_packs.PackError as e:
+            return self._json(e.status, {"error": str(e)})
+
+    def _handle_pack_action(self, pack: str, action: str) -> None:
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        rel = str(body.get("path") or "").strip()
+        try:
+            result = filebrowser_packs.dispatch_action(
+                WORKSPACE_DIR, pack, action, rel
+            )
+        except filebrowser_packs.PackError as e:
+            return self._json(e.status, {"error": str(e)})
+        except Exception as e:
+            return self._json(500, {"error": str(e)})
+        return self._json(200, result)
+
+    def _handle_packs_toggle(self) -> None:
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        name = str(body.get("name") or "").strip()
+        if "enabled" not in body:
+            return self._json(400, {"error": "enabled required"})
+        enabled = bool(body.get("enabled"))
+        try:
+            return self._json(
+                200, filebrowser_packs.set_enabled(WORKSPACE_DIR, name, enabled)
+            )
+        except filebrowser_packs.PackError as e:
+            return self._json(e.status, {"error": str(e)})
+
+    def _handle_packs_install(self) -> None:
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        src = str(body.get("path") or "").strip()
+        if not src:
+            return self._json(400, {"error": "path required"})
+        try:
+            return self._json(
+                200, filebrowser_packs.install_from_path(WORKSPACE_DIR, src)
+            )
+        except filebrowser_packs.PackError as e:
+            return self._json(e.status, {"error": str(e)})
+
+    def _handle_packs_uninstall(self, qs: dict) -> None:
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        name = (qs.get("name") or [""])[0].strip()
+        if not name:
+            return self._json(400, {"error": "name required"})
+        try:
+            return self._json(
+                200, filebrowser_packs.uninstall_pack(WORKSPACE_DIR, name)
+            )
+        except filebrowser_packs.PackError as e:
+            return self._json(e.status, {"error": str(e)})
 
     def _fs_workspace(self):
         if WORKSPACE_DIR is None:

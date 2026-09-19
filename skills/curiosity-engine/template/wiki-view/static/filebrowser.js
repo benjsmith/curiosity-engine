@@ -2,7 +2,8 @@
  *
  * Consumes GET /api/tree (vault/ + wiki/ paths) and POST /api/fs/* for
  * create / rename / move / delete / duplicate. GET /api/file-routes lists
- * pack extension handlers (discovery stub; dispatch stays shell-side).
+ * pack extension handlers; context menu dispatches via
+ * POST /api/packs/<pack>/action/<action> (sandbox queue; agent exec stays shell).
  * Pages|Files toggle sits above the existing page sidebar.
  */
 window.FileBrowser = (function () {
@@ -308,11 +309,30 @@ window.FileBrowser = (function () {
     });
   }
 
+  function packRoutesForPath(path) {
+    var routes = window.__CE_FILE_ROUTES || [];
+    if (!Array.isArray(routes) || !path) return [];
+    var ext = fileExt(path);
+    if (!ext) return [];
+    var dotted = "." + ext;
+    return routes.filter(function (r) {
+      return r && r.ext === dotted && r.pack && r.action;
+    });
+  }
+
   function showMenu() {
     if (!els.fbMenu || !menu) return;
     var items = [];
     if (!menu.isDir) {
       items.push({ action: "open", label: "Open" });
+      packRoutesForPath(menu.path).forEach(function (r) {
+        items.push({
+          action: "pack:" + r.pack + ":" + r.action,
+          label: r.label || r.action,
+          pack: r.pack,
+          packAction: r.action,
+        });
+      });
       items.push({ action: "duplicate", label: "Duplicate" });
       items.push({ action: "rename", label: "Rename…" });
       items.push({ action: "delete", label: "Delete…", danger: true });
@@ -329,10 +349,16 @@ window.FileBrowser = (function () {
     items.push({ action: "copy", label: "Copy path" });
     items.push({ action: "reveal", label: "Reveal in tree" });
     els.fbMenu.innerHTML = items.map(function (it) {
+      var extra = "";
+      if (it.pack && it.packAction) {
+        extra = ' data-fb-pack="' + escapeHtml(it.pack)
+          + '" data-fb-pack-action="' + escapeHtml(it.packAction) + '"';
+      }
       return '<button type="button" class="fb-menu-item'
         + (it.danger ? " fb-menu-danger" : "")
         + '" data-fb-action="'
-        + it.action + '">' + escapeHtml(it.label) + "</button>";
+        + escapeHtml(it.action) + '"' + extra + '>'
+        + escapeHtml(it.label) + "</button>";
     }).join("");
     els.fbMenu.hidden = false;
     els.fbMenu.style.left = menu.x + "px";
@@ -371,7 +397,19 @@ window.FileBrowser = (function () {
     var action = btn.getAttribute("data-fb-action");
     var path = menu.path;
     var isDir = menu.isDir;
+    var packName = btn.getAttribute("data-fb-pack");
+    var packAction = btn.getAttribute("data-fb-pack-action");
     closeMenu();
+    if (packName && packAction) {
+      flash((packAction) + "…");
+      postFs("/api/packs/" + encodeURIComponent(packName)
+        + "/action/" + encodeURIComponent(packAction), { path: path })
+        .then(function (j) {
+          flash((j.action || packAction) + " queued · " + (j.run_id || ""));
+        })
+        .catch(function (e) { flash("pack action failed: " + e.message); });
+      return;
+    }
     if (action === "open") openPath(path);
     else if (action === "toggle") {
       if (expanded.has(path)) expanded.delete(path);
@@ -504,8 +542,7 @@ window.FileBrowser = (function () {
       if (ev.key === "Escape") closeMenu();
     });
 
-    // Pack file-routes (discovery). Handlers stay shell-side for now;
-    // CE exposes the list so Switchbay embed can call the same endpoint.
+    // Pack file-routes (discovery + context-menu dispatch).
     fetch(apiUrl("/api/file-routes"))
       .then(function (r) { return r.ok ? r.json() : { routes: [] }; })
       .then(function (body) {
