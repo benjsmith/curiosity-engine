@@ -17,6 +17,14 @@
 
 # Changelog
 
+## 2026-09-19 — v1.8.3 — QUERY crystallise: elevate analysis pages
+
+**Migration:** none. **Breaking:** none.
+
+### Clarified
+
+- QUERY crystallise: put the direct answer in the analysis page opening, then title and write the page for the broader topic that absorbs it (hierarchy-fit). Prefer `recommend-analysis` UPDATE on that elevated title; do not mint a thin question-echo analysis. Body may deepen via topic scans, summary tables, and grounded hypotheses when cites support them.
+
 ## 2026-09-18 — v1.8.2 — Crystallise scalar lead (scoring-aligned)
 
 **Migration:** none. **Breaking:** none.
