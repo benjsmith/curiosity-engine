@@ -20,6 +20,7 @@
   Sidebar.init(data);
   if (window.SplitPanel) SplitPanel.init();
   if (window.FileBrowser) FileBrowser.init(data);
+  if (window.CurationReplay) CurationReplay.init(data);
   Subgraph.init(data);
   Modal.init(data);
   /* Resolve viewer + paint view: chooser BEFORE any Graph/Atlas mount.

@@ -1306,3 +1306,68 @@ body[data-sidebar-mode="pages"] #filebrowser-pane { display: none; }
 .split-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .split-status { font-size: 12px; margin-top: 8px; opacity: .85; min-height: 1.2em; }
 #split-toggle[aria-pressed="true"] { outline: 1px solid var(--accent, #6be8b3); }
+
+
+/* ── Curation replay overlay (Phase 2b+++) ──────────────────────── */
+.ce-curation-replay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  overflow: hidden;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+}
+.ce-curation-replay-svg {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: block;
+}
+.ce-curation-replay-chrome {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 12px;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-soft, var(--bg-elev));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+}
+.ce-replay-scrub {
+  flex: 1 1 120px;
+  min-width: 80px;
+  accent-color: var(--accent, #6be8b3);
+}
+.ce-replay-pos,
+.ce-replay-counts {
+  font-size: 11px;
+  color: var(--text-faint, #8a8a98);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ce-curation-replay-label {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--text-faint, #8a8a98);
+  letter-spacing: 0.3px;
+  pointer-events: none;
+  user-select: none;
+  max-width: 90%;
+  text-align: center;
+}
+body[data-replay="1"] .graph-controls { opacity: 0.35; }
+#replay-toggle[aria-pressed="true"] {
+  color: var(--accent, #6be8b3);
+  border-color: var(--accent, #6be8b3);
+}

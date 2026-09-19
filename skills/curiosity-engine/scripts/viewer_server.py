@@ -16,6 +16,7 @@ Endpoints
     GET  /api/file-routes               pack Manifest.file_routes (discovery stub)
     GET  /api/fs/stat?path=             sandbox stat under vault/|wiki/
     GET  /api/split                     last partition status (workspace split spike)
+    GET  /api/curation/history          HistoryDoc for graph replay UI
     POST /api/page                      JSON {path, content} → overwrite file
     POST /api/upload-vault              multipart form → save to vault/raw/
     POST /api/split                     partition wiki pages into a new workspace
@@ -79,6 +80,7 @@ import filebrowser_tree
 import filebrowser_fs
 import filebrowser_packs
 import wiki_partition
+import curation_history
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -173,6 +175,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_fs_stat(urllib.parse.parse_qs(url.query))
         if url.path == "/api/split":
             return self._handle_get_split()
+        if url.path == "/api/curation/history":
+            return self._handle_get_curation_history()
         # Inject embed bootstrap into HTML so /api fetches honor CE_PUBLIC_BASE.
         if self._looks_like_html(url.path):
             return self._serve_html_with_bootstrap(url)
@@ -380,6 +384,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             path = filebrowser_fs.duplicate(ws, str(body.get("path") or ""))
             return {"path": path, "op": "duplicate"}
         return self._fs_mutate_result("duplicate", _op)
+
+
+    def _handle_get_curation_history(self) -> None:
+        """HistoryDoc for wiki-view replay (CE_PUBLIC_BASE-aware via rewrite)."""
+        if WORKSPACE_DIR is None:
+            return self._json(
+                500,
+                {
+                    "error": "workspace not configured",
+                    "events": [],
+                    "duration": 0,
+                    "source": "error",
+                },
+            )
+        try:
+            doc = curation_history.history_payload(WORKSPACE_DIR, BUNDLE_DIR)
+        except Exception as e:
+            return self._json(
+                500,
+                {"error": str(e), "events": [], "duration": 0, "source": "error"},
+            )
+        return self._json(200, doc)
 
     def _handle_get_split(self) -> None:
         """Last workspace-partition status (Phase 2b+ split spike)."""

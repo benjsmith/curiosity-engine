@@ -11,7 +11,7 @@ Charter north star: **CE** owns graph, atlas, wiki, search, source viewer, **fil
 | Atlas / graph engine | `packages/knowledge-atlas` | Already the shared engine; Switchbay Graph tab adapts via examples/switchbay |
 | Classic wiki viewer + APIs | `skills/curiosity-engine/template/wiki-view` + `scripts/viewer_server.py` | Phase 2a: `CE_PUBLIC_BASE` / hosted hook |
 | Filebrowser | wiki-view sidebar **Files** mode + `GET /api/tree` + `/api/fs/*` | Phase 2b browse; 2b++ FS mutate + file-routes stub |
-| Graph opening animation | knowledge-atlas `animation/replayTimeline` (+ later wiki-view UI) | Phase 2b: pure timeline hook; SVG/d3 replay UI deferred |
+| Graph opening animation | knowledge-atlas timeline + wiki-view SVG replay | Phase 2b hook; 2b+++ minimal SVG play/pause/scrub/step |
 | Workspace split | CE API + atlas multi-select; shell may keep workspace registry UX | Phase 2b+ spike landed (partition API + minimal UI) |
 
 ## Switchbay source map (intake)
@@ -90,7 +90,32 @@ Deep-link: `?filebrowser=1` opens Files mode.
 | `packages/knowledge-atlas/src/animation/replayTimeline.ts` | Pure `playReplayTimeline` + `ReplayEvent` / `HistoryDoc` types |
 | `packages/knowledge-atlas/tests/replayTimeline.test.ts` | Scheduler unit tests |
 
-**Deferred:** SVG/d3 force replay UI, history JSON API from CE curator state, wiki-view chrome button, atlas canvas binding.
+#### Phase 2b+++ landed (CE)
+
+| Artifact | Role |
+|----------|------|
+| `packages/knowledge-atlas/src/animation/historyFromGraph.ts` | Pure `buildHistoryFromGraph` / `snapshotAt` / `indexAtTime` |
+| `packages/knowledge-atlas/tests/historyFromGraph.test.ts` | Helper unit tests |
+| `scripts/curation_history.py` | HistoryDoc from `data.json` (+ optional `.workbench/curation-history.json` cache) |
+| `GET /api/curation/history` | Switchbay-compatible HistoryDoc JSON; honors `CE_PUBLIC_BASE` |
+| `template/wiki-view/static/replay.js` | Vanilla SVG overlay: play/pause/scrub/step (`?replay=1`) |
+| Tests | `tests/test_curation_history.py` |
+
+**Parity vs Switchbay (CurationReplay):**
+
+| Behavior | Status |
+|----------|--------|
+| HistoryDoc + timed play | ✅ (`playReplayTimeline` contract + vanilla port) |
+| Play / pause / scrub / step chrome | ✅ CE (Switchbay is autoplay-only + ↻) |
+| SVG force grow animation | ≈ slim d3 host (no settle/fade/auto-fit polish) |
+| `CE_PUBLIC_BASE` / `ceApi` | ✅ |
+| `GET /api/curation/history` | ≈ from `data.json` synthetic order; git first-seen optional via shell cache |
+| Git-log chronology rebuild | ❌ deferred (use Switchbay cache if present) |
+| Opening autoplay on Graph tab mount | ❌ deferred (opt-in button / `?replay=1`) |
+| Atlas canvas binding | ❌ deferred |
+| Fade crossfade onto live graph | ❌ deferred |
+| Top-label degree ranking + zoom autfit | ≈ partial (top-24 labels; manual zoom only) |
+
 
 ### Split (subgraph → new workspace)
 
@@ -145,5 +170,5 @@ Deep-link: `?filebrowser=1` opens Files mode.
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
 2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
 3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
-4. **2b++ (partial):** FS mutate + pack file-routes discovery stub landed; SVG replay UI / rubber-band split / CM export / pack action dispatch still deferred
+4. **2b++ / 2b+++ (partial):** FS mutate + file-routes stub + SVG replay UI landed; rubber-band split / CM export / pack *action* dispatch / git-history rebuild still deferred
 5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes
