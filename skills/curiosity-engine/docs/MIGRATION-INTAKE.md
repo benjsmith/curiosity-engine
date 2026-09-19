@@ -12,7 +12,7 @@ Charter north star: **CE** owns graph, atlas, wiki, search, source viewer, **fil
 | Classic wiki viewer + APIs | `skills/curiosity-engine/template/wiki-view` + `scripts/viewer_server.py` | Phase 2a: `CE_PUBLIC_BASE` / hosted hook |
 | Filebrowser | wiki-view sidebar **Files** mode + `GET /api/tree` + `/api/fs/*` | Phase 2b browse; 2b++ FS mutate + file-routes stub |
 | Graph opening animation | knowledge-atlas timeline + wiki-view SVG replay | Phase 2b hook; 2b+++ minimal SVG play/pause/scrub/step |
-| Workspace split | CE API + atlas multi-select; shell may keep workspace registry UX | Phase 2b+ spike landed (partition API + minimal UI) |
+| Workspace split | CE API + Classic rubber-band UI + atlas multi-select; shell may keep tab-open chrome | Phase 2b++++++ (partition API + registry + rubber-band) |
 
 ## Switchbay source map (intake)
 
@@ -153,7 +153,20 @@ Deep-link: `?filebrowser=1` opens Files mode.
 | `scripts/cm_export.py` | Optional curiosity-merge `subgraph_export` subprocess hook (dry-run + sandbox) |
 | `GET/POST/DELETE /api/workspaces` | Registry list / register / unregister |
 | `POST /api/cm-export` | CM export for selected pages (`dry_run` supported) |
-| Tests | `tests/test_wiki_partition.py` + `tests/test_workspace_registry_cm_export.py` + `partitionSelection.test.ts` |
+| `template/wiki-view/static/graph.js` + `split.js` | Classic rubber-band (Ctrl/⌘-drag), Shift-click multi-select, click toggle, Alt/right-click policy flip; `ce:split-proposal` / `sy:split-proposal` |
+| `packages/knowledge-atlas` `rubberBand` | Pure rect/hit helpers + `defaultPartitionPolicyForType` |
+| Tests | `tests/test_wiki_partition.py` + `tests/test_workspace_registry_cm_export.py` + `partitionSelection.test.ts` + `rubberBand.test.ts` |
+
+#### Phase 2b++++++ landed (CE) — rubber-band split targeting
+
+| Artifact | Role |
+|----------|------|
+| `template/wiki-view/static/graph.js` | `splitEnter` / `splitExit`; Ctrl/⌘-drag rubber-band; Shift-click add; click toggle; Alt/right-click flip move↔copy |
+| `template/wiki-view/static/split.js` | Syncs panel ↔ graph selection; `POST /api/split` via `ceApi`; listens `ce:split-proposal` + `sy:split-proposal` |
+| `packages/knowledge-atlas/src/partition/rubberBand.ts` | Pure `idsInRubberBand` / policy defaults (unit-tested) |
+| Atlas facade | `splitEnter`/`splitExit` seed engine multi-select (no marquee on canvas yet) |
+
+Smoke: open wiki-view with `CE_PUBLIC_BASE=/embed/ce`, `?split=1`, Ctrl-drag over nodes, name workspace, Split.
 
 **Parity vs Switchbay (split):**
 
@@ -169,7 +182,7 @@ Deep-link: `?filebrowser=1` opens Files mode.
 | Atlas multi-select policy helpers | ✅ |
 | Workspace registry persistence | ✅ CE (`workspace_registry` + `GET/POST/DELETE /api/workspaces`; auto-register on split) |
 | Tab open / chrome after split | ❌ shell (Switchbay) |
-| Rubber-band / `sy:split-proposal` UI | ❌ deferred (shell or later CE) |
+| Rubber-band / `sy:split-proposal` UI | ✅ CE Classic (`graph.js` + `split.js`; `ce:`/`sy:split-proposal`); Atlas: selection sync only (no canvas rubber-band yet) |
 | CM `subgraph_export` hook (license modes) | ✅ CE (`cm_export` + `POST /api/cm-export`, dry-run supported; optional CM install) |
 | Workspace-root figures / `.workbench` sketches | ❌ deferred |
 | Async curator link-heal agents | ❌ deferred (shell) |
@@ -188,5 +201,5 @@ Deep-link: `?filebrowser=1` opens Files mode.
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
 2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
 3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
-4. **2b++ / 2b+++ / 2b++++ / 2b+++++ (partial):** FS mutate + pack list/dispatch/install + SVG replay UI + **workspace registry + CM export hook** landed; rubber-band split / heal agents / git-history rebuild / reveal-in-OS / drop-ingest / tab-open chrome still deferred
+4. **2b++ / 2b+++ / 2b++++ / 2b+++++ / 2b++++++ (partial):** FS mutate + pack list/dispatch/install + SVG replay UI + workspace registry + CM export + **Classic rubber-band split UI** landed; Atlas canvas rubber-band / heal agents / git-history rebuild / reveal-in-OS / drop-ingest / tab-open chrome still deferred
 5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes

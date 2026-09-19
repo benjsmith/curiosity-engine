@@ -1,3 +1,24 @@
+## 2026-09-19 — Phase 2b++++++ rubber-band split targeting UI
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- **Classic graph rubber-band:** Ctrl/⌘-drag marquee select; Shift-click multi-select;
+  click toggle membership; Alt-click / right-click flips move↔copy (entities/concepts
+  default to copy). `Graph.splitEnter` / `splitExit` sync with the split panel.
+- **Split panel:** listens `ce:split-selection`, `ce:split-proposal`, and
+  `sy:split-proposal`; still POSTs `/api/split` via `ceApi` / `CE_PUBLIC_BASE`
+  (embed v2 under `/embed/ce`).
+- **Pure helpers:** `packages/knowledge-atlas` `rubberBand.ts` + `rubberBand.test.ts`.
+- Atlas: `splitEnter`/`splitExit` seed engine multi-select (canvas marquee deferred).
+
+### Notes
+
+- Still Switchbay-only / deferred: Atlas canvas rubber-band, link-heal agents,
+  tab open after split, workspace-root figures / `.workbench` sketches, OS Trash prune.
+  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md`.
+
 ## 2026-09-19 — Phase 2b+++++ split registry + CM export hook
 
 **Migration:** none. **Breaking:** none.

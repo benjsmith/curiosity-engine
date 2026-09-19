@@ -1,8 +1,10 @@
-/* CE workspace partition UI (Phase 2b+ split spike).
+/* CE workspace partition UI (Phase 2b+ / 2b++++++ rubber-band).
  *
  * Collects page refs with move|copy policy and POSTs /api/split.
- * Deep-link: ?split=1 opens the panel. Shells keep workspace registry.
- * Honors window.ceApi / CE_PUBLIC_BASE.
+ * Classic graph: Ctrl/Cmd-drag rubber-band, Shift-click multi-select,
+ * click toggle, Alt/right-click flip policy. Deep-link: ?split=1.
+ * Listens for ce:split-proposal / sy:split-proposal (embed shells).
+ * Honors window.ceApi / CE_PUBLIC_BASE (embed v2 under /embed/ce).
  */
 window.SplitPanel = (function () {
   function apiUrl(path) {
@@ -13,10 +15,15 @@ window.SplitPanel = (function () {
     return base + path;
   }
 
+  function viewerApi() {
+    return window.CEViewer || window.Graph || null;
+  }
+
   /** @type {Array<{id:string, policy:"move"|"copy"}>} */
   var selection = [];
   var busy = false;
   var els = {};
+  var syncingFromGraph = false;
 
   function currentPageId() {
     var m = (window.location.hash || "").match(/^#page=([^&]+)$/);
@@ -26,7 +33,9 @@ window.SplitPanel = (function () {
   function render() {
     if (!els.list) return;
     if (!selection.length) {
-      els.list.innerHTML = '<div class="split-empty">Add pages from the graph (open a page, then Add current).</div>';
+      els.list.innerHTML =
+        '<div class="split-empty">Select on the graph: Ctrl/⌘-drag rubber-band, ' +
+        "Shift-click to add, click to toggle. Or Add current.</div>";
     } else {
       els.list.innerHTML = selection.map(function (e, i) {
         return (
@@ -53,6 +62,50 @@ window.SplitPanel = (function () {
     }
     selection.push({ id: id, policy: policy === "copy" ? "copy" : "move" });
     render();
+    pushToGraph();
+  }
+
+  function setSelection(pages) {
+    syncingFromGraph = true;
+    selection = [];
+    (pages || []).forEach(function (p) {
+      var id = typeof p === "string" ? p : p && p.id;
+      if (!id) return;
+      var policy = typeof p === "object" && p.policy === "copy" ? "copy" : "move";
+      selection.push({ id: String(id), policy: policy });
+    });
+    render();
+    syncingFromGraph = false;
+  }
+
+  function pushToGraph() {
+    if (syncingFromGraph) return;
+    var api = viewerApi();
+    if (!api || typeof api.splitEnter !== "function") return;
+    if (!document.body || document.body.dataset.split !== "1") return;
+    try {
+      api.splitEnter(selection.slice(), onGraphSelection);
+    } catch (e) { /* ignore */ }
+  }
+
+  function onGraphSelection(sel) {
+    setSelection(sel || []);
+  }
+
+  function enterGraphMode() {
+    var api = viewerApi();
+    if (api && typeof api.splitEnter === "function") {
+      try {
+        api.splitEnter(selection.slice(), onGraphSelection);
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  function exitGraphMode() {
+    var api = viewerApi();
+    if (api && typeof api.splitExit === "function") {
+      try { api.splitExit(); } catch (e) { /* ignore */ }
+    }
   }
 
   function setOpen(open) {
@@ -60,6 +113,8 @@ window.SplitPanel = (function () {
     els.panel.hidden = !open;
     if (els.toggle) els.toggle.setAttribute("aria-pressed", open ? "true" : "false");
     document.body.dataset.split = open ? "1" : "0";
+    if (open) enterGraphMode();
+    else exitGraphMode();
   }
 
   async function submit() {
@@ -100,11 +155,24 @@ window.SplitPanel = (function () {
       }
       selection = [];
       render();
+      exitGraphMode();
     } catch (e) {
       if (els.status) els.status.textContent = (e && e.message) || String(e);
     } finally {
       busy = false;
       render();
+    }
+  }
+
+  function applyProposal(pages) {
+    if (!pages || !pages.length) return;
+    setSelection(pages.map(function (p) {
+      return typeof p === "string" ? { id: p, policy: "move" } : p;
+    }));
+    setOpen(true);
+    if (els.status) {
+      els.status.textContent =
+        "Proposal: " + pages.length + " page(s) highlighted — review & confirm.";
     }
   }
 
@@ -137,7 +205,7 @@ window.SplitPanel = (function () {
       els.add.addEventListener("click", function () {
         addId(currentPageId(), "move");
         if (!currentPageId() && els.status) {
-          els.status.textContent = "Open a page on the graph first (#page=…).";
+          els.status.textContent = "Open a page on the graph first (#page=…), or rubber-band select.";
         }
       });
     }
@@ -149,6 +217,7 @@ window.SplitPanel = (function () {
         if (!row || !ev.target.classList.contains("split-policy")) return;
         var i = Number(row.getAttribute("data-i"));
         if (selection[i]) selection[i].policy = ev.target.value === "copy" ? "copy" : "move";
+        pushToGraph();
       });
       els.list.addEventListener("click", function (ev) {
         var btn = ev.target.closest && ev.target.closest(".split-remove");
@@ -158,8 +227,24 @@ window.SplitPanel = (function () {
         var i = Number(row.getAttribute("data-i"));
         if (!isNaN(i)) selection.splice(i, 1);
         render();
+        pushToGraph();
       });
     }
+
+    window.addEventListener("ce:split-selection", function (ev) {
+      var pages = ev && ev.detail && ev.detail.pages;
+      if (!pages) return;
+      setSelection(pages);
+      if (document.body.dataset.split !== "1") setOpen(true);
+    });
+
+    function onPropose(ev) {
+      var detail = ev && ev.detail;
+      var pages = detail && (detail.pages || detail.ids);
+      applyProposal(pages || []);
+    }
+    window.addEventListener("ce:split-proposal", onPropose);
+    window.addEventListener("sy:split-proposal", onPropose);
 
     try {
       var params = new URLSearchParams(window.location.search);
@@ -171,6 +256,7 @@ window.SplitPanel = (function () {
   return {
     init: init,
     add: addId,
+    setSelection: setSelection,
     open: function () { setOpen(true); },
     close: function () { setOpen(false); },
   };
