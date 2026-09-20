@@ -55,3 +55,60 @@ export {
 export { LocalSceneSource } from "./datasources/local.ts";
 export { ScaledDataSource, SCALED_TOTAL_LEAVES } from "./datasources/scaled.ts";
 export { RemoteDataSource } from "./datasources/remote.ts";
+
+export {
+  playReplayTimeline,
+  type ReplayEvent,
+  type HistoryDoc,
+  type ReplayHandlers,
+} from "./animation/replayTimeline.ts";
+
+export {
+  buildHistoryFromGraph,
+  sortReplayEvents,
+  snapshotAt,
+  indexAtTime,
+  type GraphNodeIn,
+  type GraphEdgeIn,
+  type BuildHistoryOptions,
+  type ReplaySnapshot,
+} from "./animation/historyFromGraph.ts";
+
+export {
+  computeFitTransform,
+  boundsFromPositions,
+  blendZoom,
+  compareSyntheticNodes,
+  typeTier,
+  computeAtlasCameraFit,
+  blendAtlasCamera,
+  type FitBounds,
+  type ZoomTransform,
+  type FitViewOpts,
+  type AtlasCamera,
+} from "./animation/replayCamera.ts";
+
+export {
+  buildPartitionSelection,
+  setPartitionPolicy,
+  addToPartitionSelection,
+  removeFromPartitionSelection,
+  partitionPayload,
+  type PartitionPolicy,
+  type PartitionEntry,
+  type PartitionSeed,
+} from "./partition/partitionSelection.ts";
+
+export {
+  normalizeRubberRect,
+  isRubberClick,
+  idsInRubberBand,
+  defaultPartitionPolicyForType,
+  clientToScenePoint,
+  clientRubberToScene,
+  type RubberPoint,
+  type RubberRect,
+  type NormalizedRect,
+  type CanvasClientRect,
+} from "./partition/rubberBand.ts";
+

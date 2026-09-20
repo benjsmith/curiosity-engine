@@ -26,6 +26,10 @@
         <svg viewBox="0 0 16 16" width="14" height="14"><path d="M10 4 L6 8 L10 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <span class="workspace-name">{{WORKSPACE}}</span>
+      <div class="sidebar-mode-seg" role="group" aria-label="Sidebar mode">
+        <button type="button" id="sidebar-mode-pages" class="sidebar-mode-btn" aria-pressed="true">Pages</button>
+        <button type="button" id="sidebar-mode-files" class="sidebar-mode-btn" aria-pressed="false" title="Browse vault/ and wiki/ files">Files</button>
+      </div>
     </header>
     <div class="sidebar-search-wrap">
       <input id="sidebar-search" type="search" placeholder="Search pages…" autocomplete="off" spellcheck="false">
@@ -44,6 +48,16 @@
       <input id="sidebar-upload-input" type="file" multiple style="display:none">
     </div>
     <div id="sidebar-list" class="sidebar-list" role="listbox"></div>
+    <div id="filebrowser-pane" class="filebrowser-pane" hidden>
+      <div class="filebrowser-toolbar">
+        <input id="filebrowser-search" type="search" placeholder="Filter files… /re/ or *.md" autocomplete="off" spellcheck="false" aria-label="Filter files">
+        <button type="button" id="filebrowser-sort" class="icon-btn" title="Sort A→Z" aria-label="Sort A→Z">⇅</button>
+        <button type="button" id="filebrowser-refresh" class="icon-btn" title="Refresh tree" aria-label="Refresh tree">↻</button>
+      </div>
+      <div id="filebrowser-list" class="filebrowser-list" role="tree" aria-label="Vault and wiki files"></div>
+      <div id="filebrowser-status" class="filebrowser-status" aria-live="polite"></div>
+    </div>
+    <div id="filebrowser-menu" class="filebrowser-menu" hidden role="menu"></div>
     <footer class="sidebar-foot">
       <button id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">
         <svg id="theme-icon-sun" viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="3" fill="currentColor"/><g stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><line x1="8" y1="1.5" x2="8" y2="3"/><line x1="8" y1="13" x2="8" y2="14.5"/><line x1="1.5" y1="8" x2="3" y2="8"/><line x1="13" y1="8" x2="14.5" y2="8"/><line x1="3.4" y1="3.4" x2="4.5" y2="4.5"/><line x1="11.5" y1="11.5" x2="12.6" y2="12.6"/><line x1="3.4" y1="12.6" x2="4.5" y2="11.5"/><line x1="11.5" y1="4.5" x2="12.6" y2="3.4"/></g></svg>
@@ -72,6 +86,12 @@
       <button id="edge-mode" class="ctrl-btn hidden" title="Edge visibility (Atlas)" aria-label="Edge visibility">
         <span class="ctrl-label">edges:</span><span id="edge-mode-state">auto</span>
       </button>
+      <button id="split-toggle" class="ctrl-btn" title="Partition selected pages (rubber-band / Shift-click on graph)" aria-label="Workspace split" aria-pressed="false">
+        <span class="ctrl-label">split</span><span id="split-count">0</span>
+      </button>
+      <button id="replay-toggle" class="ctrl-btn" title="Replay curation history animation" aria-label="Replay curation history" aria-pressed="false">
+        <span class="ctrl-label">replay</span><span aria-hidden="true">↻</span>
+      </button>
       <button id="label-types" class="ctrl-btn" title="Which page types show labels" aria-label="Which page types show labels">
         <span class="ctrl-label">types:</span><span id="label-types-state">4/11</span>
       </button>
@@ -92,6 +112,23 @@
         <button id="label-types-reset" class="settings-reset">Reset</button>
       </div>
     </div>
+
+    <div id="split-panel" class="split-panel" hidden>
+      <div class="split-head">Partition workspace</div>
+      <p class="split-help">Move or copy wiki pages into a new workspace. Classic: Ctrl/⌘-drag rubber-band, Shift-click multi-select, click toggle, right-click flips move↔copy. Shells keep tab/registry chrome.</p>
+      <div class="split-fields">
+        <label class="split-field">Name <input id="split-name" type="text" placeholder="new-workspace" autocomplete="off" spellcheck="false"></label>
+        <label class="split-field">Target <input id="split-target" type="text" placeholder="optional absolute path (or CE_SPLIT_HOME/name)" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <div id="split-list" class="split-list"></div>
+      <div class="split-actions">
+        <button type="button" id="split-add" class="ctrl-btn">Add current</button>
+        <button type="button" id="split-submit" class="ctrl-btn" disabled>Split</button>
+        <button type="button" id="split-cancel" class="ctrl-btn">Cancel</button>
+      </div>
+      <div id="split-status" class="split-status" aria-live="polite"></div>
+    </div>
+
     <button id="settings-trigger" class="icon-btn settings-trigger" title="Physics settings" aria-label="Physics settings">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
         <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -154,6 +191,9 @@
   <script src="static/vendor/jszip.min.js"></script>
   <script src="static/theme.js"></script>
   <script src="static/sidebar.js"></script>
+  <script src="static/filebrowser.js"></script>
+  <script src="static/split.js"></script>
+  <script src="static/replay.js"></script>
   <script src="static/subgraph.js"></script>
   <script src="static/vault.js"></script>
   <script src="static/modal.js"></script>
