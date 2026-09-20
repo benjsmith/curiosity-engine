@@ -202,6 +202,21 @@ Smoke: open wiki-view with `CE_PUBLIC_BASE=/embed/ce`, `?split=1`, Ctrl-drag ove
 | OS Trash prune | ❌ deferred (CE uses `.deleted/`) |
 
 
+#### Phase 2b+++++++ landed (CE) — Obsidian vault import
+
+| Artifact | Role |
+|----------|------|
+| `scripts/obsidian_import.py` | Folder/zip import; `$HOME`/`$CE_WORKSPACE_HOME` sandbox; zip-slip safe; maps **Obsidian vault root → `wiki/`** (wikilinks preserved verbatim); `.obsidian/` kept, `.trash` skipped |
+| `POST /api/import/obsidian` | JSON `{path, target?, register?, force?}` or multipart zip; honours `CE_PUBLIC_BASE` |
+| CLI | `python3 obsidian_import.py <path>` (conceptual `ce import-obsidian`) |
+| Fixture | Umbrella `corpora/obsidian-dummy-vault/` (Omarchy E2E prep; not blocked on CE Benchmarker) |
+| Tests | `tests/test_obsidian_import.py` (sandbox + zip-slip + wikilink presence + embed-prefix API) |
+
+**Mapping choice:** Obsidian vault root lands in CE `wiki/` (same surface Atlas / classic wiki / “open folder as vault” already expect). No Work/symlink dance.
+
+**Still deferred:** Omarchy/Switchbay GUI folder-picker (shell-side); richer Benchmarker corpus pack.
+
+
 ## Embed contract (for Switchbay Phase 4a)
 
 - Upstream: `http://127.0.0.1:8766` (loopback only)

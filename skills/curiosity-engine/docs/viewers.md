@@ -85,6 +85,11 @@ deferred — see [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
 
 ## Obsidian (alternative — same underlying markdown)
 
+To **import** an existing Obsidian vault into CE (no Work/symlink dance),
+use `POST /api/import/obsidian` or `python3 scripts/obsidian_import.py <path>`.
+Mapping: Obsidian vault root → `wiki/` (wikilinks preserved).
+See `MIGRATION-INTAKE.md` Phase 2b+++++++.
+
 `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian →
 **Open folder as vault** → pick `<your-workspace>/wiki`. Backlinks
 and Obsidian's own graph view light up immediately, no plugins.
