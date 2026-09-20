@@ -1,3 +1,26 @@
+## 2026-09-20 — Obsidian vault import (folder + zip)
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- **`scripts/obsidian_import.py`:** import an Obsidian vault (folder path or zip)
+  into a CE workspace as `wiki/`. Preserves `[[wikilinks]]` verbatim. Sandboxes
+  sources under `$HOME` / `$CE_WORKSPACE_HOME` (same as workspace registry);
+  zip-slip safe extract. Optional `--target` bootstraps a minimal workspace;
+  `--register` records it in the CE workspace registry.
+- **`POST /api/import/obsidian`:** JSON `{path}` or multipart zip; honours
+  `CE_PUBLIC_BASE` embed prefix.
+- **CLI:** `python3 obsidian_import.py <path>` (conceptual `ce import-obsidian`).
+- **Tests:** `tests/test_obsidian_import.py`.
+- **Fixture (umbrella):** `corpora/obsidian-dummy-vault/` for Omarchy E2E prep.
+
+### Notes
+
+- **Mapping:** Obsidian vault root → CE `wiki/` (documented; matches existing
+  “open wiki/ as Obsidian vault” guidance in `docs/viewers.md`).
+- Omarchy GUI pick-folder remains shell-side later.
+
 ## 2026-09-19 — Phase 2b++++++ rubber-band split targeting UI
 
 **Migration:** none. **Breaking:** none.

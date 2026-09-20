@@ -26,6 +26,7 @@ Endpoints
     POST /api/fs/open-external          {path} open with OS default app
     POST /api/ingest/from-upload        multipart file → vault/raw/ + queue run
     POST /api/ingest/from-path          {path} absolute file → vault/raw/ + queue
+    POST /api/import/obsidian           {path} vault/zip OR multipart zip -> wiki/
     GET  /api/split                     last partition status (workspace split spike)
     GET  /api/workspaces                CE workspace registry (paths + split provenance)
     GET  /api/curation/history          HistoryDoc for graph replay UI
@@ -65,6 +66,8 @@ Writes are constrained:
     * /api/fs/reveal|open-external only resolve vault/|wiki/ paths.
     * /api/ingest/from-upload|from-path allowlist DEFAULT_EXTS, stage under
       vault/raw/, queue `.workbench/ingest-runs/` (shell drains / local_ingest).
+    * /api/import/obsidian sandboxes source under $HOME/$CE_WORKSPACE_HOME;
+      zip-slip safe extract; maps Obsidian vault root -> wiki/ (wikilinks kept).
 
 After any successful write the server invokes
 `wiki_render.py build <wiki_dir> --output-dir <bundle_dir>` so the
@@ -104,6 +107,7 @@ import wiki_partition
 import workspace_registry
 import cm_export
 import curation_history
+import obsidian_import
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -244,6 +248,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._handle_ingest_from_upload()
         if url.path == "/api/ingest/from-path":
             return self._handle_ingest_from_path()
+        if url.path == "/api/import/obsidian":
+            return self._handle_import_obsidian()
         if url.path == "/api/packs/toggle":
             return self._handle_packs_toggle()
         if url.path == "/api/packs/install":
@@ -839,6 +845,82 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             result = filebrowser_ingest.stage_path(WORKSPACE_DIR, src)
         except filebrowser_ingest.IngestError as e:
+            return self._json(e.status, {"error": str(e)})
+        return self._json(200, result)
+
+
+    def _handle_import_obsidian(self) -> None:
+        """Import Obsidian vault folder or zip into workspace wiki/.
+
+        JSON ``{path, target?, register?, force?}`` for an on-disk vault/zip,
+        or multipart form with a ``file`` zip field (optional form fields
+        ``target`` / ``register`` / ``force``). Honours CE_PUBLIC_BASE via
+        path rewrite. Mapping: Obsidian vault root -> wiki/.
+        """
+        if WORKSPACE_DIR is None:
+            return self._json(500, {"error": "workspace unset"})
+        ctype = self.headers.get("Content-Type", "")
+        try:
+            if "multipart/form-data" in ctype:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                if length <= 0:
+                    return self._json(400, {"error": "empty body"})
+                if length > obsidian_import.MAX_ZIP_BYTES + 64 * 1024:
+                    return self._json(413, {"error": "zip too large"})
+                body = self.rfile.read(length)
+                head = (f"Content-Type: {ctype}\r\n\r\n").encode("ascii")
+                msg = BytesParser(policy=default_email_policy).parsebytes(head + body)
+                if not msg.is_multipart():
+                    return self._json(400, {"error": "not multipart"})
+                filename = None
+                data = None
+                target = None
+                register = False
+                force = False
+                for part in msg.iter_parts():
+                    cd = part.get("Content-Disposition", "")
+                    name = part.get_param("name", header="Content-Disposition")
+                    if name in ("target", "path_target"):
+                        raw = part.get_payload(decode=True) or b""
+                        target = raw.decode("utf-8", errors="replace").strip() or None
+                    elif name == "register":
+                        raw = (part.get_payload(decode=True) or b"").decode().strip().lower()
+                        register = raw in ("1", "true", "yes", "on")
+                    elif name == "force":
+                        raw = (part.get_payload(decode=True) or b"").decode().strip().lower()
+                        force = raw in ("1", "true", "yes", "on")
+                    elif "filename=" in cd:
+                        filename = part.get_filename() or "vault.zip"
+                        data = part.get_payload(decode=True)
+                if data is None:
+                    return self._json(400, {"error": "no zip `file` field"})
+                result = obsidian_import.import_vault(
+                    workspace=WORKSPACE_DIR,
+                    target=target,
+                    zip_bytes=data,
+                    zip_filename=filename,
+                    register=register,
+                    force=force,
+                )
+            else:
+                body = self._read_json_body()
+                src = str(body.get("path") or "").strip()
+                if not src:
+                    return self._json(400, {"error": "path required (or multipart zip)"})
+                target = body.get("target")
+                target_s = str(target).strip() if target else None
+                register = bool(body.get("register") or False)
+                force = bool(body.get("force") or False)
+                result = obsidian_import.import_vault(
+                    src,
+                    workspace=WORKSPACE_DIR,
+                    target=target_s,
+                    register=register,
+                    force=force,
+                )
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        except obsidian_import.ObsidianImportError as e:
             return self._json(e.status, {"error": str(e)})
         return self._json(200, result)
 
