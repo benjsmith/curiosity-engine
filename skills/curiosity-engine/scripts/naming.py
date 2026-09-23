@@ -162,7 +162,7 @@ def repair_letter_spacing(text: str) -> str:
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
                       "fact", "summary-table", "extracted-table", "figure",
-                      "note", "todo-list", "project"}
+                      "note", "todo-list", "project", "procedure", "execution"}
 
 # Allowlist of frontmatter keys the curator actually reads. Unknown keys are
 # dropped by read_frontmatter so an adversarial source cannot smuggle
@@ -289,6 +289,9 @@ ALLOWED_FM_KEYS = frozenset({
     # links pack), and bulk harvest. `verbatim: true` relaxes the fact
     # word floor to 15 for near-quote exam/caption claims.
     "origin", "verbatim",
+    # Procedure / execution thin types (Biocure smoke → skill nouns).
+    # Optional maturity/applicability signals; never invent SOP steps.
+    "status", "applies_to", "steps_attested",
 })
 
 TYPE_PREFIX = {
@@ -304,6 +307,8 @@ TYPE_PREFIX = {
     "note": "[note]",
     "todo-list": "[todo]",
     "project": "[proj]",
+    "procedure": "[proc]",
+    "execution": "[exec]",
 }
 
 # Filename stem prefixes for the page types that live in dedicated
@@ -315,6 +320,7 @@ STEM_PREFIX = {
     "summary-table": "tbl-",
     "extracted-table": "tab-",
     "figure": "fig-",
+    "execution": "exec-",
 }
 
 

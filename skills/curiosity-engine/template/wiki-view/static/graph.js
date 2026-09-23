@@ -69,6 +69,8 @@ window.Graph = (function () {
     source:       'source',       sources:  'source',
     note:         'note',         notes:    'note',
     todo:         'todo',         'todo-list': 'todo',
+    procedure:    'procedure',    procedures: 'procedure',
+    execution:    'execution',    executions: 'execution',
     unclassified: 'unclassified',
   };
   function canonicalType(t) { return TYPE_CANONICAL[t] || t || 'default'; }
@@ -85,8 +87,9 @@ window.Graph = (function () {
   // Order mirrors the sidebar's TYPE_ORDER so the labels dropdown
   // and the sidebar group order stay in sync.
   const ALL_LABEL_TYPES = [
-    'project', 'analysis', 'concept', 'entity', 'evidence', 'fact',
-    'figure',  'table',    'source',  'note',   'todo',     'unclassified',
+    'project', 'analysis', 'concept', 'entity', 'procedure', 'execution',
+    'evidence', 'fact', 'figure', 'table', 'source', 'note', 'todo',
+    'unclassified',
   ];
   let _labelTypeFilter = (() => {
     try {
