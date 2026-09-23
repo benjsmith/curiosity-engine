@@ -36,7 +36,7 @@ from naming import (  # noqa: E402
 )
 
 
-# Palette — categorical 11-colour set assigned to canonical types in
+# Palette — categorical colour set assigned to canonical types in
 # the sidebar's TYPE_ORDER (project, analysis, ..., todo-list). Single
 # source of truth: this dict is emitted into data.json so the front-end
 # can read it without a CSS parse; CSS mirrors the values via :root
@@ -70,6 +70,10 @@ PALETTE = {
     "notes":        "#6f4070",
     "todo":         "#9656a2",  # lighter purple
     "todo-list":    "#9656a2",
+    "procedure":    "#5e4fa2",  # indigo — how-to hubs
+    "procedures":   "#5e4fa2",
+    "execution":    "#c51b8a",  # pink-magenta — dated instances
+    "executions":   "#c51b8a",
     "unclassified": "#ffffff",  # white fill; black stroke added via CSS
     "default":      "#bbbbbb",  # neutral grey fallback for unrecognised
                                   # types (rarely visible — KNOWN_TYPES
@@ -86,6 +90,7 @@ KNOWN_TYPES = frozenset({
     "evidence", "fact", "facts", "table", "tables",
     "figure", "figures", "note", "notes",
     "todo", "todo-list", "project", "projects",
+    "procedure", "procedures", "execution", "executions",
 })
 
 # Real frontmatter `type:` values (see template/schema.md) whose viewer

@@ -656,6 +656,14 @@ def _floors_for(page: Path, text=None) -> dict:
         return {"citations": 1, "wikilinks": wikilinks, "words": words}
     if "evidence" in parts:
         return {"citations": 1, "wikilinks": 1, "words": 50}
+    if "procedures" in parts:
+        # Named how-to hubs: concept-like density but ≥1 cite + ≥1 link
+        # (procedure↔execution/people). Never invent SOP steps.
+        return {"citations": 1, "wikilinks": 1, "words": 80}
+    if "executions" in parts:
+        # Dated instance/review of a procedure — tight like evidence:
+        # cite + link (typically to the procedure hub).
+        return {"citations": 1, "wikilinks": 1, "words": 50}
     if "figures" in parts:
         return {"citations": 1, "wikilinks": 0, "words": 10}
     if "tables" in parts:

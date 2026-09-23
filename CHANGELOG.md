@@ -6,6 +6,15 @@
 
 - Wiki viewer on narrow viewports (≤1100px, including phone landscape): doc modal no longer collapses to ~0 width; file browser sidebar uses desktop collapsed/visible semantics as an overlay with auto-collapse on load so the restore control stays reachable.
 
+## Unreleased — procedure / execution thin types + maturity ranker
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- Thin CE page types `procedure` (`[proc]`, `wiki/procedures/`) and `execution` (`[exec]`, `wiki/executions/`, stem `exec-`): naming prefixes, viewer palette/order, score_diff floors, optional FM `status` / `applies_to` / `steps_attested`.
+- Deterministic `procedure_maturity.py` (+ `sweep.py procedure-candidates`) ranks procedure hubs for CURATE deepen spend (immature / chronology-risk first). SKILL stays nouns + folders + title tags only — no OWL/PKO.
+
 ## 2026-09-15 — Fix entity_gate false abstain on topic phrases + date fragments
 
 **Migration:** none. **Breaking:** none.

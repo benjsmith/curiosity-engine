@@ -12,8 +12,9 @@ import type { AtlasLens, Landmark } from "../types.ts";
 
 /** Curiosity Engine's sidebar TYPE_ORDER, used as the default. */
 export const DEFAULT_TYPE_ORDER = [
-  "project", "analysis", "concept", "entity", "evidence", "fact",
-  "figure", "table", "source", "note", "todo-list", "unclassified",
+  "project", "analysis", "concept", "entity", "procedure", "execution",
+  "evidence", "fact", "figure", "table", "source", "note", "todo-list",
+  "unclassified",
 ];
 
 export function anchorAngle(landmarkId: string): number {
