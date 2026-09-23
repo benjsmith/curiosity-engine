@@ -67,6 +67,8 @@ const TYPE_CANONICAL: Record<string, string> = {
   note: "note", notes: "note",
   todo: "todo-list", "todo-list": "todo-list",
   project: "project", projects: "project",
+  procedure: "procedure", procedures: "procedure",
+  execution: "execution", executions: "execution",
   unclassified: "unclassified",
 };
 
@@ -74,6 +76,7 @@ const PREFIX_TO_TYPE: Record<string, string> = {
   con: "concept", ent: "entity", ana: "analysis", src: "source",
   evi: "evidence", fact: "fact", tbl: "table", tab: "table",
   fig: "figure", note: "note", todo: "todo-list", proj: "project",
+  proc: "procedure", exec: "execution",
 };
 
 const TITLE_PREFIX_RE = /^(\[[^\]]+\])\s+(.+)$/;

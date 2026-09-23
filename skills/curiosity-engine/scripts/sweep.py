@@ -88,6 +88,10 @@ Subcommands
         min-inbound=3 filters out one-off typos and drive-by mentions.
         Prints ranked JSON (top 20 by default).
 
+    sweep.py procedure-candidates [wiki_dir] [--limit N]
+        Rank existing wiki/procedures by CURATE deepen spend_priority
+        (immature / chronology-risk hubs first). Wraps procedure_maturity.py.
+
     sweep.py evidence-candidates [wiki_dir] [--min-inbound N]
         Twin of concept-candidates on the evidence side. Finds vault
         sources that are cited by ≥N distinct non-source wiki pages but
@@ -4777,6 +4781,34 @@ def cmd_concept_candidates(wiki_dir: Path, min_inbound: int = 3,
     print(json.dumps({"candidates": candidates[:limit]}, indent=2))
 
 
+def cmd_procedure_candidates(wiki_dir: Path, limit: int = 10) -> None:
+    """Top procedure pages by CURATE deepen/repair spend_priority.
+
+    Thin wrapper around `procedure_maturity.rank_procedures`. Prefer this
+    (or `procedure_maturity.py` directly) before deepening procedure-shaped
+    demand. Higher spend_priority = spend time sooner (immature hubs,
+    chronology dumps, unattested steps).
+    """
+    from procedure_maturity import rank_procedures
+    out = rank_procedures(wiki_dir, limit=limit)
+    # Shape for CURATE: keep full maturity payload + a candidates alias.
+    print(json.dumps({
+        "candidates": [
+            {
+                "target": r["stem"],
+                "spend_priority": r["spend_priority"],
+                "maturity_score": r["maturity_score"],
+                "steps_attested": r["steps_attested"],
+                "path": r["path"],
+                "reasons": r["reasons"][:4],
+            }
+            for r in out["procedures"]
+        ],
+        "ranked_for_spend": out["ranked_for_spend"],
+        "wiki": out["wiki"],
+    }, indent=2))
+
+
 def cmd_orphan_sources(wiki_dir: Path, limit: int = 30) -> None:
     """Source stubs ranked by inbound-link starvation (worst first).
 
@@ -5286,6 +5318,7 @@ def main():
         "scan-references", "resync-stems", "resync-prefixes",
         "resync-title-prefixes",
         "concept-candidates",
+        "procedure-candidates",
         "evidence-candidates", "figure-candidates",
         "orphan-sources",
         "promote-extracted-tables",
@@ -5401,6 +5434,8 @@ def main():
     elif args.command == "concept-candidates":
         cmd_concept_candidates(wiki_dir, min_inbound=args.min_inbound,
                                 limit=args.limit)
+    elif args.command == "procedure-candidates":
+        cmd_procedure_candidates(wiki_dir, limit=args.limit)
     elif args.command == "evidence-candidates":
         cmd_evidence_candidates(wiki_dir, min_inbound=args.min_inbound,
                                  limit=args.limit)

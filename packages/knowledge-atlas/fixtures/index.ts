@@ -39,7 +39,8 @@ const pick = <T>(arr: readonly T[], rng: Rng): T => arr[Math.floor(rng() * arr.l
 
 const CE_PALETTE: Record<string, string> = {
   project: "#4d1ae8", analysis: "#1d6996", concept: "#38a6a5",
-  entity: "#0f8554", evidence: "#73af48", fact: "#edad08",
+  entity: "#0f8554", procedure: "#5e4fa2", execution: "#c51b8a",
+  evidence: "#73af48", fact: "#edad08",
   figure: "#e17c05", table: "#cc503e", source: "#94346e",
   note: "#6f4070", "todo-list": "#9656a2", unclassified: "#ffffff",
   default: "#bbbbbb",
