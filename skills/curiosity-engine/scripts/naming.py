@@ -1086,11 +1086,20 @@ def build_source_summary(meta: dict, body: str, extraction_name: str,
     # Key claims: first few substantive prose lines, capped.
     claims = []
     budget = max_claim_chars
+    header_re = re.compile(
+        r"^(message-id|from|to|cc|bcc|date|subject|mime-version|content-type|"
+        r"content-transfer-encoding|reply-to|sender|return-path|delivered-to|"
+        r"received|x-[a-z0-9-]+)\s*:",
+        re.I,
+    )
     for line in lines:
         # Skip lines that are just the title repeated.
         if full_title and line.casefold() == full_title.casefold():
             continue
         if len(line) < 40:
+            continue
+        # Skip RFC822 / email header lines (not speech-act claims).
+        if header_re.match(line):
             continue
         # Avoid dumping bibliographic noise.
         if re.match(r"^(doi|arxiv|https?:)", line, flags=re.I):
