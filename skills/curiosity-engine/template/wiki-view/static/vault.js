@@ -275,7 +275,11 @@ window.VaultSources = (function () {
       el.classList.add('cite-vault');
       el.setAttribute('role', 'link');
       el.setAttribute('tabindex', '0');
-      el.title = 'Open full vault source in a new tab';
+      var hostOpen = document.documentElement.dataset.syHost === '1' ||
+        typeof window.__syOpenVault === 'function';
+      el.title = hostOpen
+        ? 'Open full vault source in the Editor'
+        : 'Open full vault source in a new tab';
       el.setAttribute('aria-label', 'Open full vault source ' + name);
     });
   }

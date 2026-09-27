@@ -398,7 +398,7 @@ export const DEFAULT_PHYSICS: AtlasPhysics = {
 export const LARGE_WIKI_PHYSICS: AtlasPhysics = {
   charge: -1000,
   link: 220,
-  collide: 36,
+  collide: 48,
 };
 
 export type AtlasThemeToken =
