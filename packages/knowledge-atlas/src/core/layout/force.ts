@@ -13,7 +13,7 @@ import {
   forceManyBody,
   forceSimulation,
 } from "d3-force";
-import { aggregateRadius, meanDisplacement, nodeRadius, type LayoutAdapter, type LayoutContext } from "./types.ts";
+import { aggregateRadius, collideForceRadius, meanDisplacement, nodeRadius, type LayoutAdapter, type LayoutContext } from "./types.ts";
 import { DEFAULT_PHYSICS, type LayoutPoint, type LayoutResult, type SceneData } from "../types.ts";
 
 function prewarmTicks(count: number): number {
@@ -53,7 +53,12 @@ export const forceLayout: LayoutAdapter = {
       )
       .force("charge", forceManyBody().strength(physics.charge).distanceMax(2500))
       .force("center", forceCenter(0, 0).strength(0.04))
-      .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
+      .force(
+        "collide",
+        forceCollide((d) => collideForceRadius((d as unknown as SimNode).r, physics.collide))
+          .strength(1)
+          .iterations(simNodes.length > 2000 ? 2 : 1),
+      )
       .alpha(1)
       .alphaDecay(0.05)
       .stop();

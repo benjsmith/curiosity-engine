@@ -495,13 +495,14 @@ window.FileBrowser = (function () {
   /** Highlight tree rows from graph-search page ids (wiki paths). */
   function setSearchHits(ids) {
     searchHits = new Set();
+    // O(paths) reverse map once — scanning every path per id was O(N²)
+    // and froze the UI when a short prefix matched tens of thousands.
+    var idToWiki = Object.create(null);
+    Object.keys(pathToPageId).forEach(function (p) {
+      if (p.indexOf("wiki/") === 0) idToWiki[pathToPageId[p]] = p;
+    });
     (ids || []).forEach(function (id) {
-      var wikiRel = null;
-      // Prefer reverse lookup from pathToPageId.
-      Object.keys(pathToPageId).forEach(function (p) {
-        if (pathToPageId[p] === id && p.indexOf("wiki/") === 0) wikiRel = p;
-      });
-      if (!wikiRel) wikiRel = "wiki/" + id + ".md";
+      var wikiRel = idToWiki[id] || ("wiki/" + id + ".md");
       searchHits.add(wikiRel);
       ancestorDirs(wikiRel).forEach(function (d) { expanded.add(d); });
     });

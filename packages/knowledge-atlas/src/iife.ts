@@ -58,6 +58,10 @@ export type MountOptions = {
 
 export type MountHandle = {
   engine: AtlasEngine;
+  /** Drop hover intent / visible hover (pointer leave). */
+  clearHover: () => void;
+  /** Clear hover + selection + focus decoration (pointer leave). */
+  clearHighlights: () => void;
   /** Update the label policy live (wired to the host's label picker). */
   setLabels: (mode: "auto" | "on" | "off", types?: readonly string[] | null) => void;
   /** Update edge stroke policy live (wired to the host's edges control). */

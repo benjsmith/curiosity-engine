@@ -22,7 +22,7 @@
   var MIN_ATLAS_PAGES = 360;
   var LABEL_TYPES_KEY = 'curiosity-engine.label-types';
   var LABEL_DEFAULTS = ['concept', 'entity', 'note', 'todo'];
-  var PHYSICS_DEFAULTS = { charge: -1000, link: 220, collide: 28 };
+  var PHYSICS_DEFAULTS = { charge: -1000, link: 220, collide: 36 };
 
   function readLabelTypes() {
     try {

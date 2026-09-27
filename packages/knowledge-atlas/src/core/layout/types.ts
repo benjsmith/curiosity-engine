@@ -29,6 +29,15 @@ export function aggregateRadius(count: number): number {
   return Math.min(34, 10 + Math.sqrt(count) * 2.4);
 }
 
+/** Hub-scaled collide radius: visual r * scale + flat pad.
+ * Large hubs need more than r+pad so they separate under the reduced
+ * large-N tick budget without a full many-body re-solve. */
+export const COLLIDE_RADIUS_SCALE = 1.4;
+
+export function collideForceRadius(visualR: number, pad: number): number {
+  return visualR * COLLIDE_RADIUS_SCALE + pad;
+}
+
 export function meanDisplacement(
   positions: Map<string, LayoutPoint>,
   previous?: LayoutResult,
