@@ -137,11 +137,84 @@
       if (!chrome) document.body.classList.add('ce-embed-no-chrome');
     } catch (e) { /* ignore */ }
 
-    var res = await fetch(dataUrl, { cache: 'no-store' });
-    if (!res.ok) {
-      throw new Error('CEEmbed.create: data ' + res.status + ' from ' + dataUrl);
+    var cacheApi = window.CEAtlasCache || null;
+    var cacheKey = cacheApi
+      ? cacheApi.resolveKey({
+          cacheKey: opts.cacheKey,
+          workspace: opts.workspace,
+        })
+      : null;
+    var cachedPositions = null;
+    var cachedTip = '';
+    var usedCache = false;
+    var revalidatePromise = null;
+    var onDataUpdated = null; // set after mount helpers exist
+
+    async function fetchFreshData() {
+      var res = await fetch(dataUrl, { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error('CEEmbed.create: data ' + res.status + ' from ' + dataUrl);
+      }
+      return res.json();
     }
-    data = await res.json();
+
+    async function persistCache(nextData, positions) {
+      if (!cacheApi || !cacheKey || !nextData) return;
+      try {
+        await cacheApi.put(cacheKey, {
+          generatedAt: cacheApi.tipOf(nextData),
+          workspace: (nextData && nextData.workspace) || opts.workspace || '',
+          data: nextData,
+          positions: positions || cachedPositions || null,
+        });
+      } catch (e) {
+        console.warn('[CEEmbed] cache put failed', e);
+      }
+    }
+
+    // Cache-first: paint instantly from IndexedDB when present, then
+    // background-fetch data.json and soft-refresh if the tip changed.
+    if (cacheApi && cacheKey) {
+      try {
+        var cached = await cacheApi.get(cacheKey);
+        if (cached && cached.data) {
+          data = cached.data;
+          cachedPositions = cached.positions || null;
+          cachedTip = cached.generatedAt || cacheApi.tipOf(cached.data);
+          usedCache = true;
+          try { window.__CE_ATLAS_POSITIONS = cachedPositions; } catch (e) { /* ignore */ }
+        }
+      } catch (e) {
+        console.warn('[CEEmbed] cache get failed', e);
+      }
+    }
+
+    if (!data) {
+      data = await fetchFreshData();
+      cachedTip = cacheApi ? cacheApi.tipOf(data) : '';
+      void persistCache(data, null);
+    } else {
+      revalidatePromise = (async function () {
+        try {
+          var fresh = await fetchFreshData();
+          if (destroyed) return;
+          var freshTip = cacheApi ? cacheApi.tipOf(fresh) : '';
+          if (freshTip && freshTip === cachedTip) {
+            // Tip unchanged — still refresh positions sidecar if missing.
+            if (!cachedPositions) void persistCache(fresh, null);
+            return;
+          }
+          data = fresh;
+          cachedTip = freshTip;
+          void persistCache(fresh, cachedPositions);
+          if (typeof onDataUpdated === 'function') {
+            onDataUpdated(fresh);
+          }
+        } catch (e) {
+          console.warn('[CEEmbed] background revalidate failed', e);
+        }
+      })();
+    }
 
     function applyHash() {
       if (destroyed || !canvasInited || !graphApi || !window.Modal) return;
@@ -187,6 +260,10 @@
         var r = await fetch(url, { cache: 'no-store' });
         if (!r.ok) return;
         data = await r.json();
+        if (cacheApi && cacheKey) {
+          cachedTip = cacheApi.tipOf(data);
+          void persistCache(data, cachedPositions);
+        }
         if (window.Modal && Modal.refresh) Modal.refresh(data);
         if (window.FileBrowser && FileBrowser.refreshData) FileBrowser.refreshData(data);
         if (window.Subgraph && Subgraph.init) Subgraph.init(data);
@@ -414,12 +491,41 @@
       sidebarInited = false;
       data = null;
       try { window.CEViewer = null; } catch (e) { /* ignore */ }
+      try { window.__CE_ATLAS_POSITIONS = null; } catch (e) { /* ignore */ }
       try {
         delete document.body.dataset.ceEmbed;
         delete document.body.dataset.viewer;
         document.body.classList.remove('ce-embed', 'ce-embed-no-chrome');
       } catch (e) { /* ignore */ }
     }
+
+    onDataUpdated = function (fresh) {
+      if (destroyed) return;
+      data = fresh;
+      // Tip changed while atlas live: hard remount canvas, keep sidebar.
+      // Seed prior positions so overlapping ids skip force layout.
+      if (canvasInited && canvasEl) {
+        var el = canvasEl;
+        var keepPos = cachedPositions;
+        try {
+          window.__CE_ATLAS_POSITIONS = keepPos;
+        } catch (e) { /* ignore */ }
+        try {
+          unmountCanvas({ destroy: true });
+        } catch (e) { /* ignore */ }
+        try {
+          mountCanvas(el);
+        } catch (e) {
+          console.warn('[CEEmbed] remount after tip change failed', e);
+        }
+      } else {
+        // Sidebar-only: refresh list/counts.
+        try {
+          if (window.Sidebar && Sidebar.init) Sidebar.init(data);
+          if (window.FileBrowser && FileBrowser.refreshData) FileBrowser.refreshData(data);
+        } catch (e) { /* ignore */ }
+      }
+    };
 
     return {
       mountSidebar: mountSidebar,
@@ -432,6 +538,15 @@
       isCanvasLive: function () { return !!(canvasInited && graphApi && !destroyed); },
       /** Soft-refresh data.json without tearing down atlas layout. */
       revalidate: function (currentPageId) { return refetchData(currentPageId); },
+      /** Cache key / tip for hosts. */
+      getCacheInfo: function () {
+        return {
+          key: cacheKey,
+          tip: cachedTip,
+          usedCache: usedCache,
+          hasPositions: !!cachedPositions,
+        };
+      },
     };
   }
 

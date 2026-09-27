@@ -307,6 +307,29 @@
     });
   }
 
+  var _persistTimer = 0;
+  function persistAtlasPositions(handle, data) {
+    var cache = window.CEAtlasCache;
+    if (!cache || !handle) return;
+    var snap = handle.engine && handle.engine.snapshot
+      ? handle.engine.snapshot()
+      : null;
+    var layout = snap && snap.layout;
+    if (!layout || !layout.positions) return;
+    var positions = cache.serializePositions(layout.positions);
+    if (!positions) return;
+    try { window.__CE_ATLAS_POSITIONS = positions; } catch (e) { /* ignore */ }
+    if (_persistTimer) clearTimeout(_persistTimer);
+    _persistTimer = setTimeout(function () {
+      _persistTimer = 0;
+      var key = cache.resolveKey({
+        workspace: data && data.workspace,
+      });
+      // Merge into existing cached data row (do not drop data.json).
+      cache.putPositions(key, positions);
+    }, 750);
+  }
+
   // Called by main.js instead of Graph.init when the flag is on.
   // Returns a Graph-compatible facade so focus()/clearFocus() callers
   // keep working.
@@ -320,6 +343,11 @@
     /* Edge strokes: controlled by edgeMode (auto/on/off) — drawing only;
      * edges stay in the force graph and link counts. Default auto is a
      * sparse subset on large corpora (full draw when small). */
+    var seededPositions = null;
+    try {
+      seededPositions = window.__CE_ATLAS_POSITIONS || null;
+    } catch (e) { seededPositions = null; }
+
     var handle = window.KnowledgeAtlas.mount(container, {
       data: data,
       edgeMode: 'auto',
@@ -344,6 +372,8 @@
           maxAggregates: 0,
           maxEdges: Math.max(900, (data.edges || []).length),
         },
+        // Instant cold paint: seed last layout from CEAtlasCache.
+        initialPositions: seededPositions || undefined,
       },
       onOpenItem: function (id) {
         window.location.hash = '#page=' + encodeURIComponent(id);
@@ -354,6 +384,10 @@
         // after this callback, so no extra repaint is needed here.
         if (event && event.kind === 'scene-ready' && handle) {
           stripFocusMark(handle.engine);
+          // Persist layout coords for the next hard-reload cold start.
+          try {
+            persistAtlasPositions(handle, data);
+          } catch (e) { /* ignore */ }
         }
       },
     });
