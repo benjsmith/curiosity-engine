@@ -1427,3 +1427,21 @@ body[data-replay="1"] .graph-controls { opacity: 0.35; }
   color: var(--accent, #6be8b3);
   border-color: var(--accent, #6be8b3);
 }
+
+/* ── Embed host (Switchbay dual-mount) ─────────────────────────────
+ * When CEEmbed.create runs, body gets data-ce-embed=1 + .ce-embed.
+ * Host owns shell layout (tabs/rail/theme); neutralize CE's full-page
+ * flex body so it does not fight the host document. */
+body[data-ce-embed="1"],
+body.ce-embed {
+  display: block;
+  overflow: visible;
+  background: transparent;
+}
+body.ce-embed-no-chrome .workspace-name {
+  /* Host shows workspace title; keep compact. */
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
