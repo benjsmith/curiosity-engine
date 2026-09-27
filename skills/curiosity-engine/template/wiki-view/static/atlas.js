@@ -537,6 +537,22 @@
 
     // Covers a scene that landed before onEvent was wired.
     if (stripFocusMark(handle.engine)) controls.repaint();
+    if (!container.dataset.clearLeaveBound) {
+      container.dataset.clearLeaveBound = '1';
+      container.addEventListener('pointerleave', function () {
+        try {
+          if (handle && typeof handle.clearHighlights === 'function') {
+            handle.clearHighlights();
+          } else if (handle && handle.engine) {
+            if (handle.clearHover) handle.clearHover();
+            if (handle.engine.select) handle.engine.select([], 'replace');
+            if (handle.engine.clearFocus) handle.engine.clearFocus();
+          }
+          stripFocusMark(handle && handle.engine);
+          if (controls && controls.repaint) controls.repaint();
+        } catch (e) {}
+      });
+    }
     // When a static host shards edges to edges.json.gz, assign
     // data.edges after preload and call Sidebar.updateCounts(data)
     // so the footer does not stay at "N pages · 0 links".
@@ -550,6 +566,7 @@
         if (handle.engine.select) handle.engine.select([pageId], 'replace');
       },
       clearFocus: function () {
+        if (handle.clearHover) handle.clearHover();
         if (handle.engine.select) handle.engine.select([], 'replace');
         if (handle.engine.clearFocus) handle.engine.clearFocus();
         stripFocusMark(handle.engine);

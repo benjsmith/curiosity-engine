@@ -613,10 +613,23 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
     }
     engine.zoomTo(engine.getState().semanticScale + (ev.deltaY < 0 ? 0.2 : -0.2));
   };
+  const onPointerLeave = () => {
+    // Leaving the canvas must drop hover AND selection/focus — otherwise
+    // accent rings / hover halos stick after the pointer exits the graph.
+    clearHoverIntent(true);
+    try {
+      engine.select([], "replace");
+      engine.clearFocus();
+    } catch {
+      /* ignore */
+    }
+    draw(1);
+  };
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onCancel);
+  canvas.addEventListener("pointerleave", onPointerLeave);
   canvas.addEventListener("dblclick", onDbl);
   canvas.addEventListener("wheel", onWheel, { passive: false });
 
@@ -643,6 +656,17 @@ export function mount(container: HTMLElement, opts: MountOptions): MountHandle {
 
   return {
     engine,
+    clearHover: () => clearHoverIntent(true),
+    clearHighlights: () => {
+      clearHoverIntent(true);
+      try {
+        engine.select([], "replace");
+        engine.clearFocus();
+      } catch {
+        /* ignore */
+      }
+      draw(1);
+    },
     setLabels: (mode, types) => {
       labelState.mode = mode;
       if (types !== undefined) labelState.types = types ? new Set(types) : null;
