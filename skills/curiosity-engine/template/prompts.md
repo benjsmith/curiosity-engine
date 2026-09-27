@@ -63,6 +63,8 @@ this file; don't duplicate prompts there.
 >   grid, the 70B/1.4T Chinchilla result vs 280B/300B Gopher on MMLU,
 >   the interpretation (token-count scaling under-weighted in Kaplan),
 >   and the downstream influence on Llama/Mistral training budgets.
+>   Name what the page is evidence **for**. Ban person-level email/
+>   calendar collection hubs and densify/wave/drain jargon in prose.
 > - **facts/<stem>.md**: ONE atomic parameter, value, or assertion,
 >   lifted near-verbatim from a single source. Reserved for discrete
 >   numerical anchors worth citing standalone. **Decision rule: if
@@ -107,7 +109,7 @@ this file; don't duplicate prompts there.
 >   Never paste email/meeting snippets or signature blocks onto
 >   high-level pages. Wiki pages are for readers of the organization,
 >   not for the experiment — never write benchmark / wave / eval /
->   harness / fuel metadata into page titles or bodies.
+>   densify / harness / fuel metadata into page titles or bodies.
 >   When an analysis answer is a scalar count, ISO date, or yes/no, put that value in the opening sentence as bold arabic digits / ISO date / Yes|No (e.g. **11**), not only a spelled-out word and not an `Answer:` label.
 >   Analyses are the primary channel once the editorial/frontier
 >   pool saturates — they should be prolific, multi-directional, and
