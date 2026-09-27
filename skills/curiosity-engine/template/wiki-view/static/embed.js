@@ -3,8 +3,8 @@
  * Switchbay loads CE static modules without main.js, then calls:
  *   const h = await CEEmbed.create({ embed:true, dataUrl, publicBase, chrome:false })
  *   h.mountSidebar(sidebarEl)
- *   h.mountCanvas(canvasEl)   // may unmount/remount when leaving Graph
- *   h.unmountCanvas()         // canvas only; sidebar stays
+ *   h.mountCanvas(canvasEl)   // first paint or instant reattach from park
+ *   h.unmountCanvas()         // soft park (keeps atlas); {destroy:true} hard
  *   h.destroy()
  *
  * One shared data.json session across both mounts. Standalone main.js
@@ -125,6 +125,8 @@
     var canvasEl = null;
     var sidebarInited = false;
     var canvasInited = false;
+    var canvasParked = false;
+    var parkHost = null;
     var graphApi = null;
     var hashHandler = null;
     var onCloseBound = false;
@@ -225,7 +227,31 @@
       sidebarInited = true;
     }
 
-    function unmountCanvas() {
+    function ensureParkHost() {
+      if (parkHost && parkHost.isConnected) return parkHost;
+      parkHost = document.createElement('div');
+      parkHost.setAttribute('data-ce-canvas-park', '1');
+      parkHost.setAttribute('aria-hidden', 'true');
+      parkHost.style.cssText =
+        'position:fixed;left:-10000px;top:0;width:800px;height:600px;' +
+        'overflow:hidden;visibility:hidden;pointer-events:none;z-index:-1;';
+      document.body.appendChild(parkHost);
+      return parkHost;
+    }
+
+    function captureCanvasSize() {
+      if (!canvasEl) return;
+      var g = canvasEl.querySelector('#graph') || canvasEl;
+      var w = g.clientWidth || canvasEl.clientWidth;
+      var h = g.clientHeight || canvasEl.clientHeight;
+      if (w > 0 && h > 0) {
+        var host = ensureParkHost();
+        host.style.width = w + 'px';
+        host.style.height = h + 'px';
+      }
+    }
+
+    function destroyCanvasInstance() {
       unbindHash();
       try {
         if (graphApi && typeof graphApi.destroy === 'function') graphApi.destroy();
@@ -237,22 +263,85 @@
       if (canvasEl) {
         var g = canvasEl.querySelector('#graph');
         if (g) g.innerHTML = '';
-        // Clear modal open state if modal nodes still exist under canvasEl
         try {
           if (window.Modal && Modal.close) Modal.close();
         } catch (e) { /* ignore */ }
       }
+      if (parkHost) {
+        try { parkHost.innerHTML = ''; } catch (e) { /* ignore */ }
+      }
       canvasInited = false;
+      canvasParked = false;
       onCloseBound = false;
+    }
+
+    /**
+     * Soft by default: park canvas DOM off-screen and keep atlas/simulation
+     * alive so Graph tab remounts are instant. Pass {destroy:true} for a
+     * hard teardown (workspace switch / data remount / session destroy).
+     */
+    function unmountCanvas(opts) {
+      var hard = !!(opts && opts.destroy === true);
+      if (hard || !canvasInited) {
+        destroyCanvasInstance();
+        if (canvasEl) {
+          try { canvasEl.innerHTML = ''; } catch (e) { /* ignore */ }
+        }
+        canvasEl = null;
+        return;
+      }
+      // Soft park — move live DOM into an offscreen host sized to last paint
+      // so KnowledgeAtlas ResizeObserver does not collapse to 0×0.
+      unbindHash();
+      try {
+        if (window.Modal && Modal.close) Modal.close();
+      } catch (e) { /* ignore */ }
+      if (canvasEl) {
+        captureCanvasSize();
+        var host = ensureParkHost();
+        while (canvasEl.firstChild) host.appendChild(canvasEl.firstChild);
+      }
+      canvasEl = null;
+      canvasParked = true;
+      // Keep graphApi + canvasInited — remount will reattach, not re-layout.
+    }
+
+    function remountParkedCanvas(el) {
+      canvasEl = el;
+      var host = ensureParkHost();
+      while (host.firstChild) el.appendChild(host.firstChild);
+      canvasParked = false;
+      bindHash();
+      applyHash();
+      // ResizeObserver fires on reinsert; nudge a frame later for layout.
+      try {
+        requestAnimationFrame(function () {
+          try {
+            var g = el.querySelector('#graph');
+            if (g && typeof ResizeObserver !== 'undefined') {
+              // no-op touch so observers that missed the move still settle
+              void g.clientWidth;
+            }
+          } catch (e) { /* ignore */ }
+        });
+      } catch (e) { /* ignore */ }
     }
 
     function mountCanvas(el) {
       if (destroyed) return;
-      // Remount path: tear previous canvas without touching sidebar.
-      if (canvasInited) unmountCanvas();
+
+      // Instant path: atlas still alive in park host — reattach only.
+      if (canvasParked && canvasInited && graphApi) {
+        remountParkedCanvas(el);
+        return;
+      }
+
+      // Hard remount path: tear previous canvas without touching sidebar.
+      if (canvasInited) unmountCanvas({ destroy: true });
 
       ensureCanvasDom(el);
       canvasEl = el;
+      canvasParked = false;
 
       if (window.Subgraph && Subgraph.init) Subgraph.init(data);
       if (window.Modal && Modal.init) Modal.init(data);
@@ -311,7 +400,12 @@
     function destroy() {
       if (destroyed) return;
       destroyed = true;
-      unmountCanvas();
+      unmountCanvas({ destroy: true });
+      if (parkHost && parkHost.parentNode) {
+        try { parkHost.parentNode.removeChild(parkHost); } catch (e) { /* ignore */ }
+      }
+      parkHost = null;
+      canvasParked = false;
       if (sidebarEl) {
         try { sidebarEl.innerHTML = ''; } catch (e) { /* ignore */ }
       }
@@ -334,6 +428,10 @@
       destroy: destroy,
       /** Shared session data (read-only for hosts / tests). */
       getData: function () { return data; },
+      /** True when atlas/graph is initialized (mounted or soft-parked). */
+      isCanvasLive: function () { return !!(canvasInited && graphApi && !destroyed); },
+      /** Soft-refresh data.json without tearing down atlas layout. */
+      revalidate: function (currentPageId) { return refetchData(currentPageId); },
     };
   }
 
