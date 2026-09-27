@@ -17,6 +17,15 @@
 
 # Changelog
 
+## 2026-09-27 — Evidence pages name their claim (no person-email hubs)
+
+**Migration:** none. **Breaking:** none.
+
+### Clarified
+
+- Writing rules: evidence pages must name what claim/entity/relation they support; ban person-level email/calendar collection hubs as primary evidence; extend wave-metadata ban to densify/harness jargon (`final drain`, `Hub person:`, etc.). Mirrored in worker `prompts.md`.
+
+
 ## 2026-09-19 — v1.8.3 — QUERY crystallise: elevate analysis pages
 
 **Migration:** none. **Breaking:** none.
