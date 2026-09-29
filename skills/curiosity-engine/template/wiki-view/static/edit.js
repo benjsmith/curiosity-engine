@@ -19,6 +19,15 @@
  * it and the host orchestrates the re-render.
  */
 window.Edit = (function () {
+  /** Honor CE_PUBLIC_BASE under /embed/ce/ reverse-proxy (Phase 2a). */
+  function apiUrl(path) {
+    if (typeof window.ceApi === "function") return window.ceApi(path);
+    var base = (window.CE_PUBLIC_BASE || "").replace(/\/$/, "");
+    if (!path) path = "/";
+    if (path.charAt(0) !== "/") path = "/" + path;
+    return base + path;
+  }
+
   let _refetch = null;
   let _currentPage = null;
   let _editing = false;
@@ -115,7 +124,7 @@ window.Edit = (function () {
     const path = _currentPage.path;
     let content = '';
     try {
-      const res = await fetch('/api/page?path=' + encodeURIComponent(path));
+      const res = await fetch(apiUrl('/api/page') + '?path=' + encodeURIComponent(path));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = await res.json();
       content = payload.content || '';
@@ -162,7 +171,7 @@ window.Edit = (function () {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      const res = await fetch('/api/page', {
+      const res = await fetch(apiUrl('/api/page'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, content }),
@@ -197,7 +206,7 @@ window.Edit = (function () {
     const form = new FormData();
     for (const f of files) form.append('file', f, f.name);
     try {
-      const res = await fetch('/api/upload-vault', { method: 'POST', body: form });
+      const res = await fetch(apiUrl('/api/upload-vault'), { method: 'POST', body: form });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${res.status}`);

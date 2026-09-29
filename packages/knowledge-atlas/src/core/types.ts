@@ -380,6 +380,14 @@ export type AtlasConfig = {
   /** Default true. */
   keyboard?: boolean;
   typeMeta?: Record<string, { label?: string; landmark?: boolean; order?: number }>;
+  /**
+   * Seed layout positions (e.g. from IndexedDB atlas cache). When every
+   * scene node id is present, hybrid layout skips the force solve —
+   * cold Graph paint stays instant after a hard reload.
+   */
+  initialPositions?:
+    | Map<string, { x: number; y: number; r: number }>
+    | Record<string, { x: number; y: number; r?: number }>;
 };
 
 export type AtlasPhysics = {
@@ -398,7 +406,7 @@ export const DEFAULT_PHYSICS: AtlasPhysics = {
 export const LARGE_WIKI_PHYSICS: AtlasPhysics = {
   charge: -1000,
   link: 220,
-  collide: 28,
+  collide: 48,
 };
 
 export type AtlasThemeToken =

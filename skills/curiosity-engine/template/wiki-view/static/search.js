@@ -16,11 +16,17 @@
  *
  * Substring match over id, title, path, type and page properties —
  * predictable, and it finds the source filename a page came from.
+ *
+ * Large-wiki responsiveness: debounce input, require MIN_QUERY_CHARS
+ * before running full match / canvas rings / list highlights (1-char
+ * prefixes match nearly everything on ~27k corpora). Deep-link
+ * `#page=` routing is unaffected — it never goes through this box.
  */
 window.GraphSearch = (function () {
   'use strict';
 
-  var DEBOUNCE_MS = 160;
+  var DEBOUNCE_MS = 200;
+  var MIN_QUERY_CHARS = 2;
 
   function haystack(data, node) {
     var page = (data.pages || {})[node.id] || {};
@@ -37,13 +43,28 @@ window.GraphSearch = (function () {
     return bits.filter(Boolean).join(' ').toLowerCase();
   }
 
-  /** Ids of every node matching `query`. Empty query → no hits. */
-  function match(data, query) {
+  /** Precompute haystacks once — matching on 27k nodes must not rebuild
+   * property strings on every keystroke. */
+  function buildIndex(data) {
+    var nodes = data.nodes || [];
+    var out = new Array(nodes.length);
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      out[i] = { id: n.id, hay: haystack(data, n) };
+    }
+    return out;
+  }
+
+  /** Ids of every node matching `query`. Empty / too-short → no hits. */
+  function match(data, query, index) {
     var q = String(query || '').trim().toLowerCase();
-    if (!q) return [];
-    return (data.nodes || [])
-      .filter(function (n) { return haystack(data, n).indexOf(q) !== -1; })
-      .map(function (n) { return n.id; });
+    if (!q || q.length < MIN_QUERY_CHARS) return [];
+    var rows = index || buildIndex(data);
+    var ids = [];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].hay.indexOf(q) !== -1) ids.push(rows[i].id);
+    }
+    return ids;
   }
 
   function init(data, graphApi) {
@@ -53,18 +74,30 @@ window.GraphSearch = (function () {
     if (!input || !clearBtn) return;
 
     var timer = 0;
+    var index = buildIndex(data);
 
     function paint(query) {
       var q = String(query || '').trim();
-      var ids = match(data, q);
+      var ready = q.length >= MIN_QUERY_CHARS;
+      var ids = ready ? match(data, q, index) : [];
       if (graphApi && graphApi.highlightSearch) graphApi.highlightSearch(ids);
       // Always call, including with an empty list — that is how a
-      // cancelled search clears the page list.
+      // cancelled / too-short search clears the page list.
       if (window.Sidebar && Sidebar.setSearchHits) Sidebar.setSearchHits(ids);
+      if (window.FileBrowser && FileBrowser.setSearchHits) FileBrowser.setSearchHits(ids);
       clearBtn.hidden = !q;
       if (countEl) {
-        countEl.hidden = !q;
-        countEl.textContent = q ? String(ids.length) : '';
+        if (!q) {
+          countEl.hidden = true;
+          countEl.textContent = '';
+        } else if (!ready) {
+          // Typed but below min length — no expensive match yet.
+          countEl.hidden = false;
+          countEl.textContent = '…';
+        } else {
+          countEl.hidden = false;
+          countEl.textContent = String(ids.length);
+        }
       }
     }
 
@@ -99,5 +132,5 @@ window.GraphSearch = (function () {
     paint('');
   }
 
-  return { init: init, match: match };
+  return { init: init, match: match, MIN_QUERY_CHARS: MIN_QUERY_CHARS, DEBOUNCE_MS: DEBOUNCE_MS };
 })();

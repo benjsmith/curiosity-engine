@@ -28,6 +28,7 @@ import type {
   DiscoveryClass,
   ExplanationRequest,
   LayoutKind,
+  LayoutPoint,
   LayoutResult,
   SceneBudget,
   SceneData,
@@ -63,6 +64,26 @@ export type EngineSnapshot = {
   state: AtlasState;
   stats: SceneStats | null;
 };
+
+
+function coerceInitialPositions(
+  raw:
+    | Map<string, LayoutPoint>
+    | Record<string, { x: number; y: number; r?: number }>
+    | undefined,
+): Map<string, LayoutPoint> | null {
+  if (!raw) return null;
+  if (raw instanceof Map) {
+    return raw.size ? raw : null;
+  }
+  const m = new Map<string, LayoutPoint>();
+  for (const id of Object.keys(raw)) {
+    const p = raw[id];
+    if (!p || typeof p.x !== "number" || typeof p.y !== "number") continue;
+    m.set(id, { x: p.x, y: p.y, r: typeof p.r === "number" ? p.r : 4 });
+  }
+  return m.size ? m : null;
+}
 
 export class AtlasEngine implements AtlasController {
   readonly hitTester = new HitTester();
@@ -110,6 +131,10 @@ export class AtlasEngine implements AtlasController {
     this.budget = { ...DEFAULT_BUDGET, ...config.budget };
     this.physics = { ...DEFAULT_PHYSICS, ...config.physics };
     this.layoutKind = config.layout ?? "focus";
+    const seeded = coerceInitialPositions(config.initialPositions);
+    if (seeded) {
+      this.layoutResult = { positions: seeded, displacement: 0 };
+    }
   }
 
   // ── events ────────────────────────────────────────────────────────

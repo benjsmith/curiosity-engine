@@ -46,6 +46,13 @@ window.Graph = (function () {
   let searchHits = null;    // Set of ids from the graph search; null = idle
   let _autoVisibleIds = new Set();    // cache: ids whose labels show in auto mode
   let _autoRecomputeScheduled = false;
+  // ── Split mode: review-before-split (Phase 2b++++++ rubber-band) ──
+  // Click toggles membership; Shift-click adds; Ctrl/Cmd-drag rubber-bands;
+  // Alt-click / right-click flips move ↔ copy. Entities/concepts default copy.
+  let splitActive = false;
+  let splitPolicies = new Map();      // id → 'move' | 'copy'
+  let splitOnChange = null;
+
   let _isDragging = false;            // suppress hover-focus changes mid-drag
   let _isZooming = false;
   let _zoomSettleTimer = null;
@@ -362,6 +369,9 @@ window.Graph = (function () {
     if (classicMinimap) classicMinimap.destroy();
     classicMinimap = null;
     nodeById.clear();
+    splitActive = false;
+    splitPolicies = new Map();
+    splitOnChange = null;
     neighbours.clear();
     focusId = null;
     focusOrigin = null;
@@ -429,7 +439,42 @@ window.Graph = (function () {
         })
         .on('click', (ev, d) => {
           ev.stopPropagation();
+          if (splitActive || ev.shiftKey) {
+            if (!splitActive) {
+              // Seed with this node so opening the panel does not clear it.
+              splitEnter([{ id: d.id, policy: defaultSplitPolicy(d) }], splitOnChange);
+              try {
+                if (window.SplitPanel && SplitPanel.open) SplitPanel.open();
+              } catch (e) { /* ignore */ }
+              return;
+            }
+            if (ev.altKey && splitPolicies.has(d.id)) {
+              flipSplitPolicy(d.id);
+            } else if (ev.shiftKey && !splitPolicies.has(d.id)) {
+              splitPolicies.set(d.id, defaultSplitPolicy(d));
+            } else if (splitPolicies.has(d.id) && !ev.shiftKey) {
+              splitPolicies.delete(d.id);
+            } else if (!splitPolicies.has(d.id)) {
+              splitPolicies.set(d.id, defaultSplitPolicy(d));
+            }
+            refreshSplitStyles();
+            notifySplit();
+            return;
+          }
           window.location.hash = '#page=' + encodeURIComponent(d.id);
+        })
+        .on('contextmenu', (ev, d) => {
+          if (!splitActive) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (splitPolicies.has(d.id)) {
+            flipSplitPolicy(d.id);
+          } else {
+            splitPolicies.set(d.id,
+              defaultSplitPolicy(d) === 'move' ? 'copy' : 'move');
+          }
+          refreshSplitStyles();
+          notifySplit();
         });
 
     nodeSel.append('circle')
@@ -548,8 +593,11 @@ window.Graph = (function () {
       .scaleExtent([0.15, 4])
       .filter((event) => {
         // Allow zoom on the SVG background but not when starting on a
-        // node (drag on node should preempt pan).
+        // node (drag on node should preempt pan). Ctrl/Cmd/Shift+drag
+        // is reserved for rubber-band split selection (d3 default also
+        // ignores ctrl; keep that when the filter is overridden).
         if (event.type === 'wheel') return true;
+        if (event.ctrlKey || event.metaKey || (splitActive && event.shiftKey)) return false;
         return !event.target.closest || !event.target.closest('.node');
       })
       .on('start', () => {
@@ -596,6 +644,7 @@ window.Graph = (function () {
     initLabelTypesPanel();
 
     applyVisibility();
+    initSplitInteractions();
 
     return { focus: focusOnPage };
   }
@@ -1026,6 +1075,107 @@ window.Graph = (function () {
     setLabelMode(order[(order.indexOf(labelMode) + 1) % order.length]);
   }
 
+  // ── Split mode (rubber-band + multi-select) ────────────────────
+
+  function defaultSplitPolicy(d) {
+    return (d && (d.type === 'entity' || d.type === 'concept')) ? 'copy' : 'move';
+  }
+
+  function flipSplitPolicy(id) {
+    splitPolicies.set(id,
+      splitPolicies.get(id) === 'move' ? 'copy' : 'move');
+  }
+
+  function refreshSplitStyles() {
+    if (svg) svg.classed('split-mode', splitActive);
+    if (nodeSel) {
+      nodeSel
+        .classed('split-move', d => splitActive && splitPolicies.get(d.id) === 'move')
+        .classed('split-copy', d => splitActive && splitPolicies.get(d.id) === 'copy');
+    }
+  }
+
+  function notifySplit() {
+    const out = [];
+    splitPolicies.forEach((policy, id) => out.push({ id, policy }));
+    if (splitOnChange) splitOnChange(out);
+    try {
+      window.dispatchEvent(new CustomEvent('ce:split-selection', { detail: { pages: out } }));
+    } catch (e) { /* ignore */ }
+  }
+
+  function splitEnter(seed, onChange) {
+    splitActive = true;
+    splitPolicies = new Map();
+    (seed || []).forEach((s) => {
+      const id = typeof s === 'string' ? s : s && s.id;
+      if (!id) return;
+      const d = nodeById.get(id);
+      if (!d) {
+        // Still record unknown ids so panel + API can validate.
+        const policy = (typeof s === 'object' && s.policy) ? s.policy : 'move';
+        splitPolicies.set(id, policy === 'copy' ? 'copy' : 'move');
+        return;
+      }
+      const policy = (typeof s === 'object' && s.policy)
+        ? s.policy : defaultSplitPolicy(d);
+      splitPolicies.set(id, policy === 'copy' ? 'copy' : 'move');
+    });
+    splitOnChange = onChange || splitOnChange || null;
+    refreshSplitStyles();
+    notifySplit();
+  }
+
+  function splitExit() {
+    splitActive = false;
+    splitPolicies = new Map();
+    splitOnChange = null;
+    refreshSplitStyles();
+  }
+
+  function initSplitInteractions() {
+    if (!svg) return;
+    svg.on('mousedown.split', (ev) => {
+      if (!splitActive) return;
+      if (!(ev.ctrlKey || ev.metaKey || ev.shiftKey)) return;
+      // Shift+click on a node is handled by the node click handler.
+      if (ev.shiftKey && ev.target && ev.target.closest && ev.target.closest('.node')) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      const svgEl = svg.node();
+      const [x0, y0] = d3.pointer(ev, svgEl);
+      const rect = svg.append('rect').attr('class', 'split-rubber');
+      const update = (e2) => {
+        const [x1, y1] = d3.pointer(e2, svgEl);
+        rect.attr('x', Math.min(x0, x1)).attr('y', Math.min(y0, y1))
+          .attr('width', Math.abs(x1 - x0)).attr('height', Math.abs(y1 - y0));
+        return [x1, y1];
+      };
+      const onMove = (e2) => { update(e2); };
+      const onUp = (e2) => {
+        const [x1, y1] = update(e2);
+        window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('mouseup', onUp, true);
+        rect.remove();
+        const xa = Math.min(x0, x1), xb = Math.max(x0, x1);
+        const ya = Math.min(y0, y1), yb = Math.max(y0, y1);
+        if (xb - xa < 4 && yb - ya < 4) return;
+        nodes.forEach((d) => {
+          const sx = zoomTransform.applyX(d.x);
+          const sy = zoomTransform.applyY(d.y);
+          if (sx >= xa && sx <= xb && sy >= ya && sy <= yb
+              && !splitPolicies.has(d.id)) {
+            splitPolicies.set(d.id, defaultSplitPolicy(d));
+          }
+        });
+        refreshSplitStyles();
+        notifySplit();
+      };
+      window.addEventListener('mousemove', onMove, true);
+      window.addEventListener('mouseup', onUp, true);
+    });
+  }
+
   return {
     init,
     focus: focusOnPage,
@@ -1033,5 +1183,8 @@ window.Graph = (function () {
     cycleLabelMode,
     highlightSearch,
     clearFocus: () => setFocus(null),
+    splitEnter,
+    splitExit,
+    isSplitActive: () => splitActive,
   };
 })();

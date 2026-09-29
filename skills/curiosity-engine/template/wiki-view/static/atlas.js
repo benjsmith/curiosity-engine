@@ -22,7 +22,7 @@
   var MIN_ATLAS_PAGES = 360;
   var LABEL_TYPES_KEY = 'curiosity-engine.label-types';
   var LABEL_DEFAULTS = ['concept', 'entity', 'note', 'todo'];
-  var PHYSICS_DEFAULTS = { charge: -1000, link: 220, collide: 28 };
+  var PHYSICS_DEFAULTS = { charge: -1000, link: 220, collide: 48 };
 
   function readLabelTypes() {
     try {
@@ -307,6 +307,29 @@
     });
   }
 
+  var _persistTimer = 0;
+  function persistAtlasPositions(handle, data) {
+    var cache = window.CEAtlasCache;
+    if (!cache || !handle) return;
+    var snap = handle.engine && handle.engine.snapshot
+      ? handle.engine.snapshot()
+      : null;
+    var layout = snap && snap.layout;
+    if (!layout || !layout.positions) return;
+    var positions = cache.serializePositions(layout.positions);
+    if (!positions) return;
+    try { window.__CE_ATLAS_POSITIONS = positions; } catch (e) { /* ignore */ }
+    if (_persistTimer) clearTimeout(_persistTimer);
+    _persistTimer = setTimeout(function () {
+      _persistTimer = 0;
+      var key = cache.resolveKey({
+        workspace: data && data.workspace,
+      });
+      // Merge into existing cached data row (do not drop data.json).
+      cache.putPositions(key, positions);
+    }, 750);
+  }
+
   // Called by main.js instead of Graph.init when the flag is on.
   // Returns a Graph-compatible facade so focus()/clearFocus() callers
   // keep working.
@@ -320,6 +343,11 @@
     /* Edge strokes: controlled by edgeMode (auto/on/off) — drawing only;
      * edges stay in the force graph and link counts. Default auto is a
      * sparse subset on large corpora (full draw when small). */
+    var seededPositions = null;
+    try {
+      seededPositions = window.__CE_ATLAS_POSITIONS || null;
+    } catch (e) { seededPositions = null; }
+
     var handle = window.KnowledgeAtlas.mount(container, {
       data: data,
       edgeMode: 'auto',
@@ -344,6 +372,8 @@
           maxAggregates: 0,
           maxEdges: Math.max(900, (data.edges || []).length),
         },
+        // Instant cold paint: seed last layout from CEAtlasCache.
+        initialPositions: seededPositions || undefined,
       },
       onOpenItem: function (id) {
         window.location.hash = '#page=' + encodeURIComponent(id);
@@ -354,12 +384,209 @@
         // after this callback, so no extra repaint is needed here.
         if (event && event.kind === 'scene-ready' && handle) {
           stripFocusMark(handle.engine);
+          // Persist layout coords for the next hard-reload cold start.
+          try {
+            persistAtlasPositions(handle, data);
+          } catch (e) { /* ignore */ }
         }
       },
     });
     var controls = initAtlasControls(handle);
+    /* Split targeting (Atlas): Ctrl/⌘-drag rubber-band (Classic parity) +
+     * engine multi-select sync. Scene-space boxQuery via hitTester. */
+    var splitActive = false;
+    var splitPolicies = new Map();
+    var splitOnChange = null;
+    var splitUnsub = null;
+    var rubberCleanup = null;
+
+    function defaultSplitPolicy(type) {
+      if (window.KnowledgeAtlas && typeof KnowledgeAtlas.defaultPartitionPolicyForType === 'function') {
+        return KnowledgeAtlas.defaultPartitionPolicyForType(type);
+      }
+      return (type === 'entity' || type === 'concept') ? 'copy' : 'move';
+    }
+
+    function pageTypeOf(id) {
+      var page = data.pages && data.pages[id];
+      var typ = page && (page.type || page.page_type);
+      if (!typ && data.nodes) {
+        for (var i = 0; i < data.nodes.length; i++) {
+          if (data.nodes[i].id === id) { typ = data.nodes[i].type; break; }
+        }
+      }
+      return typ;
+    }
+
+    function notifyAtlasSplit() {
+      var out = [];
+      splitPolicies.forEach(function (policy, id) { out.push({ id: id, policy: policy }); });
+      if (splitOnChange) splitOnChange(out);
+      try {
+        window.dispatchEvent(new CustomEvent('ce:split-selection', { detail: { pages: out } }));
+      } catch (e) {}
+    }
+
+    function syncEngineSelection() {
+      if (handle.engine && handle.engine.select) {
+        handle.engine.select(Array.from(splitPolicies.keys()), 'replace');
+      }
+      if (controls && controls.repaint) controls.repaint();
+    }
+
+    function addIdsToSplit(ids) {
+      var added = false;
+      (ids || []).forEach(function (id) {
+        if (!id || splitPolicies.has(id)) return;
+        splitPolicies.set(id, defaultSplitPolicy(pageTypeOf(id)));
+        added = true;
+      });
+      if (added) {
+        syncEngineSelection();
+        notifyAtlasSplit();
+      }
+    }
+
+    function isRubberClickRect(x0, y0, x1, y1) {
+      if (window.KnowledgeAtlas && typeof KnowledgeAtlas.isRubberClick === 'function') {
+        return KnowledgeAtlas.isRubberClick({ x0: x0, y0: y0, x1: x1, y1: y1 });
+      }
+      return Math.abs(x1 - x0) < 4 && Math.abs(y1 - y0) < 4;
+    }
+
+    function clientToScene(canvas, clientX, clientY) {
+      var rect = canvas.getBoundingClientRect();
+      if (window.KnowledgeAtlas && typeof KnowledgeAtlas.clientToScenePoint === 'function') {
+        return KnowledgeAtlas.clientToScenePoint(clientX, clientY, rect);
+      }
+      return {
+        x: clientX - rect.left - rect.width / 2,
+        y: clientY - rect.top - rect.height / 2,
+      };
+    }
+
+    function installAtlasRubberBand() {
+      if (rubberCleanup) { try { rubberCleanup(); } catch (e) {} rubberCleanup = null; }
+      var host = container;
+      var rubberEl = null;
+
+      function mainCanvas() {
+        return host.querySelector('canvas:not(.atlas-minimap)');
+      }
+
+      function onDown(ev) {
+        if (!splitActive) return;
+        if (!(ev.ctrlKey || ev.metaKey)) return;
+        if (ev.button != null && ev.button !== 0) return;
+        var t = ev.target;
+        if (t && t.closest && t.closest('.atlas-minimap')) return;
+        var canvas = mainCanvas();
+        if (!canvas) return;
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        var x0 = ev.clientX, y0 = ev.clientY;
+        rubberEl = document.createElement('div');
+        rubberEl.className = 'split-rubber atlas-split-rubber';
+        rubberEl.style.left = x0 + 'px';
+        rubberEl.style.top = y0 + 'px';
+        rubberEl.style.width = '0px';
+        rubberEl.style.height = '0px';
+        document.body.appendChild(rubberEl);
+
+        function onMove(e2) {
+          var xa = Math.min(x0, e2.clientX), ya = Math.min(y0, e2.clientY);
+          rubberEl.style.left = xa + 'px';
+          rubberEl.style.top = ya + 'px';
+          rubberEl.style.width = Math.abs(e2.clientX - x0) + 'px';
+          rubberEl.style.height = Math.abs(e2.clientY - y0) + 'px';
+        }
+        function onUp(e2) {
+          window.removeEventListener('pointermove', onMove, true);
+          window.removeEventListener('pointerup', onUp, true);
+          window.removeEventListener('pointercancel', onUp, true);
+          if (rubberEl && rubberEl.parentNode) rubberEl.parentNode.removeChild(rubberEl);
+          rubberEl = null;
+          var x1 = e2.clientX, y1 = e2.clientY;
+          if (isRubberClickRect(x0, y0, x1, y1)) return;
+          var canvas2 = mainCanvas();
+          if (!canvas2 || !handle.engine || !handle.engine.hitTester) return;
+          var a = clientToScene(canvas2, x0, y0);
+          var b = clientToScene(canvas2, x1, y1);
+          var hits = handle.engine.hitTester.boxQuery(a.x, a.y, b.x, b.y) || [];
+          var ids = hits.map(function (h) { return h && h.id; }).filter(Boolean);
+          addIdsToSplit(ids);
+        }
+        window.addEventListener('pointermove', onMove, true);
+        window.addEventListener('pointerup', onUp, true);
+        window.addEventListener('pointercancel', onUp, true);
+      }
+
+      host.addEventListener('pointerdown', onDown, true);
+      rubberCleanup = function () {
+        host.removeEventListener('pointerdown', onDown, true);
+        if (rubberEl && rubberEl.parentNode) rubberEl.parentNode.removeChild(rubberEl);
+        rubberEl = null;
+      };
+    }
+
+    function atlasSplitEnter(seed, onChange) {
+      splitActive = true;
+      splitPolicies = new Map();
+      (seed || []).forEach(function (s) {
+        var id = typeof s === 'string' ? s : s && s.id;
+        if (!id) return;
+        var policy = (typeof s === 'object' && s.policy === 'copy') ? 'copy' : 'move';
+        if (typeof s !== 'object' || !s.policy) {
+          policy = defaultSplitPolicy(pageTypeOf(id));
+        }
+        splitPolicies.set(id, policy);
+      });
+      splitOnChange = onChange || null;
+      if (splitUnsub) { try { splitUnsub(); } catch (e) {} splitUnsub = null; }
+      if (handle.engine && handle.engine.on) {
+        splitUnsub = handle.engine.on(function (ev) {
+          if (!splitActive || !ev || ev.kind !== 'selection-changed') return;
+          (ev.ids || []).forEach(function (id) {
+            if (!splitPolicies.has(id)) {
+              splitPolicies.set(id, defaultSplitPolicy(pageTypeOf(id)));
+            }
+          });
+          notifyAtlasSplit();
+        });
+      }
+      installAtlasRubberBand();
+      syncEngineSelection();
+      notifyAtlasSplit();
+    }
+
+    function atlasSplitExit() {
+      splitActive = false;
+      splitPolicies = new Map();
+      splitOnChange = null;
+      if (splitUnsub) { try { splitUnsub(); } catch (e) {} splitUnsub = null; }
+      if (rubberCleanup) { try { rubberCleanup(); } catch (e) {} rubberCleanup = null; }
+      if (handle.engine && handle.engine.select) handle.engine.select([], 'replace');
+      if (controls && controls.repaint) controls.repaint();
+    }
+
     // Covers a scene that landed before onEvent was wired.
     if (stripFocusMark(handle.engine)) controls.repaint();
+    if (!container.dataset.clearLeaveBound) {
+      container.dataset.clearLeaveBound = '1';
+      container.addEventListener('pointerleave', function () {
+        try {
+          if (handle && typeof handle.clearHighlights === 'function') {
+            handle.clearHighlights();
+          } else if (handle && handle.engine) {
+            if (handle.clearHover) handle.clearHover();
+            if (handle.engine.select) handle.engine.select([], 'replace');
+            if (handle.engine.clearFocus) handle.engine.clearFocus();
+          }
+          stripFocusMark(handle && handle.engine);
+          if (controls && controls.repaint) controls.repaint();
+        } catch (e) {}
+      });
+    }
     // When a static host shards edges to edges.json.gz, assign
     // data.edges after preload and call Sidebar.updateCounts(data)
     // so the footer does not stay at "N pages · 0 links".
@@ -373,6 +600,7 @@
         if (handle.engine.select) handle.engine.select([pageId], 'replace');
       },
       clearFocus: function () {
+        if (handle.clearHover) handle.clearHover();
         if (handle.engine.select) handle.engine.select([], 'replace');
         if (handle.engine.clearFocus) handle.engine.clearFocus();
         stripFocusMark(handle.engine);
@@ -381,11 +609,28 @@
       highlightSearch: function (ids) {
         highlightSearch(handle, controls.repaint, ids);
       },
+      splitEnter: atlasSplitEnter,
+      splitExit: atlasSplitExit,
+      isSplitActive: function () { return splitActive; },
       setLabelMode: controls.setMode,
       cycleLabelMode: controls.cycleMode,
       setEdgeMode: controls.setEdgeMode,
       cycleEdgeMode: controls.cycleEdgeMode,
+      /* Curation-replay camera bind (Atlas canvas). */
+      getCamera: function () {
+        return handle.getCamera ? handle.getCamera() : null;
+      },
+      setCamera: function (next) {
+        if (handle.setCamera) handle.setCamera(next);
+      },
+      fitToBounds: function (bounds, opts) {
+        if (handle.fitToBounds) handle.fitToBounds(bounds, opts);
+      },
+      fitToContent: function (opts) {
+        if (handle.fitToContent) handle.fitToContent(opts);
+      },
       destroy: function () {
+        atlasSplitExit();
         handle.destroy();
       },
       /* Chrome-free info surface: the engine renders no panels — host

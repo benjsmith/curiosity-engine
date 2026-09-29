@@ -59,7 +59,36 @@ Each workspace's bundle goes into
 rebuilds it after every inline edit, so refresh and the change is
 visible.
 
+
+## Embed / reverse-proxy (Switchbay, okbay)
+
+For same-origin shell embeds, run the viewer server with
+`CE_PUBLIC_BASE=/embed/ce` (and typically port **8766**). The server strips
+that prefix and injects `window.CE_PUBLIC_BASE` / `ceApi()` into HTML.
+Optional hosted signal: `X-CE-Host: switchbay|okbay` or `?host=`. See
+[`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md).
+Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
+
+**Filebrowser (Phase 2b).** Sidebar **Pages | Files** toggle. Files mode
+calls `GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
+`*.ext` filter, graph-search highlight, and a minimal context menu.
+Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files
+mode. FS mutate via `/api/fs/*` and pack APIs (`GET /api/file-routes`, `/api/packs/*` list/dispatch/enable/local-install) are CE-owned; agent/LLM skill *execution*, reveal-in-OS, and drop-ingest remain Switchbay-side until later parity.
+
+**Curation replay (Phase 2b+++ polish).** Graph-controls **replay ↻** opens an
+SVG overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
+`data.json` with `created`/type-tier ordering, or `.workbench/curation-history.json`
+when a shell pre-warmed it). Play / pause / scrub / step; `?replay=1` opens
+and autoplays a short intro (settle + fade). Enter fade, radius inflate,
+easeAutoFit after major jumps. Atlas canvas camera bind landed (`bindViewer` + `fitToContent`); git-log rebuild remain
+deferred — see [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
+
 ## Obsidian (alternative — same underlying markdown)
+
+To **import** an existing Obsidian vault into CE (no Work/symlink dance),
+use `POST /api/import/obsidian` or `python3 scripts/obsidian_import.py <path>`.
+Mapping: Obsidian vault root → `wiki/` (wikilinks preserved).
+See `MIGRATION-INTAKE.md` Phase 2b+++++++.
 
 `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian →
 **Open folder as vault** → pick `<your-workspace>/wiki`. Backlinks

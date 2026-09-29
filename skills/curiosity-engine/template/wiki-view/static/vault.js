@@ -9,6 +9,14 @@
  * CustomEvent / callback instead of window.open.
  */
 window.VaultSources = (function () {
+  function apiUrl(path) {
+    if (typeof window.ceApi === "function") return window.ceApi(path);
+    var base = (window.CE_PUBLIC_BASE || "").replace(/\/$/, "");
+    if (!path) path = "/";
+    if (path.charAt(0) !== "/") path = "/" + path;
+    return base + path;
+  }
+
   const MANIFEST_URL = 'vault/manifest.json.gz';
   const shardCache = Object.create(null); // id -> Promise<JSZip>
   const shardBufCache = Object.create(null); // id -> ArrayBuffer
@@ -189,7 +197,7 @@ window.VaultSources = (function () {
   }
 
   function fetchApiVault(filename) {
-    return fetch('/api/vault/' + encodeURIComponent(filename)).then(function (res) {
+    return fetch(apiUrl('/api/vault/' + encodeURIComponent(filename))).then(function (res) {
       if (!res.ok) throw new Error('api vault HTTP ' + res.status);
       return res.text();
     });
@@ -267,7 +275,11 @@ window.VaultSources = (function () {
       el.classList.add('cite-vault');
       el.setAttribute('role', 'link');
       el.setAttribute('tabindex', '0');
-      el.title = 'Open full vault source in a new tab';
+      var hostOpen = document.documentElement.dataset.syHost === '1' ||
+        typeof window.__syOpenVault === 'function';
+      el.title = hostOpen
+        ? 'Open full vault source in the Editor'
+        : 'Open full vault source in a new tab';
       el.setAttribute('aria-label', 'Open full vault source ' + name);
     });
   }

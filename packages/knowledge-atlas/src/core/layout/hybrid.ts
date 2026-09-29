@@ -33,6 +33,8 @@ import {
 import { coreRadius, coreRadiusAt, rimRadiusAt, type Viewport } from "../geometry.ts";
 import {
   aggregateRadius,
+  COLLIDE_RADIUS_SCALE_LARGE,
+  collideForceRadius,
   meanDisplacement,
   nodeRadius,
   type LayoutAdapter,
@@ -79,6 +81,42 @@ export function populatedShellBands(scene: SceneData): number {
 
 type SimNode = { id: string; r: number; x?: number; y?: number };
 type AnchoredNode = SimNode & { x0: number; y0: number; survivor: boolean };
+
+/** Collide force: hub-scaled radius, extra iterations on large N. */
+function makeCollide(pad: number, nodeCount: number) {
+  // N>10k overview: more collide iterations + stronger hub scale so hubs
+  // separate under the reduced many-body tick budget.
+  const iters = nodeCount > 10_000 ? 3 : nodeCount > 2000 ? 2 : 1;
+  const scale = nodeCount > 10_000 ? COLLIDE_RADIUS_SCALE_LARGE : undefined;
+  return forceCollide((d) =>
+    collideForceRadius((d as unknown as SimNode).r, pad, scale),
+  )
+    .strength(1)
+    .iterations(iters);
+}
+
+/** Soft collide-only settle: separates overlapping hubs while gently
+ * pinning to the coarse force solution so the atlas look stays intact. */
+function relaxCollideHubs(nodes: SimNode[], pad: number, ticks: number): void {
+  if (nodes.length === 0 || ticks <= 0) return;
+  // Weaker soft-pin (0.10) lets hubs travel farther while collide
+  // resolves; still anchored enough to preserve atlas clustering.
+  const soft = forceSimulation(nodes as never[])
+    .force(
+      "collide",
+      forceCollide((d) =>
+        collideForceRadius((d as unknown as SimNode).r, pad, COLLIDE_RADIUS_SCALE_LARGE),
+      )
+        .strength(1)
+        .iterations(4),
+    )
+    .force("x", forceX((d: unknown) => (d as SimNode).x ?? 0).strength(0.1))
+    .force("y", forceY((d: unknown) => (d as SimNode).y ?? 0).strength(0.1))
+    .alpha(0.55)
+    .alphaDecay(0.05)
+    .stop();
+  for (let i = 0; i < ticks; i++) soft.tick();
+}
 
 export const hybridLayout: LayoutAdapter = {
   id: "hybrid",
@@ -234,7 +272,7 @@ function fullGraphLayout(scene: SceneData, ctx: LayoutContext): LayoutResult {
     )
     .force("charge", forceManyBody().strength(physics.charge).distanceMax(2500))
     .force("center", forceCenter(0, 0).strength(0.04))
-    .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
+    .force("collide", makeCollide(physics.collide, nodes.length))
     .alpha(1)
     .alphaDecay(0.05)
     .stop();
@@ -242,8 +280,15 @@ function fullGraphLayout(scene: SceneData, ctx: LayoutContext): LayoutResult {
   // scale, progressively reduce solver work; labels/edges are already
   // absent there and the stable global clustering matters more than a
   // fully converged individual-node packing.
-  const ticks = nodes.length > 10_000 ? 24 : nodes.length > 2_000 ? 60 : nodes.length > 800 ? 140 : 350;
+  const ticks = nodes.length > 10_000 ? 32 : nodes.length > 2_000 ? 60 : nodes.length > 800 ? 140 : 350;
   for (let i = 0; i < ticks; i++) sim.tick();
+  // Hub de-overlap at overview scale (tick budget ~28): soft-pinned
+  // collide-only settle separates stacked hubs without a second
+  // many-body solve. Skip below 10k — main-sim collide iterations=2
+  // already covers that band within the large-density timing budget.
+  if (nodes.length > 10_000) {
+    relaxCollideHubs(nodes, physics.collide, 36);
+  }
   for (const sn of nodes) {
     positions.set(sn.id, { x: sn.x ?? 0, y: sn.y ?? 0, r: sn.r });
   }
@@ -283,10 +328,13 @@ function fullCoreSolve(
     )
     .force("charge", forceManyBody().strength(charge).distanceMax(Rcore * 2))
     .force("center", forceCenter(0, 0).strength(0.05))
-    .force("collide", forceCollide((d) => (d as unknown as SimNode).r + physics.collide))
+    .force("collide", makeCollide(physics.collide, n))
     .stop();
-  const ticks = n > 10_000 ? 24 : n > 2_000 ? 60 : n > 800 ? 140 : 350;
+  const ticks = n > 10_000 ? 32 : n > 2_000 ? 60 : n > 800 ? 140 : 350;
   for (let i = 0; i < ticks; i++) sim.tick();
+  if (n > 10_000) {
+    relaxCollideHubs(coreNodes, physics.collide, 36);
+  }
 
   let cx = 0;
   let cy = 0;
@@ -380,7 +428,12 @@ function settleCore(
 
 function relaxAnchored(nodes: AnchoredNode[], ticks: number, collide = 6): void {
   const relax = forceSimulation(nodes as never[])
-    .force("collide", forceCollide((d) => (d as unknown as AnchoredNode).r + collide).strength(1))
+    .force(
+      "collide",
+      forceCollide((d) => collideForceRadius((d as unknown as AnchoredNode).r, collide))
+        .strength(1)
+        .iterations(2),
+    )
     .force("x", forceX((d: unknown) => (d as AnchoredNode).x0).strength((d: unknown) => ((d as AnchoredNode).survivor ? 0.55 : 0.08)))
     .force("y", forceY((d: unknown) => (d as AnchoredNode).y0).strength((d: unknown) => ((d as AnchoredNode).survivor ? 0.55 : 0.08)))
     .stop();

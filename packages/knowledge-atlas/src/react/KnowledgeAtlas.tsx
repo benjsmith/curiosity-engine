@@ -625,10 +625,21 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
           }
         }
       };
+      const onPointerLeave = () => {
+        clearHoverIntent(true);
+        try {
+          engine.select([], "replace");
+          engine.clearFocus();
+        } catch {
+          /* ignore */
+        }
+        draw(1);
+      };
       canvas.addEventListener("pointerdown", onPointerDown);
       canvas.addEventListener("pointermove", onPointerMove);
       canvas.addEventListener("pointerup", onPointerUp);
       canvas.addEventListener("pointercancel", onPointerCancel);
+      canvas.addEventListener("pointerleave", onPointerLeave);
       canvas.addEventListener("dblclick", onDblClick);
       canvas.addEventListener("wheel", onWheel, { passive: false });
       canvas.addEventListener("keydown", onKeyDown);
@@ -664,6 +675,7 @@ export const KnowledgeAtlas = forwardRef<AtlasController, KnowledgeAtlasProps>(
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerup", onPointerUp);
         canvas.removeEventListener("pointercancel", onPointerCancel);
+        canvas.removeEventListener("pointerleave", onPointerLeave);
         canvas.removeEventListener("dblclick", onDblClick);
         canvas.removeEventListener("wheel", onWheel);
         canvas.removeEventListener("keydown", onKeyDown);
