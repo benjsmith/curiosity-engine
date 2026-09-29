@@ -95,10 +95,11 @@ Known failure modes, in rough order of when you'll hit them:
 - **~500-page wiki ceiling.** Beyond that, plan latency grows. The incremental score cache helps; the tiered-vault design (bounded wiki + unbounded indexed vault) unlocks more; cluster-scoped CURATE (see below) keeps individual waves coherent past the threshold.
 - **Single user.** No protocol for multiple humans editing the same wiki live. Two asynchronous export paths cover different audiences: **OKF** (`okf_export.py build wiki --output-dir <dir>`) projects the wiki to a vendor-neutral [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle for cross-tool / cross-org exchange (read-only; CE structure rides in `x_ce_*` keys — see [`okf-interop.md`](okf-interop.md)); **curiosity-merge** subgraph-export/merge shares whole or sub-wikis with other CE workspaces. Neither is concurrent multi-user editing.
 
-## Shell embed + hosted mode (Phase 2a / 2b)
+## Shell embed + hosted mode (Phase 2a / 2b → v1.9.0)
 
 Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
-`127.0.0.1:8766`) under `/embed/ce/` — **no iframes**. CE readiness:
+`127.0.0.1:8766`) under `/embed/ce/` — **no iframes**. CE readiness (shipped in
+**v1.9.0**):
 
 - Env `CE_PUBLIC_BASE` (e.g. `/embed/ce`) — see `scripts/public_base.py` and
   `viewer_server.py`
@@ -107,15 +108,19 @@ Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
 - **Phase 2b:** `GET /api/tree` filebrowser (vault/ + wiki/) + wiki-view Files mode;
   knowledge-atlas `playReplayTimeline` animation hook
 - **Phase 2b+:** wiki partition / `POST /api/split` + minimal split UI
-- **Phase 2b++:** `/api/fs/*` mutate (vault/wiki sandbox) + `GET /api/file-routes`
+- **Phase 2b++:** `/api/fs/*` mutate (vault/wiki sandbox) + `GET /api/file-routes`;
+  reveal-in-OS / open-external; drop-ingest queue
 - **Phase 2b+++:** SVG curation replay UI (`GET /api/curation/history`, play/pause/scrub)
-- **Phase 2b++++:** pack list / enable / local install + sandboxed action dispatch
-  (`/api/packs/*`); agent/LLM skill execution still Switchbay
+- **Phase 2b++++:** pack list / enable / local **+ git** install + sandboxed action
+  dispatch (`/api/packs/*`); agent/LLM skill *execution* still shell (queue drain)
 - **Phase 2b+++++:** workspace registry persistence (`/api/workspaces`) + optional
   curiosity-merge `subgraph_export` hook (`POST /api/cm-export`, dry-run)
 - **Phase 2b++++++ / +++++++:** Classic + Atlas canvas rubber-band split targeting;
-  Atlas replay camera bind (`fitToContent`); heal / tab-open chrome still Switchbay
-  Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
+  Atlas replay camera bind (`fitToContent`); Obsidian vault import
+- **Embed host API:** `window.CEEmbed.create` dual-mount (sidebar + canvas),
+  IndexedDB `CEAtlasCache`, soft-park canvas for instant Graph return
+- Still shell-owned: heal agents / tab-open chrome; migrate-before-thinning for
+  built-in Graph/Agents. Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md)
 
 Bare `viewer.sh` loopback default remains port **8090**; bind host is always
 `127.0.0.1`.

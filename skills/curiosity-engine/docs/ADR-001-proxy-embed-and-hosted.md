@@ -31,7 +31,7 @@ Switchbay and okbay must **same-origin reverse-proxy** CE at `127.0.0.1:8766` un
 ## Consequences
 
 - Proxies may forward either stripped paths (`/api/…`) or prefixed paths (`/embed/ce/api/…`); CE handles the latter when `CE_PUBLIC_BASE` is set. JS always needs the injected base for browser same-origin fetches.
-- Migration of Switchbay filebrowser / graph animation / split into CE is tracked in [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md); do not delete Switchbay surfaces until the umbrella parity checklist is green.
+- Phase 2b–2b+++++++ filebrowser / graph animation / split / CEEmbed dual-mount landed in CE (**v1.9.0**); tracked in [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md). **Migrate-before-thinning:** do not delete Switchbay built-in Graph/Agents / filebrowser until the umbrella parity checklist is green.
 - okbay’s current `:8766` Atlas host and Switchbay’s tab chrome remain dual-stack until Phase 4/5 thinning.
 
 ## Alternatives considered

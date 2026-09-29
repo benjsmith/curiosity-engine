@@ -53,8 +53,9 @@ Paths relative to the Switchbay repo root (branch `feat/skill-shell-rationalizat
 | Open `*.extracted.md` via vault API | ✅ (`VaultSources.open`) |
 | Pack `file_routes` / ext handlers | ≈ CE discovery + dispatch/install/enable (`GET /api/file-routes`, `/api/packs/*`); agent/LLM skill exec still shell |
 | FS mutate (create/rename/move/delete/dup) | ✅ CE (`/api/fs/*`, vault/wiki sandbox) |
-| Reveal-in-OS / open-external | ❌ deferred (shell / OS helpers) |
-| Drop-to-ingest | ❌ deferred |
+| Reveal-in-OS / open-external | ✅ CE (`POST /api/fs/reveal|open-external`) |
+| Drop-to-ingest | ✅ CE (`POST /api/ingest/from-upload|from-path` → ingest-runs queue) |
+| Git pack install | ✅ CE (`git clone --depth 1` via packs install) |
 | SourceBrowser / WikiPane dual pane | ❌ deferred |
 | Ext filter chip UI | ❌ deferred |
 
@@ -78,11 +79,11 @@ Paths relative to the Switchbay repo root (branch `feat/skill-shell-rationalizat
 | `scripts/filebrowser_packs.py` | list / enable / local install / uninstall + sandboxed `dispatch_action` (same `pack.json` Manifest) |
 | `GET /api/packs`, `GET /api/packs/<name>/actions` | Pack registry + per-pack file_routes |
 | `POST /api/packs/<pack>/action/<action>` | `{path}` under vault/wiki → `{run_id, pack, action}` queue (`.workbench/pack-runs/`) |
-| `POST /api/packs/toggle`, `POST /api/packs/install`, `DELETE /api/packs?name=` | Enable state + local-path install into `.workbench/packs/` (no git) |
+| `POST /api/packs/toggle`, `POST /api/packs/install`, `DELETE /api/packs?name=` | Enable state + local-path **or git** install into `.workbench/packs/` |
 | `template/wiki-view/static/filebrowser.js` | Context menu pack actions → dispatch API |
 | Tests | `tests/test_filebrowser_packs.py` (sandbox escape + embed-prefix API) |
 
-**Still Switchbay-only (filebrowser):** reveal-in-OS / open-external, drop-to-ingest, git pack install, pip `requires_extra`, agent/LLM skill execution for queued runs, SourceBrowser/WikiPane dual pane, ext filter chips.
+**Still shell-owned (filebrowser):** pip `requires_extra`, agent/LLM skill *execution* for queued pack-runs (CE queues; Switchbay drains — SB ADR-006/007), SourceBrowser/WikiPane dual pane, ext filter chips. Reveal-in-OS, drop-ingest, and git pack install landed in CE (v1.9.0).
 
 Deep-link: `?filebrowser=1` opens Files mode.
 
@@ -217,17 +218,29 @@ Smoke: open wiki-view with `CE_PUBLIC_BASE=/embed/ce`, `?split=1`, Ctrl-drag ove
 **Still deferred:** Omarchy/Switchbay GUI folder-picker (shell-side); richer Benchmarker corpus pack.
 
 
-## Embed contract (for Switchbay Phase 4a)
+## Embed contract (for Switchbay Phase 4a / Embed v2)
 
 - Upstream: `http://127.0.0.1:8766` (loopback only)
 - Public prefix: `/embed/ce` → set `CE_PUBLIC_BASE=/embed/ce` on the CE process
 - Forward `X-CE-Host: switchbay` (okbay: `okbay`) or `?host=`
-- No iframes — in-app panels load first-party proxied routes
+- No iframes — in-app panels load first-party proxied routes (Switchbay same-document mount; ADR-004 / ADR-004b on the shell side)
+
+### Dual-mount + cache (CE host API)
+
+| Piece | Role |
+|-------|------|
+| `static/embed.js` → `window.CEEmbed.create` | Shared `data.json` session; `mountSidebar` + `mountCanvas`; canvas remount without tearing sidebar |
+| Soft-park | `unmountCanvas()` parks atlas DOM off-screen (instant Graph return); `{destroy:true}` hard teardown |
+| `static/atlas-cache.js` (`CEAtlasCache`) | IndexedDB cache of `data.json` + layout positions keyed by workspace; paint-from-cache then background revalidate |
+| Knowledge Atlas `initialPositions` | Skips N>10k force solve when every node id is seeded from cache |
+
+Shell scaffolding (Switchbay): `ceEmbedSession` / `CeSidebarSlot` / `CeAtlasEmbed` — see Switchbay `docs/CE-EMBED-HOOK.md`. CE owns the hook; shells own mount points. **Migrate-before-thinning:** built-in Graph/Agents stay until the parity checklist is green.
 
 ## Sequencing
 
 1. **2a (landed):** proxy prefix + hosted stub + this map + ADR
 2. **2b (landed):** filebrowser shell API + minimal UI; animation timeline hook
 3. **2b+ (this spike):** wiki partition / split API + minimal UI + atlas selection helpers
-4. **2b++ / 2b+++ / 2b++++ / 2b+++++ / 2b++++++ :** FS mutate + packs + SVG replay + registry + CM export + Classic **and Atlas** rubber-band + Atlas replay camera bind landed; heal agents / git-history rebuild / reveal-in-OS / drop-ingest / tab-open chrome still deferred
-5. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes
+4. **2b++ / 2b+++ / 2b++++ / 2b+++++ / 2b++++++ / +++++++ :** FS mutate + packs (+ git install) + SVG replay + registry + CM export + Classic **and Atlas** rubber-band + Atlas replay camera bind + Obsidian import + reveal-in-OS + drop-ingest landed; heal agents / git-history rebuild / tab-open chrome still deferred (shell)
+5. **Embed host contract (landed):** `window.CEEmbed.create` dual-mount (sidebar + canvas), IndexedDB atlas cache, soft-park canvas — see embed section below and CE **v1.9.0**
+6. **4b:** Switchbay tabs thin to `/embed/ce/` once parity checklist passes (migrate-before-thinning; do **not** delete built-in Graph/Agents until checklist green)

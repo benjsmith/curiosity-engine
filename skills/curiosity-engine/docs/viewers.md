@@ -69,19 +69,32 @@ Optional hosted signal: `X-CE-Host: switchbay|okbay` or `?host=`. See
 [`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md).
 Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
 
-**Filebrowser (Phase 2b).** Sidebar **Pages | Files** toggle. Files mode
-calls `GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
-`*.ext` filter, graph-search highlight, and a minimal context menu.
-Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files
-mode. FS mutate via `/api/fs/*` and pack APIs (`GET /api/file-routes`, `/api/packs/*` list/dispatch/enable/local-install) are CE-owned; agent/LLM skill *execution*, reveal-in-OS, and drop-ingest remain Switchbay-side until later parity.
+**Filebrowser (Phase 2b + parity follow-ons).** Sidebar **Pages | Files**
+toggle. Files mode calls `GET /api/tree` (vault/ + wiki/ only), supports
+substring / `/re/` / `*.ext` filter, graph-search highlight, and a context
+menu. Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in
+Files mode. CE-owned: FS mutate (`/api/fs/*`), reveal-in-OS /
+open-external, drop-ingest (`/api/ingest/from-upload|from-path` →
+`.workbench/ingest-runs/`), pack APIs (`/api/file-routes`, `/api/packs/*`
+including local + git install). Agent/LLM skill *execution* of queued
+pack-runs remains shell-owned (Switchbay drains the queue).
 
 **Curation replay (Phase 2b+++ polish).** Graph-controls **replay ↻** opens an
 SVG overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
 `data.json` with `created`/type-tier ordering, or `.workbench/curation-history.json`
 when a shell pre-warmed it). Play / pause / scrub / step; `?replay=1` opens
 and autoplays a short intro (settle + fade). Enter fade, radius inflate,
-easeAutoFit after major jumps. Atlas canvas camera bind landed (`bindViewer` + `fitToContent`); git-log rebuild remain
-deferred — see [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
+easeAutoFit after major jumps. Atlas canvas camera bind landed (`bindViewer` +
+`fitToContent`); git-log chronology rebuild remains deferred — see
+[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
+
+**CEEmbed dual-mount + cache (v1.9.0).** Hosts (Switchbay Graph + persistent
+sidebar) should prefer `window.CEEmbed.create` (`static/embed.js`) over a full
+HTML remount: shared session, `mountSidebar` / `mountCanvas`, soft-park on
+canvas unmount for instant Graph return, and IndexedDB `CEAtlasCache`
+(`static/atlas-cache.js`) so hard-reload paints from cache then revalidates.
+Same-origin reverse-proxy only — no iframes. Details:
+[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md) embed contract + ADR-001.
 
 ## Obsidian (alternative — same underlying markdown)
 

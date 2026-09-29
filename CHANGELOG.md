@@ -1,3 +1,66 @@
+## 2026-09-29 — v1.9.0 — Phase 2 embed/filebrowser/partition + CEEmbed dual-mount
+
+**Migration:** none. **Breaking:** none.
+
+Versioned rollup of the Phase 2a–2b+++++++ embed stack that landed on `main`
+after **v1.8.3** (proxy prefix, filebrowser, wiki partition, pack dispatch,
+workspace registry, rubber-band split, Obsidian import) plus the embed-host
+contract Switchbay Phase 4a/4b needs: **`CEEmbed.create` dual-mount**,
+**IndexedDB atlas cache**, and **soft-park canvas**. Detailed dated sections
+below this marker stay as the commit-level record; this entry is the release
+gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
+
+### Added
+
+- **Phase 2a — proxy embed + hosted hook:** `CE_PUBLIC_BASE` (e.g. `/embed/ce`),
+  `X-CE-Host` / `?host=switchbay|okbay`, `GET /api/hosted`, ADR-001.
+- **Phase 2b — filebrowser:** Pages|Files sidebar, `GET /api/tree`, filter,
+  graph-search highlight, context menu (`filebrowser_*.py` + `filebrowser.js`).
+- **Phase 2b+ — wiki partition / split:** `wiki_partition.py`, `POST /api/split`,
+  atlas `partitionSelection` helpers, minimal split UI.
+- **Phase 2b++ — FS mutate + pack routes:** sandboxed `/api/fs/*`,
+  `GET /api/file-routes`.
+- **Phase 2b+++ — curation replay:** SVG overlay, `GET /api/curation/history`,
+  play/pause/scrub/step; Atlas camera bind (`bindViewer` / `fitToContent`).
+- **Phase 2b++++ — pack action dispatch:** `/api/packs/*` list/toggle/install/
+  dispatch → `.workbench/pack-runs/` queue (agent/LLM *execution* remains shell).
+- **Phase 2b+++++ — workspace registry + CM export:** `/api/workspaces`,
+  `POST /api/cm-export` (curiosity-merge `subgraph_export`, dry-run).
+- **Phase 2b++++++ / +++++++ — rubber-band + Obsidian:** Classic **and Atlas
+  canvas** Ctrl/⌘-drag split targeting; Obsidian folder/zip → `wiki/` import
+  (`POST /api/import/obsidian`).
+- **Filebrowser parity follow-ons:** reveal-in-OS / open-external
+  (`POST /api/fs/reveal|open-external`), drop-ingest
+  (`POST /api/ingest/from-upload|from-path` → `.workbench/ingest-runs/`),
+  git pack install (`git clone --depth 1`).
+- **`window.CEEmbed.create` dual-mount API** (`static/embed.js`): shared
+  `data.json` session; `mountSidebar` + `mountCanvas` (canvas remount without
+  tearing sidebar); `unmountCanvas` / `destroy`. Standalone `main.js` boot
+  unchanged.
+- **IndexedDB atlas cache** (`static/atlas-cache.js` / `CEAtlasCache`): cache
+  `data.json` + layout positions keyed by workspace; paint-from-cache then
+  background revalidate; Knowledge Atlas `initialPositions` skips N>10k force
+  solve when every node id is seeded.
+- **Soft-park canvas:** `unmountCanvas()` parks live atlas DOM off-screen by
+  default (instant Graph return); `{destroy:true}` for hard teardown;
+  `isCanvasLive` / `revalidate` for hosts.
+- **Atlas polish:** stronger hub collide for N>10k, search min-prefix lag,
+  clear hover/selection on pointer leave; Pages↔Files warm tree / skip remount.
+- **Skill docs:** evidence-must-name-claim / no person-email hubs; concept-before-
+  updates-on; durable titles; protect structural membership (see dated skill
+  entries below).
+
+### Notes
+
+- Still shell-owned / deferred: tab-open chrome after split, async link-heal
+  agents, workspace-root figures / `.workbench` sketches, OS Trash prune
+  (CE uses `wiki/.deleted/`), git-log chronology rebuild for curation replay,
+  Omarchy/Switchbay Obsidian folder-picker UI, pip `requires_extra`,
+  SourceBrowser/WikiPane dual pane, ext filter chips, agent/LLM skill
+  *execution* of queued pack-runs (Switchbay drains the queue — see SB ADR-006/007).
+- Tip at release docs: `3018580` (merge of `feat/skill-shell-rationalization`).
+  Do **not** tag from this docs PR alone — Ben cuts the tag after merge.
+
 ## 2026-09-20 — Obsidian vault import (folder + zip)
 
 **Migration:** none. **Breaking:** none.
@@ -34,13 +97,15 @@
   `sy:split-proposal`; still POSTs `/api/split` via `ceApi` / `CE_PUBLIC_BASE`
   (embed v2 under `/embed/ce`).
 - **Pure helpers:** `packages/knowledge-atlas` `rubberBand.ts` + `rubberBand.test.ts`.
-- Atlas: `splitEnter`/`splitExit` seed engine multi-select (canvas marquee deferred).
+- Atlas: `splitEnter`/`splitExit` seed engine multi-select (canvas marquee landed
+  in Phase 2b+++++++ — see that dated entry / v1.9.0 rollup).
 
 ### Notes
 
-- Still Switchbay-only / deferred: Atlas canvas rubber-band, link-heal agents,
-  tab open after split, workspace-root figures / `.workbench` sketches, OS Trash prune.
-  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md`.
+- Still shell-owned / deferred after this slice: link-heal agents, tab open after
+  split, workspace-root figures / `.workbench` sketches, OS Trash prune.
+  Atlas canvas rubber-band shipped in a follow-on commit on the same wave.
+  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md` and the **v1.9.0** rollup.
 
 ## 2026-09-19 — Phase 2b+++++ split registry + CM export hook
 
@@ -64,8 +129,9 @@
 ### Notes
 
 - Native `wiki_partition` remains the default split path (no CM required).
-- Still Switchbay-only: rubber-band / `sy:split-proposal` UI, link-heal agents,
-  tab open after split, workspace-root figures / `.workbench` sketches, OS Trash prune.
+- Rubber-band / `sy:split-proposal` UI landed in Phase 2b++++++ / +++++++ (v1.9.0).
+- Still shell-owned: link-heal agents, tab open after split, workspace-root
+  figures / `.workbench` sketches, OS Trash prune.
   See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md`.
 
 ## 2026-09-19 — Phase 2b++++ pack action dispatch
@@ -82,8 +148,10 @@
 
 ### Notes
 
-- Agent/LLM skill execution, git pack install, pip extras, reveal-in-OS, and drop-ingest
-  remain Switchbay-only (see `MIGRATION-INTAKE.md`).
+- Agent/LLM skill *execution* of queued pack-runs remains shell-owned (Switchbay
+  drains `.workbench/pack-runs/`). Git pack install, reveal-in-OS, and drop-ingest
+  shipped in a follow-on CE commit (see v1.9.0 rollup); pip `requires_extra` still
+  deferred. See `MIGRATION-INTAKE.md`.
 
 ## 2026-09-19 — Phase 2b++ filebrowser FS mutate + pack routes stub
 
