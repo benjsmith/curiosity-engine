@@ -163,7 +163,7 @@ Only `core` is mandatory; renderers and adapters attach at the same
 seams that exist today (`SceneRenderer`, `AtlasDataSource`). WebGL
 matters only for scatter view at high zoom-out capacity — graph/tree
 cores stay comfortably inside Canvas 2D's envelope, and the Frame
-contract was designed for renderer swap from day one (ADR-001).
+contract was designed for renderer swap from day one.
 
 CE then depends on the package and keeps only what is genuinely CE:
 `datasources/curiosity.ts` (data.json contract, id normalisation,

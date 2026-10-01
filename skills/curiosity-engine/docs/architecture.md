@@ -104,7 +104,6 @@ Umbrella charter: Switchbay/okbay **same-origin reverse-proxy** CE (typically
 - Env `CE_PUBLIC_BASE` (e.g. `/embed/ce`) — see `scripts/public_base.py` and
   `viewer_server.py`
 - Hosted hook: `X-CE-Host` / `?host=switchbay|okbay` and `GET /api/hosted`
-- ADR: [`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md)
 - **Phase 2b:** `GET /api/tree` filebrowser (vault/ + wiki/) + wiki-view Files mode;
   knowledge-atlas `playReplayTimeline` animation hook
 - **Phase 2b+:** wiki partition / `POST /api/split` + minimal split UI

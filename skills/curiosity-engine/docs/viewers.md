@@ -65,8 +65,8 @@ visible.
 For same-origin shell embeds, run the viewer server with
 `CE_PUBLIC_BASE=/embed/ce` (and typically port **8766**). The server strips
 that prefix and injects `window.CE_PUBLIC_BASE` / `ceApi()` into HTML.
-Optional hosted signal: `X-CE-Host: switchbay|okbay` or `?host=`. See
-[`ADR-001-proxy-embed-and-hosted.md`](ADR-001-proxy-embed-and-hosted.md).
+Optional hosted signal: `X-CE-Host: switchbay|okbay` or `?host=`.
+Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
 Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
 
 **Filebrowser (Phase 2b + parity follow-ons).** Sidebar **Pages | Files**
@@ -94,7 +94,7 @@ HTML remount: shared session, `mountSidebar` / `mountCanvas`, soft-park on
 canvas unmount for instant Graph return, and IndexedDB `CEAtlasCache`
 (`static/atlas-cache.js`) so hard-reload paints from cache then revalidates.
 Same-origin reverse-proxy only — no iframes. Details:
-[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md) embed contract + ADR-001.
+[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md) embed contract.
 
 ## Obsidian (alternative — same underlying markdown)
 

@@ -13,7 +13,7 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 ### Added
 
 - **Phase 2a — proxy embed + hosted hook:** `CE_PUBLIC_BASE` (e.g. `/embed/ce`),
-  `X-CE-Host` / `?host=switchbay|okbay`, `GET /api/hosted`, ADR-001.
+  `X-CE-Host` / `?host=switchbay|okbay`, `GET /api/hosted`.
 - **Phase 2b — filebrowser:** Pages|Files sidebar, `GET /api/tree`, filter,
   graph-search highlight, context menu (`filebrowser_*.py` + `filebrowser.js`).
 - **Phase 2b+ — wiki partition / split:** `wiki_partition.py`, `POST /api/split`,
