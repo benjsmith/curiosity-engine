@@ -70,7 +70,6 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
   *execution* of queued pack-runs (Switchbay drains the queue).
 - Tip at these release notes: `86451bd` (`86451bd53e5a3fe285df8e97323e4ca579fdef7b`,
   merge of procedure/execution types onto the embed stack).
-  Do **not** tag from this docs PR alone — Ben cuts the tag after merge.
 
 ## 2026-09-20 — Obsidian vault import (folder + zip)
 
