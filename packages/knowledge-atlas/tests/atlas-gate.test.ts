@@ -14,10 +14,16 @@ const STORAGE_KEY = "curiosity-engine.viewer";
 type AtlasViewer = {
   eligible: (data: unknown) => boolean;
   enabled: (data: unknown) => boolean;
+  initChoice: (data: unknown, mode: string) => void;
 };
 
-/** Load the wiki-view IIFE against a fresh localStorage. */
-function loadAtlas(stored: string | null): AtlasViewer {
+type Probe = {
+  viewer: AtlasViewer;
+  hidden: () => boolean;
+};
+
+/** Load the wiki-view IIFE against a fresh localStorage and a chooser button. */
+function loadAtlas(stored: string | null): Probe {
   const store = new Map<string, string>();
   if (stored !== null) store.set(STORAGE_KEY, stored);
   const localStorage = {
@@ -29,14 +35,30 @@ function loadAtlas(stored: string | null): AtlasViewer {
       store.delete(key);
     },
   };
+  const classes = new Set(["hidden"]);
+  const button = {
+    title: "",
+    classList: {
+      add: (name: string) => classes.add(name),
+      remove: (name: string) => classes.delete(name),
+      contains: (name: string) => classes.has(name),
+    },
+    addEventListener() {},
+  };
+  const state = { textContent: "classic" };
   const window: Record<string, unknown> = {
     localStorage,
     location: { search: "", href: "http://localhost/", hash: "" },
+    KnowledgeAtlas: {},
   };
   window.window = window;
   const context = createContext({
     window,
-    document: { getElementById: () => null, documentElement: { dataset: {} } },
+    document: {
+      getElementById: (id: string) =>
+        id === "viewer-mode" ? button : id === "viewer-mode-state" ? state : null,
+      documentElement: { dataset: {} },
+    },
     localStorage,
     URL,
     URLSearchParams,
@@ -45,7 +67,10 @@ function loadAtlas(stored: string | null): AtlasViewer {
     clearTimeout,
   });
   runInContext(SOURCE, context, { filename: "atlas.js" });
-  return window.AtlasViewer as AtlasViewer;
+  return {
+    viewer: window.AtlasViewer as AtlasViewer,
+    hidden: () => classes.has("hidden"),
+  };
 }
 
 function wiki(pages: number): { pages: Record<string, { id: string }> } {
@@ -54,27 +79,31 @@ function wiki(pages: number): { pages: Record<string, { id: string }> } {
   return { pages: out };
 }
 
-describe("Atlas enabled() agrees with eligible() on the 360-page floor", () => {
-  const below = wiki(360);
-  const above = wiki(361);
+describe("Atlas is available at any wiki size", () => {
+  const small = wiki(1);
+  const floor = wiki(360);
 
-  it("does not enable Atlas at or below the floor, even with a stored atlas preference", () => {
+  it("offers Atlas on a small wiki, and turns it on only when chosen", () => {
     const plain = loadAtlas(null);
-    expect(plain.eligible(below)).toBe(false);
-    expect(plain.enabled(below)).toBe(false);
+    expect(plain.viewer.eligible(small)).toBe(true);
+    expect(plain.viewer.enabled(small)).toBe(false);
+    expect(plain.viewer.eligible(floor)).toBe(true);
+    expect(plain.viewer.enabled(floor)).toBe(false);
 
     const stored = loadAtlas("atlas");
-    expect(stored.eligible(below)).toBe(false);
-    expect(stored.enabled(below)).toBe(false);
+    expect(stored.viewer.eligible(small)).toBe(true);
+    expect(stored.viewer.enabled(small)).toBe(true);
+    expect(stored.viewer.enabled(floor)).toBe(true);
   });
 
-  it("honors a stored atlas preference only above the floor", () => {
-    const plain = loadAtlas(null);
-    expect(plain.eligible(above)).toBe(true);
-    expect(plain.enabled(above)).toBe(false);
+  it("shows the chooser on a small wiki and hides it above 1000 pages", () => {
+    const smallWiki = loadAtlas(null);
+    smallWiki.viewer.initChoice(wiki(12), "classic");
+    expect(smallWiki.hidden()).toBe(false);
 
-    const stored = loadAtlas("atlas");
-    expect(stored.eligible(above)).toBe(true);
-    expect(stored.enabled(above)).toBe(true);
+    const huge = loadAtlas("classic");
+    huge.viewer.initChoice(wiki(1001), "atlas");
+    expect(huge.hidden()).toBe(true);
+    expect(huge.viewer.enabled(wiki(1001))).toBe(true);
   });
 });

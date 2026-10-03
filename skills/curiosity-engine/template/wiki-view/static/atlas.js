@@ -1,4 +1,4 @@
-/* atlas.js — size-gated Knowledge Atlas embedding.
+/* atlas.js — Knowledge Atlas embedding.
  *
  * When enabled, replaces the D3 force graph in #graph with the
  * Knowledge Atlas engine (vendored at static/vendor/knowledge-atlas.js,
@@ -6,12 +6,12 @@
  * sidebar, modal, subgraph navigator, editing — keeps working: the
  * atlas routes item-open through the same `#page=<id>` hash contract.
  *
- * Wikis above the usefulness floor (more than 360 pages) and at most
- * 1000 pages may switch Classic ↔ Atlas via the view: control.
- * A stored atlas preference does not enable Atlas at or below that
- * floor. Wikis with >1000 pages are Atlas-only: Classic is never
- * mounted (it hangs), and the chooser is hidden. A leftover classic
- * preference is cleared on large wikis.
+ * Any wiki of at most 1000 pages may switch Classic ↔ Atlas via the
+ * view: control. Classic stays the default until Atlas is chosen.
+ * A stored atlas preference applies at every size. Wikis with >1000
+ * pages are Atlas-only: Classic is never mounted (it hangs), and the
+ * chooser is hidden. A leftover classic preference is cleared on
+ * large wikis.
  *
  * Explicit per-load override (also useful for development and tests):
  *   http://localhost:8090/?viewer=atlas
@@ -21,7 +21,7 @@
   'use strict';
 
   var STORAGE_KEY = 'curiosity-engine.viewer';
-  var MIN_ATLAS_PAGES = 360;
+  var MIN_ATLAS_PAGES = 0;
   var LABEL_TYPES_KEY = 'curiosity-engine.label-types';
   var LABEL_DEFAULTS = ['concept', 'entity', 'note', 'todo'];
   var PHYSICS_DEFAULTS = { charge: -1000, link: 220, collide: 48 };
@@ -238,8 +238,8 @@
     return pageCount(data) <= CLASSIC_MAX_PAGES;
   }
 
-  function eligible(data) {
-    return pageCount(data) > MIN_ATLAS_PAGES;
+  function eligible(_data) {
+    return true;
   }
 
   function queryChoice() {
@@ -265,12 +265,9 @@
       clearClassicPreference();
       return true;
     }
-    /* ?viewer= is an explicit per-load override (including below the floor). */
+    /* ?viewer= is an explicit per-load override. */
     var explicit = queryChoice();
     if (explicit) return explicit === 'atlas';
-    /* Same >360 floor as eligible(). A stored "atlas" preference must
-     * not turn Atlas on for a wiki that is not eligible. */
-    if (!eligible(data)) return false;
     try {
       return localStorage.getItem(STORAGE_KEY) === 'atlas';
     } catch (e) {
@@ -278,17 +275,15 @@
     }
   }
 
-  /* view: chooser only above the usefulness floor and while Classic is
-   * still safe (more than 360 pages and ≤1000). At or below the floor
-   * there is nothing to offer; above 1000 the wiki stays on Atlas with
-   * no switcher. Changing mode is a reload so Classic and Atlas
-   * lifecycles stay independent. */
+  /* view: chooser while Classic is still safe (≤1000 pages). Above
+   * 1000 the wiki stays on Atlas with no switcher. Changing mode is a
+   * reload so Classic and Atlas lifecycles stay independent. */
   function initChoice(data, activeMode) {
     var button = document.getElementById('viewer-mode');
     var state = document.getElementById('viewer-mode-state');
     if (!button || !state || !window.KnowledgeAtlas) return;
 
-    if (!eligible(data) || !classicSafe(data)) {
+    if (!classicSafe(data)) {
       button.classList.add('hidden');
       return;
     }
