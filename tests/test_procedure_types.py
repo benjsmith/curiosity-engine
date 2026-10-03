@@ -15,6 +15,7 @@ sys.path.insert(0, str(SCRIPTS))
 import naming  # noqa: E402
 import procedure_maturity  # noqa: E402
 import score_diff  # noqa: E402
+import wiki_render  # noqa: E402
 
 
 CHANGE_CONTROL = '''---
@@ -186,3 +187,30 @@ class TestProcedureMaturity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestViewerPalette(unittest.TestCase):
+    def test_procedure_and_execution_resolve(self):
+        self.assertEqual(wiki_render.PALETTE["procedure"], "#5e4fa2")
+        self.assertEqual(wiki_render.PALETTE["procedures"], "#5e4fa2")
+        self.assertEqual(wiki_render.PALETTE["execution"], "#c51b8a")
+        self.assertEqual(wiki_render.PALETTE["executions"], "#c51b8a")
+        for key in ("procedure", "execution"):
+            self.assertIn(key, wiki_render.KNOWN_TYPES)
+        css = (
+            ROOT / "skills" / "curiosity-engine" / "template"
+            / "wiki-view" / "static" / "main.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--type-procedure:", css)
+        self.assertIn("--type-execution:", css)
+        self.assertIn("#5e4fa2", css)
+        self.assertIn("#c51b8a", css)
+        self.assertIn(".dot.dot-procedure", css)
+        self.assertIn(".dot.dot-execution", css)
+        # graph.js fills from the emitted palette, not a hardcoded map
+        graph = (
+            ROOT / "skills" / "curiosity-engine" / "template"
+            / "wiki-view" / "static" / "graph.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("palette[type]", graph)
+
