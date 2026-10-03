@@ -133,7 +133,7 @@ Inside the curator on each wave:
              └──────────────▶ Orchestrator
 ```
 
-Full design rationale — why not RAG, how the ratchet works, where the skill struggles — in [docs/architecture.md](skills/curiosity-engine/docs/architecture.md).
+Workspace layout — vault, wiki, and curator state — is in [docs/architecture.md](skills/curiosity-engine/docs/architecture.md). When RAG fits better is under [When it fits](#when-it-fits).
 
 ## When it fits
 
@@ -155,7 +155,7 @@ Good fits: personal research, literature reviews, research notebooks, due-dilige
 ## Learn more
 
 - [docs/sparse-corpora.md](skills/curiosity-engine/docs/sparse-corpora.md) — hierarchy-fit curation for sparse / lower-density vaults
-- [docs/architecture.md](skills/curiosity-engine/docs/architecture.md) — full design rationale
+- [docs/architecture.md](skills/curiosity-engine/docs/architecture.md) — vault, wiki, and curator state
 - [docs/setup-advanced.md](skills/curiosity-engine/docs/setup-advanced.md) — non-Claude-Code CLIs, model presets, Ollama, deployment notes, orphan-source wiring
 - [docs/viewers.md](skills/curiosity-engine/docs/viewers.md) — graph viewer (classic + Atlas), search, Obsidian, VS Code + Foam, semantic search
 - [docs/okf-interop.md](skills/curiosity-engine/docs/okf-interop.md) — Open Knowledge Format export (cross-tool exchange)

@@ -1,12 +1,11 @@
-"""Curation-history timeline for the wiki-view replay UI (Phase 2b+++).
+"""Curation-history timeline for the wiki-view replay UI.
 
 Produces a HistoryDoc compatible with knowledge-atlas ``playReplayTimeline``
-and Switchbay's ``/api/curation/history`` shape.
+and the ``/api/curation/history`` shape.
 
-CE spike source of truth: the viewer ``data.json`` graph (nodes + edges).
-Git first-seen chronology (Switchbay ``curation_history.py``) remains a
-parity gap — optional cache hit if ``.workbench/curation-history.json``
-already exists from a shell pre-warm.
+Source of truth: the viewer ``data.json`` graph (nodes + edges).
+Git first-seen chronology is not built here. If
+``.workbench/curation-history.json`` already exists, it is used.
 """
 from __future__ import annotations
 

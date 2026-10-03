@@ -1,4 +1,4 @@
-/* CE filebrowser (Phase 2b / 2b++) — browse / search / highlight / FS mutate.
+/* CE filebrowser — browse / search / highlight / FS mutate.
  *
  * Consumes GET /api/tree (vault/ + wiki/ paths) and POST /api/fs/* for
  * create / rename / move / delete / duplicate / reveal-in-OS. Drop-ingest

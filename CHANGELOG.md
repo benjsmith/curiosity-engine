@@ -115,7 +115,7 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 - Still shell-owned / deferred after this slice: link-heal agents, tab open after
   split, workspace-root figures / `.workbench` sketches, OS Trash prune.
   Atlas canvas rubber-band shipped in a follow-on commit on the same wave.
-  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md` and the **v1.9.0** rollup.
+  See the **v1.9.0** rollup.
 
 ## 2026-09-19 — Phase 2b+++++ split registry + CM export hook
 
@@ -142,7 +142,6 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 - Rubber-band / `sy:split-proposal` UI landed in Phase 2b++++++ / +++++++ (v1.9.0).
 - Still shell-owned: link-heal agents, tab open after split, workspace-root
   figures / `.workbench` sketches, OS Trash prune.
-  See `skills/curiosity-engine/docs/MIGRATION-INTAKE.md`.
 
 ## 2026-09-19 — Phase 2b++++ pack action dispatch
 
@@ -161,7 +160,7 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 - Agent/LLM skill *execution* of queued pack-runs remains shell-owned (Switchbay
   drains `.workbench/pack-runs/`). Git pack install, reveal-in-OS, and drop-ingest
   shipped in a follow-on CE commit (see v1.9.0 rollup); pip `requires_extra` still
-  deferred. See `MIGRATION-INTAKE.md`.
+  deferred.
 
 ## 2026-09-19 — Phase 2b++ filebrowser FS mutate + pack routes stub
 

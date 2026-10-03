@@ -1,4 +1,4 @@
-/* Curation replay overlay (Phase 2b+++ polish).
+/* Curation replay overlay.
  *
  * Vanilla port of Switchbay CurationReplay UX — play / pause / scrub / step
  * over a HistoryDoc. Timing matches knowledge-atlas playReplayTimeline;

@@ -1,5 +1,5 @@
 /**
- * Workspace-partition selection helpers (Phase 2b+ split spike).
+ * Workspace-partition selection helpers.
  *
  * Atlas already exposes multi-select (`select` / `selection-changed`).
  * This module owns the move|copy policy map Switchbay's GraphTab used,

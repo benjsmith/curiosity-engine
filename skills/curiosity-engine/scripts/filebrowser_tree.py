@@ -1,4 +1,4 @@
-"""CE filebrowser tree walk — vault/ + wiki/ only (Phase 2b).
+"""CE filebrowser tree walk — vault/ + wiki/ only.
 
 Switchbay's /api/tree walks the whole workspace. CE intake prefers vault
 and wiki path semantics so the embed surface matches the three-object

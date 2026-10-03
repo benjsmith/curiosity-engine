@@ -10,8 +10,7 @@ This module is intentionally self-contained (no curiosity-merge dependency):
   3. Write `.curator/splits/` manifests on BOTH sides
   4. MOVE policy: relocate source pages under wiki/.deleted/<stamp>/ (recoverable)
 
-Shells call POST /api/split on the CE viewer; they register the new workspace
-themselves. Feature-flag dual-stack until umbrella parity checklist is green.
+Shells call POST /api/split on the CE viewer.
 """
 from __future__ import annotations
 

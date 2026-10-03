@@ -19,7 +19,7 @@
  * it and the host orchestrates the re-render.
  */
 window.Edit = (function () {
-  /** Honor CE_PUBLIC_BASE under /embed/ce/ reverse-proxy (Phase 2a). */
+  /** Honor CE_PUBLIC_BASE under /embed/ce/ reverse-proxy. */
   function apiUrl(path) {
     if (typeof window.ceApi === "function") return window.ceApi(path);
     var base = (window.CE_PUBLIC_BASE || "").replace(/\/$/, "");

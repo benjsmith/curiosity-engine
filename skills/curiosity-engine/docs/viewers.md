@@ -66,43 +66,38 @@ For same-origin shell embeds, run the viewer server with
 `CE_PUBLIC_BASE=/embed/ce` (and typically port **8766**). The server strips
 that prefix and injects `window.CE_PUBLIC_BASE` / `ceApi()` into HTML.
 Optional hosted signal: `X-CE-Host: switchbay|okbay` or `?host=`.
-Details: [`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
 Bare local `viewer.sh` is unchanged (default port 8090, `127.0.0.1`).
 
-**Filebrowser (Phase 2b + parity follow-ons).** Sidebar **Pages | Files**
-toggle. Files mode calls `GET /api/tree` (vault/ + wiki/ only), supports
-substring / `/re/` / `*.ext` filter, graph-search highlight, and a context
-menu. Honors `ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in
-Files mode. CE-owned: FS mutate (`/api/fs/*`), reveal-in-OS /
-open-external, drop-ingest (`/api/ingest/from-upload|from-path` →
+**Filebrowser.** Sidebar **Pages | Files** toggle. Files mode calls
+`GET /api/tree` (vault/ + wiki/ only), supports substring / `/re/` /
+`*.ext` filter, graph-search highlight, and a context menu. Honors
+`ceApi()` / `CE_PUBLIC_BASE`. Open `?filebrowser=1` to land in Files mode.
+Also available: FS mutate (`/api/fs/*`), reveal-in-OS / open-external,
+drop-ingest (`/api/ingest/from-upload|from-path` →
 `.workbench/ingest-runs/`), pack APIs (`/api/file-routes`, `/api/packs/*`
-including local + git install). Agent/LLM skill *execution* of queued
-pack-runs remains shell-owned (Switchbay drains the queue).
+including local + git install). Running queued pack actions is left to the
+host shell (Switchbay drains the queue).
 
-**Curation replay (Phase 2b+++ polish).** Graph-controls **replay ↻** opens an
-SVG overlay driven by `GET /api/curation/history` (HistoryDoc; synthetic from
+**Curation replay.** Graph-controls **replay ↻** opens an SVG overlay
+driven by `GET /api/curation/history` (HistoryDoc; synthetic from
 `data.json` with `created`/type-tier ordering, or `.workbench/curation-history.json`
 when a shell pre-warmed it). Play / pause / scrub / step; `?replay=1` opens
 and autoplays a short intro (settle + fade). Enter fade, radius inflate,
-easeAutoFit after major jumps. Atlas canvas camera bind landed (`bindViewer` +
-`fitToContent`); git-log chronology rebuild remains deferred — see
-[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md).
+easeAutoFit after major jumps. Atlas canvas camera bind is `bindViewer` +
+`fitToContent`. Rebuilding the timeline from git log is not implemented.
 
 **CEEmbed dual-mount + cache (v1.9.0).** Hosts (Switchbay Graph + persistent
 sidebar) should prefer `window.CEEmbed.create` (`static/embed.js`) over a full
 HTML remount: shared session, `mountSidebar` / `mountCanvas`, soft-park on
 canvas unmount for instant Graph return, and IndexedDB `CEAtlasCache`
 (`static/atlas-cache.js`) so hard-reload paints from cache then revalidates.
-Same-origin reverse-proxy only — no iframes. Details:
-[`MIGRATION-INTAKE.md`](MIGRATION-INTAKE.md) embed contract.
+Same-origin reverse-proxy only — no iframes.
 
 ## Obsidian (alternative — same underlying markdown)
 
 To **import** an existing Obsidian vault into CE (no Work/symlink dance),
 use `POST /api/import/obsidian` or `python3 scripts/obsidian_import.py <path>`.
 Mapping: Obsidian vault root → `wiki/` (wikilinks preserved).
-See `MIGRATION-INTAKE.md` Phase 2b+++++++.
-
 `wiki/` is plain markdown with `[[wikilinks]]`. Open Obsidian →
 **Open folder as vault** → pick `<your-workspace>/wiki`. Backlinks
 and Obsidian's own graph view light up immediately, no plugins.
