@@ -3,7 +3,7 @@
  *
  * The engine is framework-independent: no DOM types leak into the core
  * contract except the plain geometry the renderer needs. Types here
- * follow PLAN.md §5–§6; changes to this file are API changes.
+ * Changes to this file are API changes.
  */
 
 // ── data ────────────────────────────────────────────────────────────

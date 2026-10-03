@@ -13,9 +13,7 @@ stay strictly separate:
 Inferred meaning never masquerades as source data. Extraction is deterministic;
 anything semantic is a proposal until a human accepts it.
 
-The additive pipeline follow-up implements Git-backed correction recovery, stable
-source-record IDs, streamed JSONL, exact nested selectors, and full-record FTS.
-See [commands and design choices](dataset-pipeline-design.md).
+Git-backed correction recovery, stable source-record IDs, streamed JSONL, exact nested selectors, and full-record search are covered below and in SKILL.md (DATASET).
 
 ## Scope
 
@@ -277,9 +275,7 @@ an older import that stored explicit JSON null as the text `null` will conflict
 with the corrected SQL NULL representation and needs a reviewed correction.
 
 The `tables.py recover` command combines promotion, correction replay, schema
-sync, manifest imports, and record-index rebuilding. See
-[dataset pipeline follow-up](dataset-pipeline-design.md) for the Git workflow,
-legacy review checkpoints, concurrency requirements, and recovery limits.
+sync, manifest imports, and record-index rebuilding.
 
 ## 5. Curating knowledge
 

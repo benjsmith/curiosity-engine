@@ -1,10 +1,10 @@
 # Changelog
 
-## 2026-09-29 — v1.9.0 — Phase 2 embed/filebrowser/partition + CEEmbed dual-mount
+## 2026-09-29 — v1.9.0 — embed/filebrowser/partition + CEEmbed dual-mount
 
 **Migration:** none. **Breaking:** none.
 
-Versioned rollup of the Phase 2a–2b+++++++ embed stack that landed on `main`
+Versioned rollup of the embed stack that landed on `main`
 after **v1.8.3** (proxy prefix, filebrowser, wiki partition, pack dispatch,
 workspace registry, rubber-band split, Obsidian import) plus the embed-host
 contract Switchbay Phase 4a/4b needs: **`CEEmbed.create` dual-mount**,
@@ -14,21 +14,21 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 
 ### Added
 
-- **Phase 2a — proxy embed + hosted hook:** `CE_PUBLIC_BASE` (e.g. `/embed/ce`),
+- **Proxy embed and hosted hook:** `CE_PUBLIC_BASE` (e.g. `/embed/ce`),
   `X-CE-Host` / `?host=switchbay|okbay`, `GET /api/hosted`.
-- **Phase 2b — filebrowser:** Pages|Files sidebar, `GET /api/tree`, filter,
+- **File browser:** Pages|Files sidebar, `GET /api/tree`, filter,
   graph-search highlight, context menu (`filebrowser_*.py` + `filebrowser.js`).
-- **Phase 2b+ — wiki partition / split:** `wiki_partition.py`, `POST /api/split`,
+- **Wiki partition / split:** `wiki_partition.py`, `POST /api/split`,
   atlas `partitionSelection` helpers, minimal split UI.
-- **Phase 2b++ — FS mutate + pack routes:** sandboxed `/api/fs/*`,
+- **Filesystem edits and pack routes:** sandboxed `/api/fs/*`,
   `GET /api/file-routes`.
-- **Phase 2b+++ — curation replay:** SVG overlay, `GET /api/curation/history`,
+- **Curation replay:** SVG overlay, `GET /api/curation/history`,
   play/pause/scrub/step; Atlas camera bind (`bindViewer` / `fitToContent`).
-- **Phase 2b++++ — pack action dispatch:** `/api/packs/*` list/toggle/install/
+- **Pack action dispatch:** `/api/packs/*` list/toggle/install/
   dispatch → `.workbench/pack-runs/` queue (agent/LLM *execution* remains shell).
-- **Phase 2b+++++ — workspace registry + CM export:** `/api/workspaces`,
+- **Workspace registry and export hook:** `/api/workspaces`,
   `POST /api/cm-export` (curiosity-merge `subgraph_export`, dry-run).
-- **Phase 2b++++++ / +++++++ — rubber-band + Obsidian:** Classic **and Atlas
+- **Rubber-band selection and Obsidian import:** Classic **and Atlas
   canvas** Ctrl/⌘-drag split targeting; Obsidian folder/zip → `wiki/` import
   (`POST /api/import/obsidian`).
 - **Filebrowser parity follow-ons:** reveal-in-OS / open-external
@@ -68,7 +68,7 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
   SourceBrowser/WikiPane dual pane, ext filter chips, agent/LLM skill
   *execution* of queued pack-runs (Switchbay drains the queue).
 - Tip at these release notes: `86451bd` (`86451bd53e5a3fe285df8e97323e4ca579fdef7b`,
-  merge of procedure/execution types onto the Phase 2 embed stack).
+  merge of procedure/execution types onto the embed stack).
   Do **not** tag from this docs PR alone — Ben cuts the tag after merge.
 
 ## 2026-09-20 — Obsidian vault import (folder + zip)
@@ -452,7 +452,7 @@ Coverage includes real PDF extractor inputs, spreadsheet/slide goldens, FTS,
 streaming budgets, selectors, legacy IDs, correction replay and recovery failure
 paths. Live kuzu rebuild and a real v1.4.0 workspace migration were not exercised.
 
-Commands and design: [dataset pipeline guide](skills/curiosity-engine/docs/dataset-pipeline-design.md).
+Commands: [structured datasets](skills/curiosity-engine/docs/datasets.md).
 Bug-fix audit: [structured-data review](skills/curiosity-engine/docs/structured-data-review.md).
 
 ## 2026-09-05 — v1.6.1 — Testing docs name the dataset suite

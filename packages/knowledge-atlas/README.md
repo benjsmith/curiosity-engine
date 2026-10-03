@@ -21,7 +21,7 @@ explainable discovery horizon instead of an opaque feed.
   a cloud-style remote source — all behind one `AtlasDataSource`
   interface. The client never receives an unbounded graph.
 
-Full design: [`PLAN.md`](PLAN.md). Mode comparison + recommendation:
+Mode comparison and recommendation:
 [`docs/results.md`](docs/results.md). Perf: [`docs/performance.md`](docs/performance.md).
 Seams: [`docs/extension-points.md`](docs/extension-points.md).
 

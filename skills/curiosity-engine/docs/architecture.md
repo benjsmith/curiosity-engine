@@ -10,7 +10,7 @@ A curiosity-engine workspace is three folders plus read-only views. Commands and
 
 **Curator state** (`.curator/`). Per-workspace operational files (logs, config, prompts, local indexes). Not the notes themselves.
 
-Markdown in `wiki/` is the source of truth. The graph viewer (`viewer.sh`) and Open Knowledge Format export (`okf_export.py build wiki --output-dir <dir>`) are read-only projections. OKF details: [`okf-interop.md`](okf-interop.md).
+Markdown in `wiki/` is the source of truth. The graph viewer (`viewer.sh`) and Open Knowledge Format export (`okf_export.py build wiki --output-dir <dir>`) are read-only projections.
 
 ## Citations
 
