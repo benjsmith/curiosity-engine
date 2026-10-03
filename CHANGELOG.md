@@ -61,6 +61,7 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 
 ### Notes
 
+- Atlas stays off at or below 360 pages even if a stored preference says atlas.
 - Still shell-owned / deferred: tab-open chrome after split, async link-heal
   agents, workspace-root figures / `.workbench` sketches, OS Trash prune
   (CE uses `wiki/.deleted/`), git-log chronology rebuild for curation replay,
