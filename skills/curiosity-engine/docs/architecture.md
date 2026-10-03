@@ -8,7 +8,7 @@ Three objects hold the state of any curiosity-engine workspace.
 
 **Vault** (`vault/`). Raw source files — whatever you dropped in: PDFs, papers, slide decks, web clips, markdown. Each source has a sibling `.extracted.md` with clean text used for search and by the curator. **Append-only.** Once a source is in the vault, the skill never modifies it. That makes the vault a trustworthy provenance layer: every wiki citation points at something unchanged since ingest.
 
-**Wiki** (`wiki/`). Git-tracked markdown. The curator (and you) write pages here with `[[wikilinks]]` and `(vault:path)` citations. Eleven subdirectories by page type: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures`, `notes`, `todos`, `projects`. Each has a conventional shape (see SKILL.md's page-format section). Every accepted edit is a git commit; reversion is always available.
+**Wiki** (`wiki/`). Git-tracked markdown. The curator (and you) write pages here with `[[wikilinks]]` and `(vault:path)` citations. Thirteen subdirectories by page type: `sources`, `entities`, `concepts`, `analyses`, `evidence`, `facts`, `tables`, `figures`, `notes`, `todos`, `projects`, `procedures`, `executions`. Each has a conventional shape (see SKILL.md's page-format section). Every accepted edit is a git commit; reversion is always available.
 
 **Curator state** (`.curator/`). Not git-tracked. Per-workspace state: logs, schema, prompt templates, graph database, guard snapshot. This is the curator's operational memory — what it's tried, what's in flight, which scripts to use.
 

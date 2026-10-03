@@ -2,7 +2,7 @@
 
 Charter north star: **CE** owns graph, atlas, wiki, search, source viewer, **filebrowser**, **graph animation + split**. Switchbay keeps PWA shell (workspaces, watcher, tabs chrome, rail UI) and reverse-proxies CE under `/embed/ce/`.
 
-**Do not delete** Switchbay implementations until `/workspace/skill-shell-rationalization/docs/PARITY-CHECKLIST.md` (umbrella) is checked and a feature flag gates the cutover.
+**Do not delete** Switchbay implementations until the skill-shell parity checklist is checked and a feature flag gates the cutover.
 
 ## Target homes in CE
 
@@ -16,7 +16,7 @@ Charter north star: **CE** owns graph, atlas, wiki, search, source viewer, **fil
 
 ## Switchbay source map (intake)
 
-Paths relative to the Switchbay repo root (branch `feat/skill-shell-rationalization`).
+Paths relative to the Switchbay repo root.
 
 ### Filebrowser
 
@@ -83,7 +83,7 @@ Paths relative to the Switchbay repo root (branch `feat/skill-shell-rationalizat
 | `template/wiki-view/static/filebrowser.js` | Context menu pack actions → dispatch API |
 | Tests | `tests/test_filebrowser_packs.py` (sandbox escape + embed-prefix API) |
 
-**Still shell-owned (filebrowser):** pip `requires_extra`, agent/LLM skill *execution* for queued pack-runs (CE queues; Switchbay drains — SB ADR-006/007), SourceBrowser/WikiPane dual pane, ext filter chips. Reveal-in-OS, drop-ingest, and git pack install landed in CE (v1.9.0).
+**Still shell-owned (filebrowser):** pip `requires_extra`, agent/LLM skill *execution* for queued pack-runs (CE queues; Switchbay drains), SourceBrowser/WikiPane dual pane, ext filter chips. Reveal-in-OS, drop-ingest, and git pack install landed in CE (v1.9.0).
 
 Deep-link: `?filebrowser=1` opens Files mode.
 
@@ -223,7 +223,7 @@ Smoke: open wiki-view with `CE_PUBLIC_BASE=/embed/ce`, `?split=1`, Ctrl-drag ove
 - Upstream: `http://127.0.0.1:8766` (loopback only)
 - Public prefix: `/embed/ce` → set `CE_PUBLIC_BASE=/embed/ce` on the CE process
 - Forward `X-CE-Host: switchbay` (okbay: `okbay`) or `?host=`
-- No iframes — in-app panels load first-party proxied routes (Switchbay same-document mount; ADR-004 / ADR-004b on the shell side)
+- No iframes — in-app panels load first-party proxied routes (Switchbay same-document mount)
 
 ### Dual-mount + cache (CE host API)
 

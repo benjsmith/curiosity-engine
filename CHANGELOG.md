@@ -49,6 +49,13 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 - **Skill docs:** evidence-must-name-claim / no person-email hubs; concept-before-
   updates-on; durable titles; protect structural membership (see dated skill
   entries below).
+- **Procedure / execution types** (merged 2026-10-03): page types `procedure`
+  (`[proc]`, `wiki/procedures/`) and `execution` (`[exec]`, `wiki/executions/`,
+  stem `exec-`) — naming prefixes, viewer palette (`#5e4fa2` / `#c51b8a`),
+  score_diff floors, optional frontmatter `status` / `applies_to` /
+  `steps_attested`. `procedure_maturity.py` (and `sweep.py procedure-candidates`)
+  ranks procedure hubs so deepen time hits immature pages first. Tests:
+  `tests/test_procedure_types.py`.
 
 ### Notes
 
@@ -57,8 +64,9 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
   (CE uses `wiki/.deleted/`), git-log chronology rebuild for curation replay,
   Omarchy/Switchbay Obsidian folder-picker UI, pip `requires_extra`,
   SourceBrowser/WikiPane dual pane, ext filter chips, agent/LLM skill
-  *execution* of queued pack-runs (Switchbay drains the queue — see SB ADR-006/007).
-- Tip at release docs: `3018580` (merge of `feat/skill-shell-rationalization`).
+  *execution* of queued pack-runs (Switchbay drains the queue).
+- Tip at these release notes: `86451bd` (`86451bd53e5a3fe285df8e97323e4ca579fdef7b`,
+  merge of procedure/execution types onto the Phase 2 embed stack).
   Do **not** tag from this docs PR alone — Ben cuts the tag after merge.
 
 ## 2026-09-20 — Obsidian vault import (folder + zip)
@@ -171,15 +179,6 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 ### Fixed
 
 - Wiki viewer on narrow viewports (≤1100px, including phone landscape): doc modal no longer collapses to ~0 width; file browser sidebar uses desktop collapsed/visible semantics as an overlay with auto-collapse on load so the restore control stays reachable.
-
-## Unreleased — procedure / execution thin types + maturity ranker
-
-**Migration:** none. **Breaking:** none.
-
-### Added
-
-- Thin CE page types `procedure` (`[proc]`, `wiki/procedures/`) and `execution` (`[exec]`, `wiki/executions/`, stem `exec-`): naming prefixes, viewer palette/order, score_diff floors, optional FM `status` / `applies_to` / `steps_attested`.
-- Deterministic `procedure_maturity.py` (+ `sweep.py procedure-candidates`) ranks procedure hubs for CURATE deepen spend (immature / chronology-risk first). SKILL stays nouns + folders + title tags only — no OWL/PKO.
 
 ## 2026-09-15 — Fix entity_gate false abstain on topic phrases + date fragments
 
