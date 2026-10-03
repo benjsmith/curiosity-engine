@@ -1,3 +1,5 @@
+# Changelog
+
 ## 2026-09-29 — v1.9.0 — Phase 2 embed/filebrowser/partition + CEEmbed dual-mount
 
 **Migration:** none. **Breaking:** none.
@@ -188,8 +190,6 @@ gate. See `RELEASE_CHECKLIST.md` (dated section + version marker).
 
 - Entity gate no longer false-abstains on long topic n-grams paired with abbreviated month / numeric date fragments (e.g. "Mar 4th, 2024"): abbreviated months are stopwords, numeric date fragments are skipped, exact identity resolves before longest-first fuzzy suppression, and duplicate n-grams collapsing to the same page are collapsed.
 - `graph.py` rebuild now emits `degraded` / `wiki_embeddings_reason` / `degraded_reason` when embeddings are configured but skipped or incomplete.
-
-# Changelog
 
 ## 2026-09-27 — Evidence pages name their claim (no person-email hubs)
 
