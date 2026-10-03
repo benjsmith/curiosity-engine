@@ -29,6 +29,7 @@ GUARDED=(
     "$SCRIPT_DIR/epoch_summary.py"
     "$SCRIPT_DIR/scrub_check.py"
     "$SCRIPT_DIR/naming.py"
+    "$SCRIPT_DIR/procedure_maturity.py"
     "$SCRIPT_DIR/graph.py"
     "$SCRIPT_DIR/entity_gate.py"
     "$SCRIPT_DIR/embedder.py"

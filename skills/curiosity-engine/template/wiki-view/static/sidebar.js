@@ -26,17 +26,22 @@ window.Sidebar = (function () {
     note:         'note',         notes:    'note',
     todo:         'todo-list',    'todo-list': 'todo-list',
     project:      'project',      projects: 'project',
+    procedure:    'procedure',    procedures: 'procedure',
+    execution:    'execution',    executions: 'execution',
     unclassified: 'unclassified',
   };
   const TYPE_ORDER = [
-    'project', 'analysis', 'concept', 'entity', 'evidence', 'fact', 'figure',
-    'table', 'source', 'note', 'todo-list', 'unclassified',
+    'project', 'analysis', 'concept', 'entity', 'procedure', 'execution',
+    'evidence', 'fact', 'figure', 'table', 'source', 'note', 'todo-list',
+    'unclassified',
   ];
   const TYPE_LABEL = {
     project:      'Projects',
     analysis:     'Analyses',
     concept:      'Concepts',
     entity:       'Entities',
+    procedure:    'Procedures',
+    execution:    'Executions',
     evidence:     'Evidence',
     fact:         'Facts',
     figure:       'Figures',
