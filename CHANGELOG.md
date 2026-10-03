@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-03 — Atlas on small wikis
+
+**Migration:** none. **Breaking:** none.
+
+The viewer chooser is available on any wiki of up to 1000 pages. A stored Atlas choice turns Atlas on for a small wiki. Classic stays the default until Atlas is selected. Wikis above 1000 pages stay on Atlas, because the classic graph hangs there.
+
+
 ## 2026-09-29 — v1.9.0 — embed/filebrowser/partition + CEEmbed dual-mount
 
 **Migration:** none. **Breaking:** none.

@@ -188,7 +188,7 @@ test("Classic exposes the same density-adaptive navigation minimap", async ({ pa
   })).toEqual([250, 250, 250]);
 });
 
-test("Atlas preference and chooser are offered only above 360 wiki pages", async ({ page }) => {
+test("Atlas preference and chooser are offered on a small wiki", async ({ page }) => {
   const { workspaceSmallData } = await import("../fixtures/index.ts");
   const large = workspaceSmallData(42);
   const keep = new Set(Object.keys(large.pages).slice(0, 360));
@@ -244,10 +244,10 @@ test("Atlas preference and chooser are offered only above 360 wiki pages", async
   }, { largePayload: large, smallPayload: small });
 
   expect(result).toEqual({
-    threshold: 360,
-    smallEligible: false,
-    smallEnabled: false,
-    smallHidden: true,
+    threshold: 0,
+    smallEligible: true,
+    smallEnabled: true,
+    smallHidden: false,
     largeEligible: true,
     largeEnabled: true,
     largeHidden: false,

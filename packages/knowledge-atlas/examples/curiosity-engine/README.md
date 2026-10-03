@@ -1,9 +1,9 @@
 # Curiosity Engine integration
 
-The integration already ships in this repo as a size-gated option.
-Wikis above 360 pages show a viewer chooser; classic remains the
-default until Atlas is selected. This note documents how it works and
-how to try it directly at any corpus size.
+The integration already ships in this repo. Any wiki of up to 1000
+pages shows a viewer chooser; classic remains the default until Atlas
+is selected. Wikis above 1000 pages stay on Atlas. This note documents
+how it works and how to try it directly.
 
 ## Try it
 
@@ -17,7 +17,7 @@ cp dist/knowledge-atlas.iife.js \
 cd <your-workspace>
 bash <skill_path>/scripts/viewer.sh open
 # then visit  http://localhost:8090/?viewer=atlas
-# Large wikis also expose view: classic / view: atlas in the graph controls.
+# The graph controls expose view: classic / view: atlas.
 ```
 
 ## How it works
@@ -27,11 +27,11 @@ Three files in `template/wiki-view/`:
 - `static/vendor/knowledge-atlas.js` — the vendored IIFE bundle
   (engine + Canvas renderer + CE adapter, ~96 KB min / ~34 KB gzip,
   zero dependencies), exposing `window.KnowledgeAtlas.mount`.
-- `static/atlas.js` — the glue: counts wiki pages, owns the >360-page
-  eligibility rule and persisted chooser, mounts the atlas into
+- `static/atlas.js` — the glue: counts wiki pages, owns the persisted
+  chooser, mounts the atlas into
   `#graph` on the already-fetched `data.json`, and returns a
   `Graph`-compatible facade (`focus`, `clearFocus`, …). An explicit
-  `?viewer=atlas` query bypasses eligibility for testing. It also wires
+  `?viewer=atlas` query selects Atlas for that load. It also wires
   the host's existing label picker and physics sliders to the Atlas
   renderer/force core, so changing viewer does not remove controls.
 - `static/main.js` — picks the facade when the flag is on; sidebar,

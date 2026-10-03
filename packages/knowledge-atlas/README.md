@@ -40,11 +40,9 @@ Chromium: `PW_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm e2e`.
 
 ## Embed
 
-- **Curiosity Engine**: already wired as a size-gated option. Wikis
-  above 360 pages get a `view: classic` / `view: atlas` chooser in the
-  built-in viewer; classic stays the default until selected. The
-  explicit `http://localhost:8090/?viewer=atlas` override works at any
-  size for development and comparison. See
+- **Curiosity Engine**: the built-in viewer offers `view: classic` /
+  `view: atlas` at any size up to 1000 pages. Classic stays the default
+  until selected. Wikis above 1000 pages stay on Atlas. See
   [`examples/curiosity-engine/`](examples/curiosity-engine/README.md).
 - **Switchbay / any React host**: see
   [`examples/switchbay/AtlasTab.tsx`](examples/switchbay/AtlasTab.tsx).
