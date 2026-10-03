@@ -5,8 +5,7 @@ The Open Knowledge Format (OKF, Google Cloud, v0.1 Draft, Apache-2.0) is a
 markdown-native knowledge-interchange format: a "Knowledge Bundle" is a
 hierarchical directory of markdown "Concept" files, each a YAML frontmatter
 block plus a markdown body. The only required frontmatter field is `type`;
-links are plain markdown links; `index.md` / `log.md` are reserved. See
-`docs/okf-interop.md` for the full mapping and the rationale.
+links are plain markdown links; `index.md` / `log.md` are reserved.
 
 This is a **read-only projection** of the wiki — the same posture as
 `wiki_render.py`. Markdown is CE's source of truth; an OKF bundle is one more

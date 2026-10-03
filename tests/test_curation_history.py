@@ -1,4 +1,4 @@
-"""Phase 2b+++: curation history builder + /api/curation/history under embed prefix."""
+"""Curation history builder + /api/curation/history under embed prefix."""
 from __future__ import annotations
 
 import json

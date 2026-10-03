@@ -1,4 +1,4 @@
-"""Phase 2b+++++: CE workspace registry persistence + CM export dry-run."""
+"""CE workspace registry persistence + CM export dry-run."""
 from __future__ import annotations
 
 import json

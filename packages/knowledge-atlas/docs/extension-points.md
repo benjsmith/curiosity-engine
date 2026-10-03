@@ -30,7 +30,7 @@ geography.
 `mount(canvas) / render(frame) / destroy()`. The `Frame` carries
 scene + layout + interaction state + resolved theme; hit testing stays
 in the core, so a renderer never needs to understand semantics. A
-WebGL implementation slots in here (ADR-001 keeps this seam open).
+WebGL implementation slots in here (renderer seam kept open).
 
 ## 4. Discovery classes and lenses
 

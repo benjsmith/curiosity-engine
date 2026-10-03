@@ -12,8 +12,7 @@ explainable discovery horizon instead of an opaque feed.
   landmarks, edge priority tiers), branching inquiry trails, semantic
   zoom with hysteresis, hit testing, telemetry, seeded determinism.
 - **Canvas 2D renderer** (`src/renderer`) with object-correspondence
-  transitions and DPR/reduced-motion/theme support ([why Canvas —
-  ADR-001](docs/adr-001-renderer-and-geometry.md)).
+  transitions and DPR/reduced-motion/theme support.
 - **React adapter** (`src/react`) — one component + `useAtlas` hook,
   React 18 peer.
 - **Data sources** (`src/datasources`): Curiosity Engine `data.json`
@@ -22,7 +21,7 @@ explainable discovery horizon instead of an opaque feed.
   a cloud-style remote source — all behind one `AtlasDataSource`
   interface. The client never receives an unbounded graph.
 
-Full design: [`PLAN.md`](PLAN.md). Mode comparison + recommendation:
+Mode comparison and recommendation:
 [`docs/results.md`](docs/results.md). Perf: [`docs/performance.md`](docs/performance.md).
 Seams: [`docs/extension-points.md`](docs/extension-points.md).
 

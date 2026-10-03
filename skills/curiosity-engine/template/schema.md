@@ -123,7 +123,7 @@ Source citation goes through the standard `(vault:...)` DSL so
 Multimodal table extraction (PDFs that pdfplumber can't recover —
 borderless layouts, scanned pages, custom fonts) lands tables back into
 the same `[tab]` pipeline. The CURATE wave-mode `multimodal-table-extract`
-dispatches a fresh-context Sonnet Agent (`scientific_table_extractor`
+dispatches a fresh-context worker (`scientific_table_extractor`
 template) per source flagged by `sweep.py multimodal-table-candidates`;
 the worker reads pre-rendered page PNGs (`figures.py render-all`) and
 returns one JSON object with all recovered tables. The orchestrator
@@ -146,7 +146,7 @@ multimodal-table-extract wave. `sweep.py pending-numeric-review` lists
 every `[tab]` page whose `extraction_method: multimodal-sonnet` has no
 `numeric_review_done` timestamp (pdfplumber and other deterministic
 extractions skip the queue — their fidelity is mechanical). One
-fresh-context Opus Agent per page, using the
+fresh-context reviewer per page, using the
 `numeric_transcription_review` template, cross-checks every numeric
 cell against the source PNGs and returns `{verdict, flagged_cells,
 notes}`. `sweep.py apply-numeric-review` persists the verdict:
@@ -261,8 +261,7 @@ markdown links, `(vault:...)`→a `# Citations` section. CE-only
 structure (IRI, `same_as`, class-table shapes, raw citations) rides in
 `x_ce_*` extension keys OKF consumers must preserve. Imported OKF
 bundles land in the vault as verbatim, untrusted, citable sources — not
-wiki pages — so the citation ratchet still governs promotion. See
-`docs/okf-interop.md`.
+wiki pages — so the citation ratchet still governs promotion.
 
 Bootstrap densify (optional, large cold vaults). Standalone
 `bootstrap.py` (not a CURATE wave): deterministic Fig./Table captions
@@ -306,7 +305,7 @@ the line — so never pad a claim with a short lead sentence just to carry a
 citation. A `source-not-indexed` suspect means the citation path is wrong or
 the vault needs re-indexing; the prose is not the problem.
 
-Quality beyond the floors is judged by the fresh-context opus reviewer,
+Quality beyond the floors is judged by the fresh-context reviewer,
 not by the mechanical gate.
 
 ## CURATE meta-rules

@@ -42,8 +42,7 @@ These are synthetic workspaces; no live v1.4.0 paper workspace was modified or
 used as a migration trial. No class-table migration or automatic CURATE wave
 was added.
 
-Final result: **238 tests passed, zero skipped** with the dependencies listed in
-`docs/testing.md`; `git diff --check` passed. Existing test output includes SQLite
+Final result: **238 tests passed, zero skipped**; `git diff --check` passed. Existing test output includes SQLite
 connection ResourceWarnings and the graph renderer's expected missing-kuzu
 fallback warning; the live kuzu rebuild was not exercised.
 
@@ -53,9 +52,7 @@ can agree with it. Existing citation targets are retained.
 
 ## Recommended next round, in priority order
 
-Historical recommendations from the initial review. The approved follow-up
-(1B/2B/3C/4B/5C) ships in v1.7.0; see [the implementation guide](dataset-pipeline-design.md)
-for the chosen behavior and limits. The combined suite passes 260 tests.
+Historical recommendations from the initial review. The follow-up ships in v1.7.0. The combined suite passes 260 tests.
 
 1. **A complete recovery command and correction ledger.** Class import manifests
    are replayable, but reviewed extracted-table corrections currently depend on

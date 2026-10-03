@@ -42,7 +42,7 @@ Endpoints
     POST /api/fs/delete                 {path} trash (OS or .workbench/trash)
     POST /api/fs/duplicate              {path} sibling copy (Switchbay parity)
 
-Proxy / embed (Phase 2a)
+Proxy / embed
 ────────────────────────
     Optional ``CE_PUBLIC_BASE`` (e.g. ``/embed/ce``) strips that prefix from
     request paths and injects ``window.CE_PUBLIC_BASE`` / ``ceApi()`` into
@@ -343,13 +343,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # ── handlers ───────────────────────────────────────────────────
     def _handle_get_tree(self) -> None:
-        """List vault/ + wiki/ files for the CE filebrowser (Phase 2b)."""
+        """List vault/ + wiki/ files for the CE filebrowser."""
         if WORKSPACE_DIR is None:
             return self._json(500, {"error": "workspace unset"})
         return self._json(200, filebrowser_tree.tree_payload(WORKSPACE_DIR))
 
     def _handle_get_file_routes(self) -> None:
-        """Pack file_routes from enabled packs (Phase 2b++++)."""
+        """Pack file_routes from enabled packs."""
         if WORKSPACE_DIR is None:
             return self._json(500, {"error": "workspace unset"})
         return self._json(200, filebrowser_packs.file_routes_payload(WORKSPACE_DIR))
@@ -576,7 +576,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self._json(200, doc)
 
     def _handle_get_split(self) -> None:
-        """Last workspace-partition status (Phase 2b+ split spike)."""
+        """Last workspace-partition status."""
         return self._json(200, {"last": SPLIT_LAST})
 
     def _handle_post_split(self) -> None:
@@ -672,7 +672,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
     def _handle_get_workspaces(self) -> None:
-        """CE workspace registry snapshot (Phase 2b+++++ registry slice)."""
+        """CE workspace registry snapshot."""
         return self._json(200, workspace_registry.payload())
 
     def _handle_post_workspaces(self) -> None:

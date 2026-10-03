@@ -1,4 +1,4 @@
-/* CE workspace partition UI (Phase 2b+ / 2b++++++ rubber-band).
+/* CE workspace partition UI (rubber-band select).
  *
  * Collects page refs with move|copy policy and POSTs /api/split.
  * Classic graph: Ctrl/Cmd-drag rubber-band, Shift-click multi-select,

@@ -1,4 +1,4 @@
-"""Phase 2b+: CE wiki partition (workspace split) spike."""
+"""CE wiki partition (workspace split)."""
 from __future__ import annotations
 
 import json

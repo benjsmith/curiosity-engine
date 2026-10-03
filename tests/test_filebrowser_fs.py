@@ -1,4 +1,4 @@
-"""Phase 2b++: CE filebrowser FS mutate sandbox + pack routes."""
+"""CE filebrowser FS mutate sandbox + pack routes."""
 from __future__ import annotations
 
 import json

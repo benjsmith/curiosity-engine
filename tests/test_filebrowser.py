@@ -1,4 +1,4 @@
-"""Phase 2b: CE filebrowser tree API + path matchers."""
+"""CE filebrowser tree API + path matchers."""
 from __future__ import annotations
 
 import json

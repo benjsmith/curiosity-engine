@@ -1,9 +1,7 @@
-"""Public URL base path + hosted-shell detection (Phase 2a).
+"""Public URL base path + hosted-shell detection.
 
 Switchbay/okbay same-origin reverse-proxy CE under a configurable prefix
-(default empty; typical embed: ``/embed/ce``). See umbrella CHARTER locked
-decisions #1 (no iframes) and the CE hosted-mode contract in
-``docs/ADR-001-proxy-embed-and-hosted.md``.
+(default empty; typical embed: ``/embed/ce``). No iframes.
 
 Loopback serve stays ``127.0.0.1`` (bare viewer default port 8090; embed
 hosts commonly use **8766**). Setting ``CE_PUBLIC_BASE`` does not change
@@ -128,20 +126,18 @@ def inject_viewer_bootstrap(html: bytes | str, *, hosted: str | None = None) -> 
 
 
 def hosted_settings_policy(hosted: str | None) -> dict:
-    """Stub contract for shell-hosted CE (Phase 2a).
+    """Contract for shell-hosted CE.
 
-    Full settings UI split lands later. Today we only advertise intent:
-    when ``host=switchbay|okbay``, shells own workspace/harness chrome;
-    CE may later hide duplicate settings surfaces. Physics / viewer knobs
-    remain available until a parity-gated follow-up.
+    When ``host=switchbay|okbay``, shells own workspace/harness chrome.
+    Physics / viewer knobs stay available.
     """
     shell = normalize_hosted_shell(hosted)
     return {
         "hosted": shell,
         "shell_owns_workspace_settings": shell is not None,
-        "ce_viewer_knobs_enabled": True,  # stub: keep atlas/physics until 2b+
+        "ce_viewer_knobs_enabled": True,
         "note": (
             "Hosted mode detected via X-CE-Host or ?host=. "
-            "Settings chrome split is deferred; see ADR-001."
+            "Hosted mode detected via X-CE-Host or ?host=. Workspace settings chrome stays with the shell."
         ),
     }

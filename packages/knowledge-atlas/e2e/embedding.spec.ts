@@ -117,18 +117,42 @@ test("IIFE + wiki-view glue mount against a CE payload", async ({ page }) => {
   });
   await expect(page.locator("#phys-charge-val")).toHaveText("-700");
 
-  // The Graph-facade contract: focus() re-centres without throwing,
-  // and open events route through the hash (main.js contract).
-  await page.evaluate(() => {
-    (window as unknown as { __atlasApi: { focus: (id: string) => void } }).__atlasApi.focus(
-      "concepts/transformers",
-    );
-  });
-  await page.waitForTimeout(500);
-  await canvas.dblclick({ position: { x: 450, y: 300 } });
+  // focus() on a retained full graph only retags the node; it does not
+  // pan. A centre double-click therefore hits empty canvas, and that
+  // click's pointerup clears focus before dblclick, so onOpenItem never
+  // runs. The gesture the canvas actually supports is a double-click on
+  // the node (hit-tested projected position). Hash must come from that
+  // open — this assertion fails if open does not set #page=.
+  const targetId = "concepts/transformers";
+  await page.evaluate((id) => {
+    (window as unknown as { __atlasApi: { focus: (id: string) => void } }).__atlasApi.focus(id);
+  }, targetId);
+  const point = await page.evaluate((id) => {
+    const api = (window as unknown as {
+      __atlasApi: {
+        controller: { hitTester: { nodes: Array<{ id: string; p: { x: number; y: number; r: number } }> } };
+      };
+    }).__atlasApi;
+    const canvasEl = document.querySelector("#graph > canvas:not(.atlas-minimap)") as HTMLCanvasElement | null;
+    const hit = api.controller.hitTester.nodes.find((n) => n.id === id);
+    if (!canvasEl || !hit) return null;
+    return {
+      x: hit.p.x + canvasEl.clientWidth / 2,
+      y: hit.p.y + canvasEl.clientHeight / 2,
+      r: hit.p.r,
+      w: canvasEl.clientWidth,
+      h: canvasEl.clientHeight,
+    };
+  }, targetId);
+  expect(point, "opened node must be in the hit tester").not.toBeNull();
+  expect(point!.x).toBeGreaterThan(0);
+  expect(point!.x).toBeLessThan(point!.w);
+  expect(point!.y).toBeGreaterThan(0);
+  expect(point!.y).toBeLessThan(point!.h);
+  await canvas.dblclick({ position: { x: point!.x, y: point!.y } });
   await expect
     .poll(async () => page.evaluate(() => window.location.hash))
-    .toContain("#page=");
+    .toContain("#page=" + encodeURIComponent(targetId));
 });
 
 test("Classic exposes the same density-adaptive navigation minimap", async ({ page }) => {
@@ -185,6 +209,9 @@ test("Atlas preference and chooser are offered only above 360 wiki pages", async
       <span id="viewer-mode-state">classic</span>
     </button>
   `);
+  // Same order as wiki-view/index.html: engine IIFE, then atlas.js,
+  // so window.KnowledgeAtlas exists and initChoice does not return early.
+  await page.addScriptTag({ path: IIFE });
   await page.addScriptTag({ path: GLUE });
 
   const result = await page.evaluate(({ largePayload, smallPayload }) => {

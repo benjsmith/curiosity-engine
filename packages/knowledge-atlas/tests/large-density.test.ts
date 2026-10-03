@@ -1,4 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const ticks = vi.hoisted(() => ({ n: 0 }));
+
+vi.mock("d3-force", async () => {
+  const actual = await vi.importActual<typeof import("d3-force")>("d3-force");
+  const orig = actual.forceSimulation;
+  return {
+    ...actual,
+    forceSimulation: ((...args: Parameters<typeof orig>) => {
+      const sim = orig(...args);
+      const tick = sim.tick.bind(sim);
+      sim.tick = ((iterations?: number) => {
+        ticks.n += iterations ?? 1;
+        return tick(iterations);
+      }) as typeof sim.tick;
+      return sim;
+    }) as typeof orig,
+  };
+});
+
 import { GraphIndex } from "../src/core/graphindex.ts";
 import { hybridLayout } from "../src/core/layout/hybrid.ts";
 import { buildScene } from "../src/core/scene/builder.ts";
@@ -34,7 +54,7 @@ describe("10k overview envelope", () => {
       },
       42,
     );
-    const started = performance.now();
+    ticks.n = 0;
     const layout = hybridLayout.layout(scene, {
       viewport: { width: 1280, height: 800 },
       seed: 42,
@@ -43,8 +63,9 @@ describe("10k overview envelope", () => {
     expect(scene.nodes).toHaveLength(10_000);
     expect(scene.edges).toHaveLength(0);
     expect(layout.positions.size).toBe(10_000);
-    // Broad regression guard: catches an accidental return to 350
-    // force ticks without pretending CI timing is a product benchmark.
-    expect(performance.now() - started).toBeLessThan(5_000);
+    // Tick-band contract, not a wall-clock budget. Exactly 10,000 nodes
+    // is the >2,000 band (60). >10,000 is 32; 350 is only for ≤800.
+    // Counting sim.tick() calls fails if the solver returns to 350.
+    expect(ticks.n).toBe(60);
   });
 });

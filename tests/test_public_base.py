@@ -1,4 +1,4 @@
-"""Phase 2a: CE_PUBLIC_BASE + hosted-shell contract."""
+"""CE_PUBLIC_BASE + hosted-shell contract."""
 from __future__ import annotations
 
 import os

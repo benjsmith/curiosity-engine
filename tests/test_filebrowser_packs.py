@@ -1,4 +1,4 @@
-"""Phase 2b++++: CE pack list / enable / install / sandboxed action dispatch."""
+"""CE pack list / enable / install / sandboxed action dispatch."""
 from __future__ import annotations
 
 import json

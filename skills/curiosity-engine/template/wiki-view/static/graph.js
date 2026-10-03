@@ -46,7 +46,7 @@ window.Graph = (function () {
   let searchHits = null;    // Set of ids from the graph search; null = idle
   let _autoVisibleIds = new Set();    // cache: ids whose labels show in auto mode
   let _autoRecomputeScheduled = false;
-  // ── Split mode: review-before-split (Phase 2b++++++ rubber-band) ──
+  // ── Split mode: review-before-split (rubber-band) ──
   // Click toggles membership; Shift-click adds; Ctrl/Cmd-drag rubber-bands;
   // Alt-click / right-click flips move ↔ copy. Entities/concepts default copy.
   let splitActive = false;

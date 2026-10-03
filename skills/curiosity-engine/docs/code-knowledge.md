@@ -5,10 +5,11 @@ the knowledge that surrounds an engineering team's codebases — the
 decisions, constraints, gotchas, mental models, and agent-discovered
 findings that don't live in the code itself.
 
-For the broader skill design (vault / wiki / curator, the citation ratchet,
-the CURATE loop, multi-project tagging) see [`architecture.md`](architecture.md)
-and [`multi-project.md`](multi-project.md). This doc adds a thin code-repo
-surface on top of that foundation; nothing in the existing model changes.
+For vault / wiki / curator state see [`architecture.md`](architecture.md).
+The CURATE loop and citation checks are in [`../SKILL.md`](../SKILL.md).
+Multi-project tagging is in [`multi-project.md`](multi-project.md). This doc
+adds a thin code-repo surface on top of that foundation; nothing in the
+existing model changes.
 
 ## The problem this solves
 

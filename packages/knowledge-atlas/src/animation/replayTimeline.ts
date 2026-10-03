@@ -1,5 +1,5 @@
 /**
- * Curation-replay timeline hook (Phase 2b spike).
+ * Curation-replay timeline hook.
  *
  * Pure scheduler extracted from Switchbay `curationReplayAnim.ts` event
  * model — no SVG/d3. Hosts (wiki-view / Graph tab) own rendering; CE owns

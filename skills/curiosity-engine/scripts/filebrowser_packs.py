@@ -1,4 +1,4 @@
-"""CE pack discovery + sandboxed action dispatch (Phase 2b++++).
+"""CE pack discovery + sandboxed action dispatch.
 
 Switchbay owns the full packstore (git install, pip extras, agent skill
 dispatch via skillkit). CE mirrors the **same** ``pack.json`` Manifest

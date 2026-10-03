@@ -1,4 +1,4 @@
-"""CE filebrowser FS mutations — vault/ + wiki/ sandbox (Phase 2b++).
+"""CE filebrowser FS mutations — vault/ + wiki/ sandbox.
 
 Switchbay Step E ships delete / duplicate / reveal / stat over the whole
 workspace. CE intake prefers vault/wiki path semantics (architecture.md
