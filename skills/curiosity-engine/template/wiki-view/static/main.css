@@ -1080,8 +1080,10 @@ body[data-modal="open"] #sidebar * { pointer-events: auto; }
     transform: translateX(-100%);
   }
   /* Children must reappear when restoring (desktop hides them only
-   * while collapsed). */
-  body:not([data-sidebar="collapsed"]) #sidebar > * {
+   * while collapsed). Skip children meant to stay hidden (the inactive
+   * Pages/Files panes) and the context menu, which shows and hides
+   * itself. :where() keeps the specificity of the old `> *` rule. */
+  body:not([data-sidebar="collapsed"]) #sidebar > :where(:not([hidden], .filebrowser-menu)) {
     display: flex;
   }
   /* That makes the page list a flex box too; keep its type groups

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-08 — v1.9.2 — Mobile sidebar: Files mode glitches
+
+**Migration:** none. **Breaking:** none. Rebuild the viewer (`viewer.sh build`) to pick up the fix.
+
+### Fixed
+
+- Wiki viewer on narrow viewports (≤1100px, including phones), Files mode: the hidden file context menu showed as a small empty box at the top left, and the Pages search bar stayed visible above the file browser's own search. The rule that shows the sidebar's children again also overrode their `hidden` attribute. It now skips hidden children and the context menu, so the open menu also lays out as on desktop. Pages mode (including the v1.9.1 column layout) and desktop are unchanged. `template/wiki-view/static/main.css`.
+
+
 ## 2026-10-08 — v1.9.1 — Mobile sidebar: page types stack vertically
 
 **Migration:** none. **Breaking:** none. Rebuild the viewer (`viewer.sh build`) to pick up the fix.
@@ -8,14 +17,14 @@
 
 - Wiki viewer on narrow viewports (≤1100px, including phones): the page-type groups in the Pages sidebar sat in one horizontal row that ran off the right edge, instead of stacking as a collapsible list. The rule from 2026-09-16 that shows the sidebar's children again also made the page list a flex row. The list now lays its groups out as a column. Desktop and the Files view are unchanged. `template/wiki-view/static/main.css`.
 
-This release also includes the 2026-10-03 "Atlas on small wikis" change below.
+This release also includes the 2026-10-03 change below, which drops the 360-page floor for Atlas. Atlas itself has no upper page limit.
 
 
 ## 2026-10-03 — Atlas on small wikis
 
 **Migration:** none. **Breaking:** none.
 
-The viewer chooser is available on any wiki of up to 1000 pages. A stored Atlas choice turns Atlas on for a small wiki. Classic stays the default until Atlas is selected. Wikis above 1000 pages stay on Atlas, because the classic graph hangs there.
+The 360-page floor for Atlas is gone: the Classic/Atlas chooser now appears on any wiki of up to 1000 pages, so small wikis can use Atlas too. A stored Atlas choice turns Atlas on for a small wiki. Classic stays the default until Atlas is selected. Wikis above 1000 pages stay Atlas-only as before, because the classic graph hangs there. Atlas itself has no upper page limit.
 
 
 ## 2026-09-29 — v1.9.0 — embed/filebrowser/partition + CEEmbed dual-mount
