@@ -144,3 +144,24 @@ class TestGraphDrift(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShellPlaceholders(unittest.TestCase):
+    """The built viewer must not ship template placeholders such as
+    `{{WORKSPACE}}`; the workspace name goes into the title and the
+    sidebar header."""
+
+    def test_built_html_has_no_placeholders(self):
+        import re
+        with tempfile.TemporaryDirectory() as td:
+            wiki = Path(td) / "my-ws" / "wiki"
+            _write_page(wiki, "concepts/thing.md", "concept", "[con] Thing")
+            out = Path(td) / "out"
+            _build(wiki, out)
+
+            index = (out / "index.html").read_text(encoding="utf-8")
+            self.assertIn("<title>my-ws", index)
+            self.assertIn('<span class="workspace-name">my-ws</span>', index)
+            for html in out.rglob("*.html"):
+                leftover = re.findall(r"\{\{[A-Z_]+\}\}", html.read_text(encoding="utf-8"))
+                self.assertEqual(leftover, [], f"{html.relative_to(out)}: {leftover}")
