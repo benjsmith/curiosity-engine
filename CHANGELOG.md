@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-08 — v1.9.1 — Mobile sidebar: page types stack vertically
+
+**Migration:** none. **Breaking:** none. Rebuild the viewer (`viewer.sh build`) to pick up the fix.
+
+### Fixed
+
+- Wiki viewer on narrow viewports (≤1100px, including phones): the page-type groups in the Pages sidebar sat in one horizontal row that ran off the right edge, instead of stacking as a collapsible list. The rule from 2026-09-16 that shows the sidebar's children again also made the page list a flex row. The list now lays its groups out as a column. Desktop and the Files view are unchanged. `template/wiki-view/static/main.css`.
+
+This release also includes the 2026-10-03 "Atlas on small wikis" change below.
+
+
 ## 2026-10-03 — Atlas on small wikis
 
 **Migration:** none. **Breaking:** none.
