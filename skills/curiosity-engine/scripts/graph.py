@@ -17,6 +17,7 @@ Subcommands
                       [--hops H] [--route auto|graph|blend]
                       [--vault-k N] [--no-provisional]
                       [--no-expand-thin-sources]
+                      [--edge TYPE]
         First-class graph retrieval: semantic (or lexical-fallback) seed
         -> multi-hop BFS over the graph -> pages ranked by (distance asc,
         query-term overlap desc), with provenance. `--route auto`
@@ -50,9 +51,12 @@ Subcommands
         Shortest wikilink path between two pages.
 
     graph.py neighbors <wiki_dir> <page> [--hops N] [--direction out|in|both]
-        All pages within N wikilink hops (default 2, outbound), each
-        with distance/title/type. --direction both gives the undirected
-        neighbourhood retrieval traverses.
+                                    [--edge TYPE]
+        All pages within N hops (default 2, outbound), each with
+        distance/title/type. --direction both gives the undirected
+        neighbourhood retrieval traverses. --edge supports walks only
+        that meta-ontology relationship (for example, evidence that
+        supports a hypothesis).
 
     graph.py bridge-candidates <wiki_dir> [--limit N]
         Page pairs sharing vault sources but not linked. Replaces the
@@ -81,6 +85,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from naming import SKIP_FILES, WIKILINK_RE, CITATION_RE, read_frontmatter  # noqa: E402
 from embedder import load_embedder, predict_model_id  # noqa: E402
+import meta_ontology  # noqa: E402
 
 try:
     import kuzu
@@ -176,6 +181,12 @@ def _init_schema(conn):
         # without filtering. score: shared-source count for co-citation,
         # cosine similarity for embedding.
         "CREATE REL TABLE IF NOT EXISTS ProvisionalLink(FROM WikiPage TO WikiPage, origin STRING, score DOUBLE)",
+        # OntologyEdge = page-to-page relationships declared in
+        # .curator/meta-ontology.yaml (supports, contradicts, …).
+        # edge_type is the frontmatter key. Empty when the file is
+        # absent or declares no typed edges, so existing queries that
+        # do not read this table are unchanged.
+        "CREATE REL TABLE IF NOT EXISTS OntologyEdge(FROM WikiPage TO WikiPage, edge_type STRING)",
     ]:
         conn.execute(stmt)
 
@@ -208,6 +219,10 @@ def _graph_is_current(wiki_dir: Path) -> bool:
         meta = {}
     if meta.get("schema_version") != GRAPH_SCHEMA_VERSION:
         return False
+    # The ontology file is not a wiki page. A new, edited, or removed
+    # file has to rebuild even when every markdown mtime is older.
+    if meta.get("ontology_stamp") != _ontology_stamp(wiki_dir):
+        return False
     if _load_config(wiki_dir).get("embedding_enabled") \
             and not _wiki_db_path(wiki_dir).exists():
         return False
@@ -234,7 +249,7 @@ def _graph_is_current(wiki_dir: Path) -> bool:
 # Bumped when rebuild's output surface changes (new tables/tiers); a
 # mismatch defeats the mtime short-circuit so upgraded workspaces get
 # the new surface on their next plain `rebuild` — no --force needed.
-GRAPH_SCHEMA_VERSION = 2
+GRAPH_SCHEMA_VERSION = 3
 
 # Tunable via a "provisional" object in .curator/config.json; these
 # defaults match the corpus scale the CE-vs-RAG benchmark validated.
@@ -249,6 +264,36 @@ _PROV_DEFAULTS = {
 
 def _workspace(wiki_dir: Path) -> Path:
     return wiki_dir.parent
+
+
+def _ontology_stamp(wiki_dir: Path):
+    """Identity of .curator/meta-ontology.yaml, or None when absent.
+
+    Stored on the graph meta sidecar so editing or deleting the file
+    defeats the rebuild short-circuit.
+    """
+    path = _workspace(wiki_dir) / ".curator" / meta_ontology.CONFIG_NAME
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if not path.is_file():
+        return None
+    return [st.st_mtime_ns, st.st_size]
+
+
+def _load_ontology(wiki_dir: Path):
+    """Parsed ontology, or None when the file is absent.
+
+    A present but broken file aborts the caller with a JSON error —
+    silently ignoring it would rebuild a graph that drops declared
+    edges.
+    """
+    try:
+        return meta_ontology.load(_workspace(wiki_dir))
+    except meta_ontology.MetaOntologyError as exc:
+        print(json.dumps({"error": f"meta-ontology: {exc}"}))
+        sys.exit(1)
 
 
 def _load_config(wiki_dir: Path) -> dict:
@@ -750,6 +795,23 @@ def rebuild(wiki_dir: Path, force: bool = False):
                 depicts_edges += 1
                 linked_pairs.add((min(rel, target_path), max(rel, target_path)))
 
+    # Typed edges from .curator/meta-ontology.yaml. No file, or a file
+    # whose edges do not name endpoints, adds nothing.
+    ontology_edges = 0
+    ont = _load_ontology(wiki_dir)
+    for edge in meta_ontology.collect_typed_edges(wiki_dir, ont):
+        src, dst = edge["source"], edge["target"]
+        if src not in page_paths or dst not in page_paths or src == dst:
+            continue
+        conn.execute(
+            "MATCH (a:WikiPage), (b:WikiPage) "
+            "WHERE a.path = $from AND b.path = $to "
+            "CREATE (a)-[:OntologyEdge {edge_type: $e}]->(b)",
+            {"from": src, "to": dst, "e": edge["type"]},
+        )
+        ontology_edges += 1
+        linked_pairs.add((min(src, dst), max(src, dst)))
+
     # Populate DataRow nodes + DataRef edges from tables.db if present.
     # Wikilink-typed columns become typed edges from the row to the
     # wiki page it references. Empty/unresolvable refs are skipped.
@@ -850,6 +912,7 @@ def rebuild(wiki_dir: Path, force: bool = False):
     _graph_meta_path(wiki_dir).write_text(json.dumps({
         "schema_version": GRAPH_SCHEMA_VERSION,
         "rebuilt_at": datetime.now().isoformat(),
+        "ontology_stamp": _ontology_stamp(wiki_dir),
     }))
 
     embedding_expected = bool(_load_config(wiki_dir).get("embedding_enabled"))
@@ -863,6 +926,7 @@ def rebuild(wiki_dir: Path, force: bool = False):
         "data_rows": data_rows,
         "data_refs": data_refs,
         "depicts_edges": depicts_edges,
+        "ontology_edges": ontology_edges,
         "notes": len(note_occurrences),
         "appears_in_edges": appears_in_edges,
         "wiki_embeddings": emb_status.get("status"),
@@ -913,52 +977,110 @@ def cmd_path(wiki_dir: Path, page_a: str, page_b: str, max_hops: int):
         print(json.dumps({"result": "no path found", "max_hops": max_hops}))
 
 
-def cmd_neighbors(wiki_dir: Path, page: str, hops: int, direction: str = "out"):
-    """Pages within N wikilink hops, each with distance/title/type.
+def _normalize_edge_types(edge_types):
+    """Lowercased edge-type filter, or None when the caller set none."""
+    if not edge_types:
+        return None
+    out = []
+    seen = set()
+    for raw in edge_types:
+        for part in str(raw).split(","):
+            name = part.strip().lower()
+            if name and name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out or None
+
+
+def _ontology_rows(conn, edge_types=None) -> list:
+    """(src, dst, edge_type) from OntologyEdge.
+
+    Missing table (graph built before this schema) yields no rows, the
+    same as a graph with no typed edges. ``edge_types`` restricts the
+    rows; None returns every typed edge.
+    """
+    try:
+        found = _query_to_json(
+            conn,
+            "MATCH (a:WikiPage)-[e:OntologyEdge]->(b:WikiPage) "
+            "RETURN a.path, b.path, e.edge_type",
+        )
+    except Exception:
+        return []
+    want = set(edge_types) if edge_types else None
+    rows = []
+    for src, dst, kind in found:
+        kind = (kind or "").strip().lower()
+        if want is not None and kind not in want:
+            continue
+        rows.append((src, dst, kind))
+    return rows
+
+
+def cmd_neighbors(wiki_dir: Path, page: str, hops: int, direction: str = "out",
+                  edge_types=None):
+    """Pages within N hops, each with distance/title/type.
 
     --direction out (default, the pre-v0.8 semantics) follows outbound
     [[wikilinks]]; `in` follows backlinks; `both` is the undirected view
-    retrieval uses. BFS in Python over the WikiLink edge list — kuzu's
+    retrieval uses. Typed ontology edges are walked the same way. Pass
+    edge types (``supports``) to walk only those. BFS in Python — kuzu's
     variable-length MATCH can't emit per-node distance or mix directions.
     """
     conn = _connect(wiki_dir, read_only=True)
     hops = max(1, min(int(hops), 10))
+    edge_types = _normalize_edge_types(edge_types)
     meta = {r[0]: {"type": r[1], "title": r[2]} for r in _query_to_json(
         conn, "MATCH (p:WikiPage) RETURN p.path, p.type, p.title")}
     if page not in meta:
         print(f"graph neighbors: no page {page!r} in graph", file=sys.stderr)
         print("[]")
         return
+    # neighbour -> edge type that discovered it (None = wikilink).
     out_adj, in_adj = {}, {}
-    for a, b in _query_to_json(
-            conn, "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
-                  "RETURN a.path, b.path"):
-        out_adj.setdefault(a, set()).add(b)
-        in_adj.setdefault(b, set()).add(a)
+
+    def add(adj, src, dst, kind):
+        adj.setdefault(src, []).append((dst, kind))
+
+    if not edge_types:
+        for a, b in _query_to_json(
+                conn, "MATCH (a:WikiPage)-[:WikiLink]->(b:WikiPage) "
+                      "RETURN a.path, b.path"):
+            add(out_adj, a, b, None)
+            add(in_adj, b, a, None)
+    for a, b, kind in _ontology_rows(conn, edge_types):
+        add(out_adj, a, b, kind)
+        add(in_adj, b, a, kind)
     from collections import deque
     dist = {page: 0}
+    via_edge = {}
     q = deque([page])
     while q:
         cur = q.popleft()
         d = dist[cur]
         if d >= hops:
             continue
-        nbrs = set()
+        nbrs = []
         if direction in ("out", "both"):
-            nbrs |= out_adj.get(cur, set())
+            nbrs.extend(out_adj.get(cur, ()))
         if direction in ("in", "both"):
-            nbrs |= in_adj.get(cur, set())
-        for nb in nbrs:
+            nbrs.extend(in_adj.get(cur, ()))
+        for nb, kind in nbrs:
             if nb not in dist:
                 dist[nb] = d + 1
+                if kind:
+                    via_edge[nb] = kind
                 q.append(nb)
     items = sorted(((p, d) for p, d in dist.items() if p != page),
                    key=lambda kv: (kv[1], kv[0]))
-    print(json.dumps([
-        {"path": p, "type": meta.get(p, {}).get("type", ""),
-         "title": meta.get(p, {}).get("title", ""), "distance": d}
-        for p, d in items
-    ], indent=2))
+    payload = []
+    for p, d in items:
+        row = {"path": p, "type": meta.get(p, {}).get("type", ""),
+               "title": meta.get(p, {}).get("title", ""), "distance": d}
+        if p in via_edge:
+            row["edge"] = via_edge[p]
+        payload.append(row)
+    print(json.dumps(payload, indent=2))
 
 
 def cmd_bridge_candidates(wiki_dir: Path, limit: int):
@@ -1090,65 +1212,78 @@ def _lexical_seed_pages(wiki_dir: Path, query: str, n: int) -> list:
     return [rel for _s, rel in sorted(scored)[:n]]
 
 
-def _load_adjacency(conn, include_provisional: bool):
+def _load_adjacency(conn, include_provisional: bool, edge_types=None):
     """Undirected weighted adjacency over the page graph: curated edges
-    (WikiLink, Depicts) cost 1, ProvisionalLink costs 2 — the two-tier
-    weighting (typed=1, provisional lower). Returns (adj, meta)."""
+    (WikiLink, Depicts, ontology edges) cost 1, ProvisionalLink costs 2
+    — the two-tier weighting (typed=1, provisional lower).
+
+    ``edge_types`` restricts the walk to those ontology edges and drops
+    wikilinks, depicts, and provisional edges. Returns (adj, meta).
+    Each adjacency entry is (neighbour, weight, provisional, edge_type).
+    """
     meta = {r[0]: {"type": r[1], "title": r[2]} for r in _query_to_json(
         conn, "MATCH (p:WikiPage) RETURN p.path, p.type, p.title")}
     adj = {}
+    edge_types = _normalize_edge_types(edge_types)
 
-    def add(a, b, w, prov):
-        adj.setdefault(a, []).append((b, w, prov))
-        adj.setdefault(b, []).append((a, w, prov))
+    def add(a, b, w, prov, edge_type):
+        adj.setdefault(a, []).append((b, w, prov, edge_type))
+        adj.setdefault(b, []).append((a, w, prov, edge_type))
 
-    tables = [("WikiLink", 1, False), ("Depicts", 1, False)]
-    if include_provisional:
-        tables.append(("ProvisionalLink", 2, True))
-    for table, w, prov in tables:
-        try:
-            rows = _query_to_json(
-                conn, f"MATCH (a:WikiPage)-[:{table}]->(b:WikiPage) "
-                      "RETURN a.path, b.path")
-        except Exception:
-            if prov:
-                # Graph built by a pre-v0.6 skill — no ProvisionalLink
-                # table yet. Curated tiers still work; next rebuild adds it.
-                continue
-            raise
-        for a, b in rows:
-            add(a, b, w, prov)
+    if not edge_types:
+        tables = [("WikiLink", 1, False), ("Depicts", 1, False)]
+        if include_provisional:
+            tables.append(("ProvisionalLink", 2, True))
+        for table, w, prov in tables:
+            try:
+                rows = _query_to_json(
+                    conn, f"MATCH (a:WikiPage)-[:{table}]->(b:WikiPage) "
+                          "RETURN a.path, b.path")
+            except Exception:
+                if prov:
+                    # Graph built by a pre-v0.6 skill — no ProvisionalLink
+                    # table yet. Curated tiers still work; next rebuild adds it.
+                    continue
+                raise
+            for a, b in rows:
+                add(a, b, w, prov, None)
+    for a, b, kind in _ontology_rows(conn, edge_types):
+        add(a, b, 1, False, kind)
     return adj, meta
 
 
 def _traverse(adj: dict, seeds: list, budget: int):
     """Multi-source Dijkstra (weights are 1 or 2, budget = typed-hop
     budget, so one provisional hop consumes two). Tracks which seed
-    reached each page and whether any provisional edge was used."""
+    reached each page, whether any provisional edge was used, and the
+    ontology edge type on the hop that reached the page (None for
+    wikilink / depicts / provisional)."""
     import heapq
-    dist, via, prov_used = {}, {}, {}
+    dist, via, prov_used, edge_used = {}, {}, {}, {}
     heap = []
     for s in seeds:
         dist[s], via[s], prov_used[s] = 0, s, False
-        heapq.heappush(heap, (0, s, s, False))
+        heapq.heappush(heap, (0, s, s, False, None))
     while heap:
-        d, node, origin, prov = heapq.heappop(heap)
+        d, node, origin, prov, _et = heapq.heappop(heap)
         if d > dist.get(node, budget + 1):
             continue
-        for nb, w, is_prov in adj.get(node, ()):
+        for item in adj.get(node, ()):
+            nb, w, is_prov = item[0], item[1], item[2]
+            et = item[3] if len(item) > 3 else None
             nd = d + w
             np_ = prov or is_prov
             if nd > budget:
                 continue
             if nd < dist.get(nb, budget + 1):
-                dist[nb], via[nb], prov_used[nb] = nd, origin, np_
-                heapq.heappush(heap, (nd, nb, origin, np_))
+                dist[nb], via[nb], prov_used[nb], edge_used[nb] = nd, origin, np_, et
+                heapq.heappush(heap, (nd, nb, origin, np_, et))
             elif nd == dist.get(nb) and prov_used.get(nb) and not np_:
                 # Equal-cost curated path beats a provisional one — the
                 # tier label should reflect the strongest evidence.
-                via[nb], prov_used[nb] = origin, False
-                heapq.heappush(heap, (nd, nb, origin, False))
-    return dist, via, prov_used
+                via[nb], prov_used[nb], edge_used[nb] = origin, False, et
+                heapq.heappush(heap, (nd, nb, origin, False, et))
+    return dist, via, prov_used, edge_used
 
 
 
@@ -1318,7 +1453,8 @@ def _expand_thin_source_extracts(wiki_dir: Path, query: str,
 def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
                  hops: int, route: str, include_provisional: bool,
                  vault_k: int, stale: bool = False,
-                 expand_thin_sources: bool = True):
+                 expand_thin_sources: bool = True,
+                 edge_types=None):
     hops = max(1, min(int(hops), 6))
     if route == "auto":
         decided, cue = classify_route(query)
@@ -1414,10 +1550,10 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
         pages = list(seeds)
         out["graph"] = ("unavailable (kuzu not installed or graph not "
                         "built — run graph.py rebuild); returning seeds only")
-        dist, via, prov_used = {s: 0 for s in seeds}, {}, {}
+        dist, via, prov_used, edge_used = {s: 0 for s in seeds}, {}, {}, {}
     else:
-        adj, meta = _load_adjacency(conn, include_provisional)
-        dist, via, prov_used = _traverse(adj, seeds, hops)
+        adj, meta = _load_adjacency(conn, include_provisional, edge_types)
+        dist, via, prov_used, edge_used = _traverse(adj, seeds, hops)
 
         def overlap(rel):
             title = (meta.get(rel) or {}).get("title") or ""
@@ -1448,7 +1584,7 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
                 ptype = str(fm.get("type", ""))
             m = {"title": title, "type": ptype}
         d = dist.get(rel)
-        return {
+        entry = {
             "page": rel, "title": m.get("title", ""), "type": m.get("type", ""),
             "distance": d,
             "overlap": sum(1 for t in qterms
@@ -1458,6 +1594,10 @@ def cmd_retrieve(wiki_dir: Path, query: str, seeds_n: int, limit: int,
                      "provisional" if prov_used.get(rel) else
                      "typed" if d is not None else "semantic"),
         }
+        reached = edge_used.get(rel)
+        if reached:
+            entry["edge"] = reached
+        return entry
 
     out["pages"] = [_page_entry(r) for r in pages[:limit]]
 
@@ -1592,8 +1732,12 @@ def main():
     nb.add_argument("--hops", type=int, default=2)
     nb.add_argument("--direction", choices=["out", "in", "both"],
                     default="out",
-                    help="follow outbound wikilinks (default), backlinks "
+                    help="follow outbound links (default), backlinks "
                          "(in), or both (the undirected view retrieval uses)")
+    nb.add_argument("--edge", action="append", default=None,
+                    help="only follow these meta-ontology edge types "
+                         "(repeat the flag, or comma-separate). "
+                         "Example: --edge supports")
 
     bc = sub.add_parser("bridge-candidates")
     bc.add_argument("wiki", default="wiki", nargs="?")
@@ -1621,6 +1765,11 @@ def main():
                     help="do not attach full vault extracts for thin "
                          "sources/ hits or reparse candidates (default: "
                          "expand into vault_extracts)")
+    rt.add_argument("--edge", action="append", default=None,
+                    help="only traverse these meta-ontology edge types "
+                         "(repeat the flag, or comma-separate). "
+                         "Example: evidence supporting a hypothesis is "
+                         "--edge supports")
 
     em = sub.add_parser("embed")
     em.add_argument("wiki", default="wiki", nargs="?")
@@ -1653,14 +1802,16 @@ def main():
     elif args.command == "path":
         cmd_path(wiki_dir, args.page_a, args.page_b, args.max_hops)
     elif args.command == "neighbors":
-        cmd_neighbors(wiki_dir, args.page, args.hops, args.direction)
+        cmd_neighbors(wiki_dir, args.page, args.hops, args.direction,
+                      edge_types=args.edge)
     elif args.command == "bridge-candidates":
         cmd_bridge_candidates(wiki_dir, args.limit)
     elif args.command == "retrieve":
         cmd_retrieve(wiki_dir, args.query, args.seeds, args.limit, args.hops,
                      args.route, not args.no_provisional, args.vault_k,
                      stale=stale,
-                     expand_thin_sources=not args.no_expand_thin_sources)
+                     expand_thin_sources=not args.no_expand_thin_sources,
+                     edge_types=args.edge)
     elif args.command == "embed":
         print(json.dumps(embed_wiki(wiki_dir, force=args.force)))
     elif args.command == "link-candidates":

@@ -258,12 +258,35 @@ def scan_orphans(pages: list, inbound: dict) -> list:
     return [str(p) for p in pages if inbound.get(p.stem.lower(), 0) == 0]
 
 
+def _declared_page_types(pages: list) -> set:
+    """Node types named by .curator/meta-ontology.yaml, if that file loads.
+
+    Empty when the file is absent or broken, so a workspace without one
+    keeps the built-in type set.
+    """
+    for raw in pages:
+        path = Path(raw)
+        for parent in path.parents:
+            if parent.name != "wiki":
+                continue
+            import meta_ontology
+            try:
+                ont = meta_ontology.load(parent.parent)
+            except meta_ontology.MetaOntologyError:
+                return set()
+            if ont is None:
+                return set()
+            return {n.type for n in ont.nodes}
+    return set()
+
+
 def scan_frontmatter(pages: list) -> list:
     issues = []
+    allowed_types = FRONTMATTER_TYPES | _declared_page_types(pages)
     for p in pages:
         fm, _ = read_frontmatter(p.read_text())
         missing = FRONTMATTER_REQUIRED - fm.keys()
-        bad_type = fm.get("type") not in FRONTMATTER_TYPES if "type" in fm else False
+        bad_type = fm.get("type") not in allowed_types if "type" in fm else False
         if missing or bad_type:
             issues.append({
                 "page": str(p),

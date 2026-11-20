@@ -18,6 +18,7 @@
 
   Theme.init();
   Sidebar.init(data);
+  if (window.Graph && Graph.ensureTypeLegend) Graph.ensureTypeLegend(data);
   if (window.SplitPanel) SplitPanel.init();
   if (window.FileBrowser) FileBrowser.init(data);
   if (window.CurationReplay) CurationReplay.init(data);

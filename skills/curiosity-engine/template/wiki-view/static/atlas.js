@@ -61,7 +61,10 @@
 
     function paintLabels() {
       if (modeState) modeState.textContent = mode;
-      if (typeState) typeState.textContent = types.size + '/12';
+      var typeCount = typePanel
+        ? typePanel.querySelectorAll('.label-types-row').length
+        : 13;
+      if (typeState) typeState.textContent = types.size + '/' + typeCount;
       handle.setLabels(mode, Array.from(types));
     }
     function paintEdges() {

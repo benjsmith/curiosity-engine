@@ -38,6 +38,9 @@ export type CEData = {
     /** Optional --atlas-edges enrichment fields (PLAN §14.3). */
     confidence?: number;
     origin?: string;
+    /** Stroke for this edge. Absent edges keep the theme line. */
+    color?: string;
+    typeLabel?: string;
   }>;
   pages: Record<
     string,
@@ -69,6 +72,7 @@ const TYPE_CANONICAL: Record<string, string> = {
   project: "project", projects: "project",
   procedure: "procedure", procedures: "procedure",
   execution: "execution", executions: "execution",
+  hypothesis: "hypothesis", hypotheses: "hypothesis",
   unclassified: "unclassified",
 };
 
@@ -76,18 +80,28 @@ const PREFIX_TO_TYPE: Record<string, string> = {
   con: "concept", ent: "entity", ana: "analysis", src: "source",
   evi: "evidence", fact: "fact", tbl: "table", tab: "table",
   fig: "figure", note: "note", todo: "todo-list", proj: "project",
-  proc: "procedure", exec: "execution",
+  proc: "procedure", exec: "execution", hyp: "hypothesis",
 };
 
 const TITLE_PREFIX_RE = /^(\[[^\]]+\])\s+(.+)$/;
 
-export function canonicalType(raw: string, titlePrefix?: string): string {
+export function canonicalType(
+  raw: string,
+  titlePrefix?: string,
+  palette?: Record<string, string>,
+): string {
   const t = TYPE_CANONICAL[raw];
   if (t && t !== "unclassified") return t;
   if (titlePrefix) {
     const stem = titlePrefix.replace(/^\[|\]$/g, "");
     const backfilled = PREFIX_TO_TYPE[stem];
     if (backfilled) return backfilled;
+  }
+  // A type the payload palette names (a meta-ontology node type such
+  // as hypothesis) stays as written. Types the palette does not name
+  // still bucket to unclassified.
+  if (palette && raw && raw !== "default" && Object.prototype.hasOwnProperty.call(palette, raw)) {
+    return raw;
   }
   return t ?? "unclassified";
 }
@@ -108,7 +122,7 @@ export function ceItem(p: {
   path?: string;
   degree?: number;
   properties?: Record<string, unknown>;
-}): KnowledgeItem {
+}, palette?: Record<string, string>): KnowledgeItem {
   const m = TITLE_PREFIX_RE.exec(p.title);
   const titlePrefix = m ? m[1] : undefined;
   const title = m ? m[2] : p.title;
@@ -118,7 +132,7 @@ export function ceItem(p: {
     : undefined;
   return {
     id: normalizeId(p.id),
-    type: canonicalType(p.type, titlePrefix),
+    type: canonicalType(p.type, titlePrefix, palette),
     title,
     meta: {
       titlePrefix,
@@ -145,17 +159,23 @@ export function indexFromCEData(data: CEData): GraphIndex {
   for (const n of data.nodes) {
     const id = normalizeId(n.id);
     const page = pageById.get(id) ?? data.pages[id] ?? data.pages[n.id];
-    g.addItem(ceItem(page ? { ...page, degree: n.degree } : n));
+    g.addItem(ceItem(page ? { ...page, degree: n.degree } : n, data.palette));
     seen.add(id);
   }
   // Page-only records are tolerated after graph members, matching the
   // Classic viewer's graph-first ordering while retaining old caches.
   for (const page of Object.values(data.pages)) {
     const id = normalizeId(page.id);
-    if (!seen.has(id)) g.addItem(ceItem(page));
+    if (!seen.has(id)) g.addItem(ceItem(page, data.palette));
   }
   for (const e of data.edges) {
-    g.addEdge(edgeEndpoint(e.source), edgeEndpoint(e.target), e.type, e.confidence ?? 1);
+    g.addEdge(
+      edgeEndpoint(e.source),
+      edgeEndpoint(e.target),
+      e.type,
+      e.confidence ?? 1,
+      e.color,
+    );
   }
   // Do not invent force-bearing edges here. Atlas discovery can score
   // shared sources directly; adding implicit co-citation links made its

@@ -65,6 +65,8 @@
   --type-procedures:    #5e4fa2;
   --type-execution:     #c51b8a;
   --type-executions:    #c51b8a;
+  --type-hypothesis:    #7570b3;
+  --type-hypotheses:    #7570b3;
   --type-unclassified:  #ffffff;   /* black border applied separately */
   --type-default:       #bbbbbb;
 
@@ -265,6 +267,8 @@ body[data-sidebar="collapsed"] #sidebar > * { display: none; }
 .dot.dot-procedures   { background: var(--type-procedures); }
 .dot.dot-execution    { background: var(--type-execution); }
 .dot.dot-executions   { background: var(--type-executions); }
+.dot.dot-hypothesis   { background: var(--type-hypothesis); }
+.dot.dot-hypotheses  { background: var(--type-hypotheses); }
 /* Unclassified is white-fill with a thin black ring (inset shadow
  * keeps the dot exactly 7×7 without a layout shift). Used by both the
  * sidebar group dots (wiki browser) and the label-picker swatches. */
@@ -392,7 +396,7 @@ body[data-sidebar="collapsed"] .sidebar-restore { display: inline-flex; }
 .node[data-vis="visible"]    { opacity: 1; }
 
 .edge {
-  stroke: var(--line-strong);
+  stroke: var(--edge-color, var(--line-strong));
   stroke-opacity: 0.45;
   fill: none;
   pointer-events: none;
@@ -994,7 +998,7 @@ body[data-sidebar="collapsed"] #modal {
   font-family: var(--font-sans);
 }
 .sub-edge {
-  stroke: var(--line-strong);
+  stroke: var(--edge-color, var(--line-strong));
   stroke-opacity: 0.45;
   stroke-width: 1;
   fill: none;

@@ -16,6 +16,7 @@ window.CurationReplay = (function () {
     concept: "#38a6a5",
     entity: "#0f8554",
     evidence: "#73af48",
+    hypothesis: "#7570b3",
     fact: "#edad08",
     figure: "#e17c05",
     table: "#cc503e",
@@ -36,7 +37,11 @@ window.CurationReplay = (function () {
 
   function colourFor(type, palette) {
     if (palette && palette[type]) return palette[type];
-    return TYPE_FALLBACK[type] || TYPE_FALLBACK.unclassified || "#ffffff";
+    if (TYPE_FALLBACK[type]) return TYPE_FALLBACK[type];
+    if (type && type !== "unclassified" && type !== "default" && window.ceTypeColor) {
+      return window.ceTypeColor(type);
+    }
+    return TYPE_FALLBACK.unclassified || "#ffffff";
   }
 
   function radiusFor(deg) {
@@ -80,7 +85,7 @@ window.CurationReplay = (function () {
     }
     var TYPE_TIER = {
       source: 0, sources: 0, project: 1, entity: 2, concept: 3,
-      evidence: 4, fact: 4, figure: 5, table: 5, note: 6, todo: 6,
+      evidence: 4, hypothesis: 4, fact: 4, figure: 5, table: 5, note: 6, todo: 6,
       "todo-list": 6, analysis: 7,
     };
     function typeTier(t) {

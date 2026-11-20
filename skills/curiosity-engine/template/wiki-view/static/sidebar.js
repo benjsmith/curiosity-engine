@@ -28,11 +28,12 @@ window.Sidebar = (function () {
     project:      'project',      projects: 'project',
     procedure:    'procedure',    procedures: 'procedure',
     execution:    'execution',    executions: 'execution',
+    hypothesis:   'hypothesis',   hypotheses: 'hypothesis',
     unclassified: 'unclassified',
   };
   const TYPE_ORDER = [
     'project', 'analysis', 'concept', 'entity', 'procedure', 'execution',
-    'evidence', 'fact', 'figure', 'table', 'source', 'note', 'todo-list',
+    'evidence', 'hypothesis', 'fact', 'figure', 'table', 'source', 'note', 'todo-list',
     'unclassified',
   ];
   const TYPE_LABEL = {
@@ -43,6 +44,7 @@ window.Sidebar = (function () {
     procedure:    'Procedures',
     execution:    'Executions',
     evidence:     'Evidence',
+    hypothesis:   'Hypotheses',
     fact:         'Facts',
     figure:       'Figures',
     table:        'Tables',
@@ -56,6 +58,8 @@ window.Sidebar = (function () {
   }
 
   let listEl, searchEl, fuse, allRecords, allPages;
+  let palette = {};
+  let typeLabels = {};
   let searchHits = new Set();   // page ids ringed by the graph-view search
   let autoExpanded = new Set(); // groups opened to reveal a hit
   let collapsed = new Set();   // type names currently collapsed
@@ -64,6 +68,11 @@ window.Sidebar = (function () {
     listEl = document.querySelector('#sidebar-list');
     searchEl = document.querySelector('#sidebar-search');
     allPages = data.pages || {};
+    palette = data.palette || {};
+    typeLabels = {};
+    for (const n of data.nodes || []) {
+      if (n.type && n.typeLabel && !typeLabels[n.type]) typeLabels[n.type] = n.typeLabel;
+    }
 
     allRecords = data.nodes.map(n => {
       const page = allPages[n.id] || {};
@@ -168,11 +177,11 @@ window.Sidebar = (function () {
       const recs = byType.get(t).slice().sort((a, b) =>
         a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
       const isCollapsed = collapsed.has(t);
-      const label = TYPE_LABEL[t] || (t.charAt(0).toUpperCase() + t.slice(1));
+      const label = typeLabels[t] || TYPE_LABEL[t] || (t.charAt(0).toUpperCase() + t.slice(1));
       return `<section class="type-group" data-type="${escapeAttr(t)}" data-collapsed="${isCollapsed ? 'true' : 'false'}">
         <button class="type-group-header" data-action="toggle-group" data-type="${escapeAttr(t)}">
           <span class="group-chev"><svg viewBox="0 0 10 10" width="10" height="10"><path d="M2 4 L5 7 L8 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span class="dot dot-${escapeAttr(t)}"></span>
+          ${dotHtml(t)}
           <span class="type-group-name">${escapeHtml(label)}</span>
           <span class="type-group-count">${recs.length}</span>
         </button>
@@ -189,9 +198,18 @@ window.Sidebar = (function () {
     applySearchHits();
   }
 
+  function dotHtml(type) {
+    const key = canonicalType(type);
+    const color = palette[key] || palette[type]
+      || (key && key !== 'unclassified' && key !== 'default' && window.ceTypeColor
+          ? window.ceTypeColor(key) : '');
+    const style = color ? ` style="background:${escapeAttr(color)}"` : '';
+    return `<span class="dot dot-${escapeAttr(key)}"${style}></span>`;
+  }
+
   function rowHtml(rec) {
     return `<button class="sidebar-row" data-id="${escapeAttr(rec.id)}" role="option">
-      <span class="dot dot-${escapeAttr(rec.type)}"></span>
+      ${dotHtml(rec.type)}
       <span class="row-title">${escapeHtml(rec.title)}</span>
     </button>`;
   }

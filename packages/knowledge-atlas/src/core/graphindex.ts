@@ -14,6 +14,8 @@ export type IndexedEdge = {
   type: string;
   /** 0..1; provisional edges carry their score, curated edges 1. */
   confidence: number;
+  /** Optional stroke. Omitted when the payload did not set one. */
+  color?: string;
 };
 
 export type Neighbour = {
@@ -49,10 +51,12 @@ export class GraphIndex {
     }
   }
 
-  addEdge(from: string, to: string, type: string, confidence = 1): void {
+  addEdge(from: string, to: string, type: string, confidence = 1, color?: string): void {
     if (!this.items.has(from) || !this.items.has(to)) return;
     if (from === to) return;
-    this.edges.push({ from, to, type, confidence });
+    const edge: IndexedEdge = { from, to, type, confidence };
+    if (color) edge.color = color;
+    this.edges.push(edge);
     this.push(from, { id: to, type, dir: 1, confidence });
     this.push(to, { id: from, type, dir: -1, confidence });
     this.degreeMap.set(from, (this.degreeMap.get(from) ?? 0) + 1);

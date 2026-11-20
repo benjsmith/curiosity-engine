@@ -44,7 +44,14 @@ Validated on a ~26,000-source corpus that produced a ~40,000-page
 wiki. Atlas `edges:` auto/on/off (next to `labels:`) only affects
 stroke drawing — force layout and footer link counts keep every edge;
 auto samples a sparse deterministic subset on large graphs; highlights
-on hover/select always paint.
+on hover/select always paint. Node colours are the built-in palette,
+including hypothesis (`#7570b3`). A `color` on a node or edge in
+`.curator/meta-ontology.yaml` replaces that default. A custom type
+with no colour keeps its name and a stable colour. An edge that
+carries a `color` is drawn in that colour in Atlas, the classic
+graph, and the page subgraph; other edges keep the theme stroke.
+Hover and selection still use the accent. The same bundle is what
+Switchbay embeds. See [Typed edges](architecture.md#typed-edges).
 
 **Vault cites.** Source-page summaries (`[src]`) still open full `vault/*.extracted.md`
 via `vault.js`: local serve uses `GET /api/vault/<basename>`; static

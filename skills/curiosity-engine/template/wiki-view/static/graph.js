@@ -78,6 +78,7 @@ window.Graph = (function () {
     todo:         'todo',         'todo-list': 'todo',
     procedure:    'procedure',    procedures: 'procedure',
     execution:    'execution',    executions: 'execution',
+    hypothesis:   'hypothesis',   hypotheses: 'hypothesis',
     unclassified: 'unclassified',
   };
   function canonicalType(t) { return TYPE_CANONICAL[t] || t || 'default'; }
@@ -95,7 +96,7 @@ window.Graph = (function () {
   // and the sidebar group order stay in sync.
   const ALL_LABEL_TYPES = [
     'project', 'analysis', 'concept', 'entity', 'procedure', 'execution',
-    'evidence', 'fact', 'figure', 'table', 'source', 'note', 'todo',
+    'evidence', 'hypothesis', 'fact', 'figure', 'table', 'source', 'note', 'todo',
     'unclassified',
   ];
   let _labelTypeFilter = (() => {
@@ -164,7 +165,11 @@ window.Graph = (function () {
   }
 
   function colourFor(type, palette) {
-    return palette[type] || palette.default || '#7a7a7a';
+    if (palette && palette[type]) return palette[type];
+    if (type && type !== 'unclassified' && type !== 'default' && window.ceTypeColor) {
+      return window.ceTypeColor(type);
+    }
+    return (palette && palette.default) || '#7a7a7a';
   }
 
   /* A line-free, density-adaptive overview of the same canonical force
@@ -360,7 +365,44 @@ window.Graph = (function () {
     if (classicMinimap) classicMinimap.schedule(layoutChanged);
   }
 
+  function ensureTypeLegend(data) {
+    const panel = document.querySelector('#label-types-panel');
+    if (!panel || !data) return;
+    const reset = panel.querySelector('#label-types-reset');
+    const have = new Set();
+    panel.querySelectorAll('.label-types-row[data-type]').forEach(row => {
+      have.add(row.dataset.type);
+    });
+    const labels = {};
+    (data.nodes || []).forEach(n => {
+      if (n.type && n.typeLabel && !labels[n.type]) labels[n.type] = n.typeLabel;
+    });
+    Object.values(data.pages || {}).forEach(p => {
+      if (p && p.type && p.typeLabel && !labels[p.type]) labels[p.type] = p.typeLabel;
+    });
+    const types = new Set();
+    (data.nodes || []).forEach(n => { if (n.type) types.add(n.type); });
+    const palette = data.palette || {};
+    [...types].filter(t => t && !have.has(t)).sort().forEach(t => {
+      const row = document.createElement('label');
+      row.className = 'label-types-row';
+      row.dataset.type = t;
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      const color = palette[t] || (window.ceTypeColor ? window.ceTypeColor(t) : '');
+      if (color) dot.style.background = color;
+      const text = document.createElement('span');
+      text.textContent = labels[t] || (t.charAt(0).toUpperCase() + t.slice(1));
+      row.append(box, dot, text);
+      if (reset) panel.insertBefore(row, reset);
+      else panel.append(row);
+    });
+  }
+
   function init(data) {
+    ensureTypeLegend(data);
     // IIFE state survives a re-mount in embedding hosts. Stop the old
     // simulation and clear indexes so it cannot double-render or focus
     // a node from the previous workspace.
@@ -423,7 +465,8 @@ window.Graph = (function () {
       .data(edges)
       .enter().append('line')
         .attr('class', 'edge')
-        .attr('data-kind', d => d.type);
+        .attr('data-kind', d => d.type)
+        .style('--edge-color', d => d.color || null);
 
     nodeSel = g.append('g').attr('class', 'nodes')
       .selectAll('g')
@@ -737,8 +780,9 @@ window.Graph = (function () {
     if (!trigger || !panel) return;
 
     function paintCount() {
+      const rows = panel.querySelectorAll('.label-types-row').length;
       if (stateEl) stateEl.textContent =
-        `${_labelTypeFilter.size}/${ALL_LABEL_TYPES.length}`;
+        `${_labelTypeFilter.size}/${rows || ALL_LABEL_TYPES.length}`;
     }
 
     function applyChange() {
@@ -1181,6 +1225,7 @@ window.Graph = (function () {
 
   return {
     init,
+    ensureTypeLegend,
     focus: focusOnPage,
     setLabelMode,
     cycleLabelMode,

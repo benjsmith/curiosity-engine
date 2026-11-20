@@ -162,7 +162,8 @@ def repair_letter_spacing(text: str) -> str:
 
 FRONTMATTER_TYPES = {"entity", "concept", "source", "analysis", "evidence",
                       "fact", "summary-table", "extracted-table", "figure",
-                      "note", "todo-list", "project", "procedure", "execution"}
+                      "note", "todo-list", "project", "procedure", "execution",
+                      "hypothesis"}
 
 # Allowlist of frontmatter keys the curator actually reads. Unknown keys are
 # dropped by read_frontmatter so an adversarial source cannot smuggle
@@ -309,6 +310,7 @@ TYPE_PREFIX = {
     "project": "[proj]",
     "procedure": "[proc]",
     "execution": "[exec]",
+    "hypothesis": "[hyp]",
 }
 
 # Filename stem prefixes for the page types that live in dedicated
@@ -343,13 +345,15 @@ def prefixed_stem(page_type: str, topic: str) -> str:
     return f"{prefix}{slug}" if prefix else slug
 
 
-def read_frontmatter(text: str) -> tuple:
+def read_frontmatter(text: str, extra_keys=None) -> tuple:
     """Parse leading ``---\\n...\\n---\\n`` frontmatter. Returns (dict, body).
 
     Handles: quoted values (``title: "Some: Title"``), bracket lists
     (``sources: [a.md, b.md]`` → list), multi-line YAML lists
     (``authors:\\n  - Alice\\n  - Bob`` → list), and bare scalars. Keys
-    outside ``ALLOWED_FM_KEYS`` are silently dropped.
+    outside ``ALLOWED_FM_KEYS`` are silently dropped. ``extra_keys``
+    adds names for this call only — the meta-ontology's edge lists and
+    schema keys. Omitting it keeps the allowlist exactly as before.
     """
     if not text.startswith("---"):
         return {}, text
@@ -358,6 +362,9 @@ def read_frontmatter(text: str) -> tuple:
         return {}, text
     fm_block = text[3:end].strip()
     body = text[end + 4:]
+    allowed = ALLOWED_FM_KEYS
+    if extra_keys:
+        allowed = ALLOWED_FM_KEYS | frozenset(extra_keys)
     fm = {}
     lines = fm_block.split("\n")
     i = 0
@@ -377,7 +384,7 @@ def read_frontmatter(text: str) -> tuple:
         k, _, v = line.partition(":")
         key = k.strip()
         v = v.strip()
-        if key not in ALLOWED_FM_KEYS:
+        if key not in allowed:
             i += 1
             continue
         if not v:

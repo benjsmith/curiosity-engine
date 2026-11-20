@@ -34,6 +34,7 @@ from naming import (  # noqa: E402
     WIKILINK_RE,
     read_frontmatter,
 )
+import meta_ontology  # noqa: E402
 
 
 # Palette — categorical colour set assigned to canonical types in
@@ -74,6 +75,8 @@ PALETTE = {
     "procedures":   "#5e4fa2",
     "execution":    "#c51b8a",  # pink-magenta — dated instances
     "executions":   "#c51b8a",
+    "hypothesis":   "#7570b3",  # blue-violet — claims evidence can bear on
+    "hypotheses":   "#7570b3",
     "unclassified": "#ffffff",  # white fill; black stroke added via CSS
     "default":      "#bbbbbb",  # neutral grey fallback for unrecognised
                                   # types (rarely visible — KNOWN_TYPES
@@ -91,6 +94,7 @@ KNOWN_TYPES = frozenset({
     "figure", "figures", "note", "notes",
     "todo", "todo-list", "project", "projects",
     "procedure", "procedures", "execution", "executions",
+    "hypothesis", "hypotheses",
 })
 
 # Real frontmatter `type:` values (see template/schema.md) whose viewer
@@ -450,7 +454,33 @@ def _build_graph(wiki_dir: Path, page_paths: set[str]) -> tuple[list[dict], list
     return nodes, edges
 
 
+def _load_ontology(wiki_dir: Path):
+    """Ontology for this workspace, or None when there is no file.
+
+    A broken file is reported and ignored so the viewer still builds
+    the graph it could build before the file existed.
+    """
+    try:
+        return meta_ontology.load(wiki_dir.parent)
+    except meta_ontology.MetaOntologyError as exc:
+        print(f"  warn: meta-ontology ignored ({exc})", file=sys.stderr)
+        return None
+
+
 def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
+    ont = _load_ontology(wiki_dir)
+    extra_keys = meta_ontology.frontmatter_keys(ont)
+    known_types = KNOWN_TYPES | meta_ontology.declared_types(ont)
+    palette = dict(PALETTE)
+    # Colours named in the workspace file replace the default for that
+    # type. Existing swatches stay as they are when the file omits them.
+    palette.update(meta_ontology.palette_additions(ont))
+    for declared in sorted(meta_ontology.declared_types(ont)):
+        palette.setdefault(declared, meta_ontology.deterministic_color(declared))
+    type_labels = {}
+    if ont is not None:
+        type_labels = {n.type: n.label for n in ont.nodes}
+
     pages = _wiki_pages(wiki_dir)
     page_paths: set[str] = set()
     page_data: dict[str, dict[str, Any]] = {}
@@ -464,14 +494,23 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
     for p in pages:
         rel = str(p.relative_to(wiki_dir))
         text = p.read_text(errors="replace")
-        fm, body = read_frontmatter(text)
+        fm, body = read_frontmatter(text, extra_keys=extra_keys)
         title = fm.get("title", Path(rel).stem) if isinstance(fm, dict) else Path(rel).stem
         raw_type = (fm.get("type", "") if isinstance(fm, dict) else "") or ""
         # Normalise unknown / missing types into a single Unclassified
         # bucket so the viewer surfaces them for human review instead
-        # of letting them sink into the silent `default` grey.
+        # of letting them sink into the silent `default` grey. Types
+        # declared in the meta-ontology stay as written.
         raw_type = TYPE_ALIASES.get(raw_type, raw_type)
-        ptype = raw_type if raw_type in KNOWN_TYPES else "unclassified"
+        if raw_type in known_types:
+            ptype = raw_type
+        elif raw_type.lower() in meta_ontology.declared_types(ont):
+            # Declared names are stored lowercase. A page that writes
+            # `Hypothesis` still lands in that type. Built-in types are
+            # not rewritten, so a workspace with no file is unchanged.
+            ptype = raw_type.lower()
+        else:
+            ptype = "unclassified"
         page_id = rel[:-3] if rel.endswith(".md") else rel
         # Frontmatter property table for the modal header. Skip keys
         # already shown elsewhere or that aren't user-meaningful.
@@ -483,7 +522,7 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
                 if v is None:
                     continue
                 properties[k] = v
-        page_data[page_id] = {
+        page_entry = {
             "id": page_id,
             "title": title,
             "type": ptype,
@@ -491,6 +530,10 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
             "properties": properties,
             "body_html": _render_body(body, stems_to_path),
         }
+        label = type_labels.get(ptype)
+        if label:
+            page_entry["typeLabel"] = label
+        page_data[page_id] = page_entry
 
     nodes, edges = _build_graph(wiki_dir, page_paths)
 
@@ -505,6 +548,8 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
         if fresh:
             n["type"] = fresh["type"]
             n["title"] = fresh["title"]
+            if fresh.get("typeLabel"):
+                n["typeLabel"] = fresh["typeLabel"]
     surviving = {n["id"] for n in nodes}
     # The reverse drift: a page on disk that kuzu doesn't know yet (written
     # after the last graph rebuild) previously got a `pages` entry but no
@@ -513,14 +558,36 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
     # on-disk page is reachable; the next graph rebuild supplies edges.
     for page_id in sorted(page_ids - surviving):
         fresh = page_data[page_id]
-        nodes.append({
+        node = {
             "id": page_id,
             "path": fresh["path"],
             "type": fresh["type"],
             "title": fresh["title"],
-        })
+        }
+        if fresh.get("typeLabel"):
+            node["typeLabel"] = fresh["typeLabel"]
+        nodes.append(node)
     surviving = page_ids
     edges = [e for e in edges if e["source"] in surviving and e["target"] in surviving]
+
+    # Typed ontology edges come from frontmatter, which is the source
+    # of truth, so they appear even when kuzu has not been rebuilt yet.
+    # With no file, or a file that names no endpoints, this adds nothing.
+    have = {(e["source"], e["target"], e.get("type")) for e in edges}
+    for edge in meta_ontology.collect_typed_edges(wiki_dir, ont):
+        src, dst = edge["source_id"], edge["target_id"]
+        if src not in surviving or dst not in surviving:
+            continue
+        key = (src, dst, edge["type"])
+        if key in have:
+            continue
+        row = {"source": src, "target": dst, "type": edge["type"]}
+        if edge.get("typeLabel"):
+            row["typeLabel"] = edge["typeLabel"]
+        if edge.get("color"):
+            row["color"] = edge["color"]
+        edges.append(row)
+        have.add(key)
 
     # Recompute degree from the edges that survived both filters — the
     # count taken while reading kuzu included edges dropped above, so it
@@ -549,7 +616,7 @@ def cmd_build(wiki_dir: Path, output_dir: Path) -> None:
     data = {
         "workspace": workspace_name,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "palette": PALETTE,
+        "palette": palette,
         "nodes": nodes,
         "edges": edges,
         "pages": page_data,

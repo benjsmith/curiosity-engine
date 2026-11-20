@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-20 — v1.10.0 — Typed edges from the meta-ontology
+
+**Migration:** none. The next `graph.py rebuild` creates the `OntologyEdge` table. **Breaking:** none. A workspace with no `.curator/meta-ontology.yaml`, or a file whose edges do not name both endpoints, keeps the current types, frontmatter, graph, and viewer.
+
+### Added
+
+- `hypothesis` is a built-in page type. Its colour is `#7570b3`. Every other built-in colour is unchanged.
+- Optional `.curator/meta-ontology.yaml`. `color` on a node or an edge is optional. A colour in the file replaces the default for that node type or edge type. A custom node type with no colour keeps its name and receives a stable colour, not the unclassified white. Typed edges (`source` and `target` node types) are frontmatter lists on the source page. `graph.py rebuild` stores them as page-to-page `OntologyEdge` relationships. `neighbors` and `retrieve` walk them, and `--edge supports` keeps only that relationship — evidence that supports a hypothesis is `neighbors wiki hypotheses/x.md --direction in --edge supports`. The classic graph, the page subgraph, and Atlas (standalone and embedded) paint those node and edge colours from the payload. See `docs/architecture.md`.
+
+
 ## 2026-10-08 — v1.9.2 — Mobile sidebar: Files mode glitches
 
 **Migration:** none. **Breaking:** none. Rebuild the viewer (`viewer.sh build`) to pick up the fix.
