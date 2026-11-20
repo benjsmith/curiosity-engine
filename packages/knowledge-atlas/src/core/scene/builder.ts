@@ -278,6 +278,7 @@ function fullGraphScene(
       confidence: e.confidence,
       priority: e.from === focusId || e.to === focusId ? 1 : 5,
     };
+    if (e.color) edge.color = e.color;
     (edge.priority === 1 ? focusEdges : restEdges).push(edge);
   }
   const edges = [...focusEdges, ...restEdges].slice(0, budget.maxEdges);
@@ -328,14 +329,16 @@ function buildEdges(
     } else if (bridgeIds.has(e.from) || bridgeIds.has(e.to)) {
       priority = 3;
     }
-    candidates.push({
+    const edge: RenderEdge = {
       source: e.from,
       target: e.to,
       type: e.type,
       direction: "forward",
       confidence: e.confidence,
       priority,
-    });
+    };
+    if (e.color) edge.color = e.color;
+    candidates.push(edge);
   }
   candidates.sort(
     (a, b) =>

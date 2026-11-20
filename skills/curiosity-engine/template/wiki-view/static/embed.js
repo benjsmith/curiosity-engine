@@ -266,6 +266,7 @@
         }
         if (window.Modal && Modal.refresh) Modal.refresh(data);
         if (window.FileBrowser && FileBrowser.refreshData) FileBrowser.refreshData(data);
+        if (window.Graph && Graph.ensureTypeLegend) Graph.ensureTypeLegend(data);
         if (window.Subgraph && Subgraph.init) Subgraph.init(data);
         if (window.Sidebar && Sidebar.updateCounts) Sidebar.updateCounts(data);
         if (canvasInited && window.GraphSearch) {
@@ -420,6 +421,7 @@
       canvasEl = el;
       canvasParked = false;
 
+      if (window.Graph && Graph.ensureTypeLegend) Graph.ensureTypeLegend(data);
       if (window.Subgraph && Subgraph.init) Subgraph.init(data);
       if (window.Modal && Modal.init) Modal.init(data);
 

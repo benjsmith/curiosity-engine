@@ -37,6 +37,7 @@ const TYPE_TIER: Record<string, number> = {
   entity: 2,
   concept: 3,
   evidence: 4,
+  hypothesis: 4,
   fact: 4,
   figure: 5,
   table: 5,

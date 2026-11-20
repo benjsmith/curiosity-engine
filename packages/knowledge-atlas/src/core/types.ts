@@ -110,6 +110,8 @@ export type RenderEdge = {
   confidence?: number;
   /** Priority tier 1 (highest) .. 5 — see PLAN §11. */
   priority: number;
+  /** Optional stroke from the payload. Absent edges keep the theme line. */
+  color?: string;
 };
 
 export type RenderBundle = {

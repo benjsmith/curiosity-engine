@@ -172,7 +172,9 @@ window.Subgraph = (function () {
       n.y = Math.max(margin, Math.min(H - margin, n.y));
     }
 
-    const colourFor = t => palette[t] || palette.default || '#7a7a7a';
+    const colourFor = t => palette[t]
+      || (t && t !== 'unclassified' && t !== 'default' && window.ceTypeColor
+          ? window.ceTypeColor(t) : (palette.default || '#7a7a7a'));
     let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`;
 
     // ── Edges (bottom layer) ──
@@ -180,7 +182,8 @@ window.Subgraph = (function () {
     for (const e of subEdges) {
       const s = subById.get(typeof e.source === 'object' ? e.source.id : e.source);
       const t = subById.get(typeof e.target === 'object' ? e.target.id : e.target);
-      svg += `<line class="sub-edge" data-kind="${escapeAttr(e.type)}" x1="${s.x.toFixed(1)}" y1="${s.y.toFixed(1)}" x2="${t.x.toFixed(1)}" y2="${t.y.toFixed(1)}"/>`;
+      const edgeColor = e.color ? ` style="--edge-color:${escapeAttr(e.color)}"` : '';
+      svg += `<line class="sub-edge" data-kind="${escapeAttr(e.type)}"${edgeColor} x1="${s.x.toFixed(1)}" y1="${s.y.toFixed(1)}" x2="${t.x.toFixed(1)}" y2="${t.y.toFixed(1)}"/>`;
     }
     svg += '</g>';
 

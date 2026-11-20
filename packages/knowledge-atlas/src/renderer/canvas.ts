@@ -25,6 +25,19 @@ const CLASS_LABEL: Record<DiscoveryClass, string> = {
 
 type PlacedLabel = { x: number; y: number; w: number; h: number };
 
+/** Stroke for one edge. A payload colour paints the resting stroke.
+ *  Highlight stays the accent so selection still reads. No colour
+ *  keeps the theme line. */
+export function edgeStroke(
+  edge: { color?: string },
+  highlighted: boolean,
+  line: string,
+  accent: string,
+): string {
+  if (highlighted) return accent;
+  return edge.color || line;
+}
+
 /** Boundary polyline sampling — square shapes pack their curvature
  * into the corners, so go dense (iteration-13: 72 read as jagged). */
 const BOUNDARY_STEPS = 240;
@@ -244,7 +257,7 @@ export class CanvasRenderer implements SceneRenderer {
         const t = positions.get(e.target);
         if (!s || !t) continue;
         const highlighted = kind === "highlight";
-        ctx.strokeStyle = highlighted ? T.accent : T.line;
+        ctx.strokeStyle = edgeStroke(e, highlighted, T.line, T.accent);
         ctx.globalAlpha = (highlighted ? 0.9 : 0.35) * (e.confidence ?? 1);
         ctx.lineWidth = highlighted ? 1.4 : 1;
         ctx.setLineDash(e.type === "depicts" ? [3, 3] : e.type === "co-cited" ? [1.5, 3] : []);

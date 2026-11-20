@@ -274,7 +274,7 @@ def graph_surface(wiki_dir: Path) -> dict:
     static = {
         "nodes": ["WikiPage", "VaultSource", "DataRow", "Note"],
         "edges": ["WikiLink", "Cites", "DataRef", "Depicts", "AppearsIn",
-                  "ProvisionalLink"],
+                  "ProvisionalLink", "OntologyEdge"],
     }
     if kuzu is None:
         return {**static, "source": "static (kuzu not installed)"}
