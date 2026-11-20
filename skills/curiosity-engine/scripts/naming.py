@@ -293,6 +293,22 @@ ALLOWED_FM_KEYS = frozenset({
     # Procedure / execution thin types (Biocure smoke → skill nouns).
     # Optional maturity/applicability signals; never invent SOP steps.
     "status", "applies_to", "steps_attested",
+    # Federated graphs and external captures. Each key is written by
+    # Switchbay (or okf_import), never copied out of a fetched body.
+    # `classification` is the page's label (public < internal <
+    # confidential < restricted). It is not a licence and not a secret.
+    # `labels` holds source sensitivity tags that can only raise it.
+    # `declassified` records that a person lowered the label; the reason
+    # stays in the audit log, not here, so a later export cannot leak it.
+    # `upstream` / `upstream_rev` / `sync` track a page that also lives
+    # on another graph. Capture keys record one broker call that was
+    # snapshotted into the vault: which source, which tool, the caller,
+    # and the content id. `capture_args` is the query, which may itself
+    # be sensitive — callers should not snapshot it onto a public mount.
+    "classification", "labels", "declassified",
+    "upstream", "upstream_rev", "sync",
+    "capture_id", "capture_source", "capture_tool", "capture_args",
+    "capture_principal", "capture_tenant",
 })
 
 TYPE_PREFIX = {

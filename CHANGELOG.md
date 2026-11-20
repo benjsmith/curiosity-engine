@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — serve a wiki, import a bundle
+
+**Migration:** none. **Breaking:** none.
+
+### Added
+
+- `graph_serve.py` serves one wiki as ce-graph/1, both as MCP and as JSON over HTTP, on loopback. Reads use OAuth 2.1 with PKCE, or anonymous reads when you ask for them. Writes are proposals unless the process is started with direct writes. `graph_id.py` stamps `.curator/graph-id` and builds page ids.
+- `okf_import.py cache` makes an isolated wiki you can mount or serve. `okf_import.py vault` lands each concept in `vault/ext/okf/` as an untrusted source. It does not write wiki pages.
+
+### Noted
+
+- `CHANGELOG.md` for v1.4.0 points at `docs/okf-interop.md`. That file is not in the tree. The import behaviour it described is `okf_import.py vault`.
+
 ## 2026-11-20 — v1.10.0 — Typed edges from the meta-ontology
 
 **Migration:** none. The next `graph.py rebuild` creates the `OntologyEdge` table. **Breaking:** none. A workspace with no `.curator/meta-ontology.yaml`, or a file whose edges do not name both endpoints, keeps the current types, frontmatter, graph, and viewer.
