@@ -1,13 +1,16 @@
 # Changelog
 
-## Unreleased — serve a wiki, import a bundle
+## 2026-11-21 — v1.11.0 — Serve a wiki, import a bundle
 
-**Migration:** none. **Breaking:** none.
+**Migration:** none. **Breaking:** none. A wiki with no `.curator/graph-id` still exports as before. **Compatibility:** works with curiosity-merge v0.9.0, released alongside.
 
 ### Added
 
-- `graph_serve.py` serves one wiki as ce-graph/1, both as MCP and as JSON over HTTP, on loopback. Reads use OAuth 2.1 with PKCE, or anonymous reads when you ask for them. Writes are proposals unless the process is started with direct writes. `graph_id.py` stamps `.curator/graph-id` and builds page ids.
-- `okf_import.py cache` makes an isolated wiki you can mount or serve. `okf_import.py vault` lands each concept in `vault/ext/okf/` as an untrusted source. It does not write wiki pages.
+- `graph_serve.py` serves one wiki as ce-graph/1. Agents speak MCP at `/mcp`. Other clients use the same operations as JSON at `/ce-graph/1/...`. The process listens on loopback only and reads the wiki markdown; it does not open the kuzu file. Reads use OAuth 2.1 with PKCE (S256). `--auth anonymous` leaves reads open. `--auth dev` is that same OAuth path on loopback and approves immediately. `--auth oauth` uses the same endpoints; `--introspection-url` checks tokens from another identity provider, and `--jwks-url` checks a bearer JWT (RS256 or ES256, with issuer and audience) against a JWKS. Writes are proposals unless the process is started with `--direct-writes`. An anonymous graph is read-only. A proposal id is recorded either way. Operations: `search`, `retrieve`, `neighbors`, `path`, `get_page`, `resolve`, `changes`, `propose`, `proposal_status`. MCP tools: `graph_info`, `search`, `get_page`, `neighbors`, `propose`. `graph_id.py` stamps `.curator/graph-id` (a URI such as `ceg://local/<name>` or `ceg://git/<owner>/<repo>`) and builds page ids.
+- A page may set `source_ref` to the system that already decides who may read it. A `deny:` reference, or an explicit false in the `--acl` file, is left out of `search`, `resolve`, and page reads. A page with no `source_ref` stays readable.
+- `okf_import.py cache` materialises an isolated wiki (its own `wiki/` and `.curator/graph-id`) that a mount or `graph_serve.py` can read. It does not copy pages into the caller's wiki. `okf_import.py vault` lands each concept in `vault/ext/okf/` as a verbatim, untrusted, citable source, and does not write wiki pages. A bundle is an OKF concept tree or a curiosity-engine `wiki/` directory. See `SKILL.md`.
+- `okf_export.py build` writes `x_ce_graph_id` and `x_ce_page_id` when `.curator/graph-id` exists.
+- Allowed frontmatter for a page that also lives on another graph, or that records one captured call: `classification` (`public` < `internal` < `confidential` < `restricted`), `labels`, `declassified`, `upstream`, `upstream_rev`, `sync`, `capture_id`, `capture_source`, `capture_tool`, `capture_args`, `capture_principal`, `capture_tenant`, `source_ref`. These keys are written by Switchbay or by `okf_import`, not copied out of a fetched body.
 
 ### Noted
 
