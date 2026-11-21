@@ -309,6 +309,9 @@ ALLOWED_FM_KEYS = frozenset({
     "upstream", "upstream_rev", "sync",
     "capture_id", "capture_source", "capture_tool", "capture_args",
     "capture_principal", "capture_tenant",
+    # Pointer at the system that already decides who may read the page
+    # (a SharePoint item, a Unity Catalog object). Not an access list.
+    "source_ref",
 })
 
 TYPE_PREFIX = {

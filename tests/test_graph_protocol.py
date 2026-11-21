@@ -34,6 +34,15 @@ def _page(path: Path, body: str, **fm) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+class AccessTests(unittest.TestCase):
+    def test_source_ref_fallback_and_denial(self):
+        from graph_serve import _source_visible
+        self.assertTrue(_source_visible("", {}))
+        self.assertTrue(_source_visible("sharepoint:open", {}))
+        self.assertFalse(_source_visible("deny:sharepoint:hidden", {}))
+        self.assertFalse(_source_visible("uc:sales", {"uc:sales": False}))
+
+
 class ImportTests(unittest.TestCase):
     def test_cache_stamps_graph_id_and_does_not_touch_caller_wiki(self):
         with tempfile.TemporaryDirectory() as tmp:

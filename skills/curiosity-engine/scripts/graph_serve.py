@@ -80,6 +80,39 @@ def _git_rev(workspace: Path) -> str:
     return out.stdout.strip()
 
 
+def _source_visible(source_ref: str, acl: dict[str, bool]) -> bool:
+    """Whole-graph read when the page names no source. Otherwise the
+    external system decides. ``deny:`` and an explicit false in the
+    stub ACL are refused. A live on-behalf-of client replaces this.
+    """
+    ref = (source_ref or "").strip()
+    if not ref:
+        return True
+    if ref.startswith("deny:"):
+        return False
+    if ref in acl:
+        return bool(acl[ref])
+    return True
+
+
+def _jwt_ok(state: "GraphState", token: str) -> bool:
+    try:
+        from jwt_jwks import JWKSCache, validate
+    except ImportError:
+        return False
+    cache = getattr(state, "_jwks", None)
+    if cache is None:
+        cache = JWKSCache(state.jwks_url)
+        state._jwks = cache
+    try:
+        validate(
+            token, cache=cache, issuer=state.jwt_issuer, audience=state.jwt_audience,
+        )
+    except Exception:
+        return False
+    return True
+
+
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -97,6 +130,10 @@ class GraphState:
         self.direct_writes = direct_writes
         self.anonymous_reads = anonymous_reads or auth == "anonymous"
         self.introspection_url = introspection_url.strip()
+        self.acl: dict[str, bool] = {}
+        self.jwks_url = ""
+        self.jwt_issuer = ""
+        self.jwt_audience = ""
         self.graph_id = graph_id or read_graph_id(self.workspace) or f"ceg://local/{self.workspace.name}"
         write_graph_id(self.workspace, self.graph_id)
         self.rev = _git_rev(self.workspace) or _sha256(self.graph_id)[:12]
@@ -210,6 +247,9 @@ class GraphState:
             start = max(0, (first if first >= 0 else 0))
             snippet = " ".join(text[start:start + 180].split())
             rel_id = rel[:-3] if rel.endswith(".md") else rel
+            source_ref = str((fm or {}).get("source_ref") or "")
+            if not _source_visible(source_ref, self.acl):
+                continue
             hits.append({
                 "path": rel_id,
                 "page_id": page_id(self.graph_id, rel_id),
@@ -219,6 +259,7 @@ class GraphState:
                 "snippet": snippet,
                 "rev": self.rev,
                 "classification": str((fm or {}).get("classification") or self.classification),
+                "source_ref": source_ref,
             })
         hits.sort(key=lambda row: (-row["score"], row["path"]))
         return hits[: max(1, min(k, 50))]
@@ -435,6 +476,8 @@ class Handler(BaseHTTPRequestHandler):
             exp = state.tokens.get(token)
         if exp is not None and exp > time.time():
             return True
+        if token.count(".") == 2 and state.jwks_url:
+            return _jwt_ok(state, token)
         if state.introspection_url:
             return self._introspect(token)
         return False
@@ -643,6 +686,10 @@ class Handler(BaseHTTPRequestHandler):
             if page is None:
                 self._send(404, {"error": "page not found"})
                 return
+            ref = str((page.get("frontmatter") or {}).get("source_ref") or "")
+            if not _source_visible(ref, state.acl):
+                self._send(403, {"error": "not permitted"})
+                return
             want = str(body.get("rev") or "")
             if want and want != state.rev:
                 self._send(409, {"error": "rev not available", "rev": state.rev})
@@ -656,7 +703,15 @@ class Handler(BaseHTTPRequestHandler):
                 text = path.read_text(encoding="utf-8", errors="replace")
                 if key and key in text:
                     rid = rel[:-3] if rel.endswith(".md") else rel
-                    hits.append({"path": rid, "page_id": page_id(state.graph_id, rid)})
+                    fm, _body = _split_frontmatter(text)
+                    ref = str((fm or {}).get("source_ref") or "")
+                    if not _source_visible(ref, state.acl):
+                        continue
+                    hits.append({
+                        "path": rid,
+                        "page_id": page_id(state.graph_id, rid),
+                        "source_ref": ref,
+                    })
             self._send(200, {"results": hits, "rev": state.rev})
             return
         if op == "changes":
@@ -775,6 +830,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--direct-writes", action="store_true")
     parser.add_argument("--anonymous-reads", action="store_true")
     parser.add_argument("--introspection-url", default="")
+    parser.add_argument("--acl", default="", help="JSON object of source_ref to true/false")
+    parser.add_argument("--jwks-url", default="")
+    parser.add_argument("--jwt-issuer", default="")
+    parser.add_argument("--jwt-audience", default="")
     args = parser.parse_args(argv)
     wiki = args.wiki.resolve()
     workspace = wiki.parent if wiki.name == "wiki" else wiki
@@ -789,6 +848,11 @@ def main(argv: list[str] | None = None) -> int:
         anonymous_reads=args.anonymous_reads or args.auth == "anonymous",
         introspection_url=args.introspection_url,
     )
+    if args.acl:
+        state.acl = json.loads(Path(args.acl).read_text(encoding="utf-8"))
+    state.jwks_url = args.jwks_url
+    state.jwt_issuer = args.jwt_issuer
+    state.jwt_audience = args.jwt_audience
     httpd = Serve((args.host, args.port), state)
     host, port = httpd.server_address[:2]
     print(f"listening on {host}:{port}", flush=True)
