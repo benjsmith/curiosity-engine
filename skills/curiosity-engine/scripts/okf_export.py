@@ -310,7 +310,7 @@ def _transform_body(
 def _build_concept(
     rel: str, text: str, stems_to_path: dict, page_titles: dict,
     subdir_of: dict, vault_to_stub: dict, copy_assets: bool,
-    no_sources: bool, counters: dict,
+    no_sources: bool, counters: dict, graph_id: str = "",
 ) -> str:
     fm, body = read_frontmatter(text)
     fm = fm if isinstance(fm, dict) else {}
@@ -351,6 +351,12 @@ def _build_concept(
         ("x_ce_same_as", same_as or []),
         ("x_ce_citations", citations),
     ]
+    if graph_id:
+        # Stable id of the graph this bundle was projected from. Absent
+        # when the wiki has no `.curator/graph-id`, so older bundles
+        # stay byte-compatible.
+        fields.append(("x_ce_graph_id", graph_id))
+        fields.append(("x_ce_page_id", f"{graph_id}#{rel}"))
     table_block = _extract_table_block(text)
     front = _emit_frontmatter(fields, table_block)
 
@@ -461,11 +467,16 @@ def cmd_build(
 
     counters = {"links": 0, "broken_links": 0, "assets": 0}
     manifest_concepts: list[tuple] = []
+    graph_id_path = wiki_dir.parent / ".curator" / "graph-id"
+    graph_id = ""
+    if graph_id_path.is_file():
+        graph_id = graph_id_path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
     for rel in rels:
         text = (wiki_dir / rel).read_text(errors="replace")
         concept = _build_concept(
             rel, text, stems_to_path, page_titles, subdir_of,
-            vault_to_stub, copy_assets, no_sources, counters)
+            vault_to_stub, copy_assets, no_sources, counters,
+            graph_id=graph_id)
         dest = output_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(concept)
